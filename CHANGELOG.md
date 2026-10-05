@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.1
+
+- CI: `actions/checkout@v5` (Node 24). v4 runs on Node 20, which GitHub deprecated.
+
 ## 0.7.0 — first public release
 
 - Own marketplace: `lookout@lookout-marketplace` (repo `vzert/lookout`).
