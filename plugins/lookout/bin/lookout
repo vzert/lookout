@@ -1,0 +1,571 @@
+#!/usr/bin/env python3
+"""lookout — the supervisor's single command (docs/plan.md 3.7). On the Bash PATH via the plugin's bin/.
+
+One entry point so one allow rule (`Bash(lookout *)`) covers every supervisor step.
+Subcommands (PROYECTO = a path inside the repo, or its project_id):
+  quien                         identity of this session (session_id, pid, SendMessage address, pane)
+  inicia PROYECTO [--nombre N]  check herdr (version, client vs server; exit 6 = refused, nothing taken) and goalspec
+                                (absent = warning), take the project lock, discover and register its agents
+  entrega PROYECTO AGENTE [--pasos reload,rename,nota]
+                                deliver to an idle agent with an empty input box, in order:
+                                /reload-plugins (V1), /rename + herdr renames (V12), the report note
+  nota PROYECTO AGENTE          print the report note for one agent
+  resumen PROYECTO [--no-marcar] [--todo]  agents table + events not handled yet (≤40 lines; --todo = all); advances
+                                the cursor, rewrites supervisor.md, and says the supervisor's context against its budget
+  retomar PROYECTO              rewrite supervisor.md and print its «Como retomar» (relief of the supervisor, Fase 4)
+  espera PROYECTO               the single waiter: run it with run_in_background, as the LAST step of a turn
+  suelta PROYECTO               release the lock, remove the agents' markers, stop the waiter
+  pendientes PROYECTO [--tope N] [--rehacer]
+                                propose a batch from memory/_pendientes.md (F2): batch, queue, excluded,
+                                and one task prompt per batch item in the state folder
+  pendientes PROYECTO --match T [T...]  open pendientes that mention these terms (H13)
+  lanza PROYECTO ID [ID...] [--modelo M]  launch approved batch items: worktree + agent + its task, once
+  libera PROYECTO AGENTE [--fallida]      the agent's task is done (or failed): free its slot, propose again
+  envia PROYECTO AGENTE (--tarea | --clave K --texto T)
+                                idempotent delivery (bin/deliver.py); --tarea = the agent's task trigger again
+  gobierno PROYECTO AGENTE [--para push|ronda] [--usuario-amplia N --decision ID]
+                                goalspec governance (F3): may this agent's push go to the user? may it open one
+                                more adversary round? (from its own transcript; exit 5 = no)
+  publica PROYECTO AGENTE [--hecho | --retira]   publications in order (H14): verify and queue; --hecho after the push
+  publica PROYECTO --cola       the publication queue
+  regla-push PROYECTO [--estado]  the temporary push rule the USER applies (H15); --estado reads whether it is on
+  permisos                      the executors' permission rules (D6, F5): active or not, where the user activates them
+  cierra PROYECTO AGENTE [--estado resolved|superseded|abandoned] --nota N --usuario-confirmo DECISION_ID [--sin-push RAZON]
+                                close the agent's pendiente by journal (pendiente.resolve), never by editing
+  relevo PROYECTO AGENTE [--retomar ARCHIVO] [--modelo M]
+                                /exit + a new session on the same task with its "Como retomar" (F3)
+  decision PROYECTO (--abre TEXTO [--agentes A,B] | --cierra ID --respuesta R (--si|--no) | --lista)
+                                the user's pending decisions (T4): shown in `resumen` with their age
+  corrige PROYECTO AGENTE --resumen R [--firma F] [--reporte CITA]
+                                record a correction for the agent's repeated error (Fase 6) and print the message to
+                                send it; after 2 corrections of the same error: PARA (exit 5), escalate instead
+  puerto PROYECTO AGENTE        the dev-server port of the agent's worktree (Fase 6; launched agents already have $PORT)
+"""
+import argparse
+import json
+import os
+import signal
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import cierre  # noqa: E402
+import decisiones  # noqa: E402
+import deliver  # noqa: E402
+import digest  # noqa: E402
+import discover  # noqa: E402
+import gobierno  # noqa: E402
+import herdr_cli  # noqa: E402
+import inputbox  # noqa: E402
+import lock  # noqa: E402
+import lookout_state  # noqa: E402
+import lote  # noqa: E402
+import pendientes  # noqa: E402
+import permisos  # noqa: E402
+import publica  # noqa: E402
+import registry  # noqa: E402
+import supervisor_md  # noqa: E402
+import relevo  # noqa: E402
+import requisitos  # noqa: E402
+
+NOTA = os.path.join(HERE, "..", "skills", "supervisa", "references", "nota-reporte.md")
+WAITER_TIMEOUT = 7000  # s; under the 7200 s ceiling of a background Bash task
+
+
+def project(arg):
+    pid, common = discover.resolve_project(arg)
+    if not pid:
+        sys.exit("no encuentro el proyecto %r (ni repo git ni project_id con candado)" % arg)
+    return pid, common
+
+
+def cmd_quien(_a):
+    print(json.dumps(lock.me(), ensure_ascii=False, indent=1))
+
+
+def cmd_inicia(a):
+    pid, common = project(a.proyecto)
+    me = lock.me(a.nombre or "supervisor-" + os.path.basename(os.path.dirname(common.rstrip("/"))))
+    if not me["session_id"] or not me["address"]:
+        sys.exit("faltan CLAUDE_CODE_SESSION_ID o CLAUDE_CODE_MESSAGING_SOCKET: corre esto desde una sesión de Claude Code")
+    roots = lookout_state.worktree_roots(os.path.dirname(common.rstrip("/")) if common.endswith("/.git") else a.proyecto)
+    if not roots:
+        roots = lookout_state.worktree_roots(a.proyecto)
+    ok, problems, notes = requisitos.check_herdr()  # Fase 7: before the lock, so a refusal leaves nothing behind
+    for n in notes:
+        print("Nota: " + n)
+    if not ok:
+        print("NO ARRANCO: " + " ".join(problems))
+        print("No tomé el candado ni toqué a ningún agente. Díselo al usuario.")
+        return 6
+    if not requisitos.goalspec_instalado(roots[0] if roots else os.path.realpath(a.proyecto)):
+        print(requisitos.AVISO_GOALSPEC)
+    status, data = lock.acquire(pid, common, roots, me)
+    if status == "ocupado":
+        owner = data.get("supervisor") or {}
+        print("CANDADO OCUPADO: el proyecto %s ya lo supervisa '%s' (pane %s, sesión %s, dirección %s, desde %s)."
+              % (pid, owner.get("nombre"), owner.get("pane"), owner.get("session_id"), owner.get("address"), data.get("desde")))
+        print("No tomes nada. Díselo al usuario.")
+        return 3
+    relevo_sup = status in ("tomado-de-muerto", "relevo-mismo-proceso")
+    if status == "tomado-de-muerto":
+        prev = data.get("anterior") or {}
+        print("Candado tomado: su dueño anterior '%s' (sesión %s) ya no vive." % (prev.get("nombre"), prev.get("session_id")))
+    elif status == "relevo-mismo-proceso":
+        prev = data.get("anterior") or {}
+        print("Candado tomado: era de este mismo proceso con otra sesión (%s; /clear). Eres su relevo." % prev.get("session_id"))
+    else:
+        print("Candado: %s." % ("nuevo" if status == "nuevo" else "ya era tuyo"))
+    if relevo_sup:
+        supervisor_md.unmark_supervisor((data.get("anterior") or {}).get("session_id", ""))
+    supervisor_md.mark_supervisor(me["session_id"], pid)
+    found = discover.discover(common)
+    reg = registry.register(pid, me, found)
+    others = [f for f in found if f.get("kind") != "claude" or not f.get("session_id")]
+    print("Proyecto %s (%s). Raíces: %s" % (pid, common, ", ".join(roots)))
+    print("Supervisor: %s → %s" % (me["nombre"], me["address"]))
+    print("")
+    print("nombre | pane | worktree | rama | estado herdr | session")
+    for e in reg["agents"].values():
+        print("%s | %s | %s | %s | %s | %s" % (e["nombre"], e["pane_id"], e["worktree"], e["branch"] or "-",
+                                             e["estado_herdr"], e["session_id"][:8]))
+    for o in others:
+        print("(no registrado: %s en %s, kind=%s, sin session_id de Claude)" % (o["pane_id"], o["cwd"], o["kind"]))
+    print("")
+    md = supervisor_md.write(pid)
+    if relevo_sup:
+        live = {f.get("session_id") for f in found}
+        avisar = [e["nombre"] for s, e in reg["agents"].items() if s in live and e.get("hooks") == "ok"]
+        print("RELEVO DEL SUPERVISOR. Tu estado: %s (léelo antes de decidir nada: decisiones tomadas y pendientes,"
+              " lo que ya respondiste a cada agente)." % md)
+        print("Sus notas de reporte llevan la dirección vieja. Manda a cada uno, por SendMessage (to = su nombre), este texto"
+              " tal cual: «Cambio de supervisor: desde ahora tus reportes y preguntas van a to=\"%s\" (cópialo tal cual);"
+              " la dirección anterior ya no existe.»" % me["address"])
+        print("Avisar a: %s" % (", ".join(avisar) or "nadie (ningún agente vivo con hooks confirmados)"))
+        print("No hace falta `lookout entrega`: ya están registrados y con hooks.")
+        return 0
+    print("Siguiente: `lookout entrega %s <nombre>` para cada agente idle." % pid)
+    return 0
+
+
+def render_nota(pid, entry):
+    lk = lock.read(pid) or {}
+    sup = lk.get("supervisor") or {}
+    with open(NOTA, encoding="utf-8") as fh:
+        text = fh.read().strip()
+    text = text.format(supervisor=sup.get("nombre", "supervisor"), address=sup.get("address", ""),
+                       nombre=entry["nombre"])
+    # One line on purpose: herdr delivers a multi-line prompt as a paste, and Claude Code wraps it in
+    # <pasted_content>, whose instructions a model may decline to follow (phase-1 run, 2026-10-02).
+    return " ".join(line.strip() for line in text.splitlines() if line.strip())
+
+
+def cmd_nota(a):
+    pid, _ = project(a.proyecto)
+    entry = registry.find(registry.load(pid), a.agente)
+    if not entry:
+        sys.exit("agente %r no registrado" % a.agente)
+    print(render_nota(pid, entry))
+
+
+def box_state(pane):
+    code, out, _ = herdr_cli.run(["agent", "read", pane, "--source", "visible", "--format", "ansi"])
+    return inputbox.classify(out) if code == 0 else "desconocida"
+
+
+def cmd_entrega(a):
+    pid, _ = project(a.proyecto)
+    reg = registry.load(pid)
+    entry = registry.find(reg, a.agente)
+    if not entry:
+        sys.exit("agente %r no registrado" % a.agente)
+    pane = entry["pane_id"]
+    live = herdr_cli.agent_get(pane) or {}
+    if (live.get("agent_session") or {}).get("value") != entry["session_id"] or live.get("cwd") != entry["cwd"]:
+        print("NO ENTREGADO: el pane %s ya no es de %s (registro viejo). Corre `lookout inicia` otra vez." % (pane, entry["nombre"]))
+        return 4
+    if live.get("agent_status") not in ("idle", "done"):
+        print("NO ENTREGADO: %s está %s. Se le entrega en su siguiente idle." % (entry["nombre"], live.get("agent_status")))
+        return 4
+    box = box_state(pane)
+    if box not in ("vacia", "sugerencia"):
+        print("NO ENTREGADO: la caja de entrada de %s tiene %s. No escribo encima; avisa al usuario." % (entry["nombre"], box))
+        return 4
+    pasos = [p for p in a.pasos.split(",") if p]
+    if "reload" in pasos:
+        herdr_cli.run(["agent", "prompt", pane, "/reload-plugins"])
+        code, _o, _e = herdr_cli.run(["pane", "wait-output", pane, "--match", "Reloaded:", "--timeout", "15000"], timeout=20)
+        print("reload: %s" % ("ok" if code == 0 else "sin confirmar en pantalla"))
+    if "rename" in pasos:
+        herdr_cli.run(["agent", "prompt", pane, "/rename " + entry["nombre"]])
+        herdr_cli.run(["agent", "rename", pane, entry["nombre"]])
+        herdr_cli.run(["pane", "rename", pane, "lookout: " + entry["nombre"]])
+        entry["herdr_name"] = entry["nombre"]
+        print("rename: %s (sesión, agente de herdr y pane)" % entry["nombre"])
+    if "nota" in pasos:
+        try:
+            offset = os.path.getsize(lookout_state.events_path(pid))
+        except OSError:
+            offset = 0
+        herdr_cli.run(["agent", "prompt", pane, render_nota(pid, entry)])
+        ok = deliver.wait_prompt_event(pid, entry["session_id"], offset, a.timeout)
+        entry["hooks"] = "ok" if ok else "sin-hooks"
+        print("nota: entregada; hooks %s" % ("confirmados (UserPromptSubmit)" if ok else
+                                            "SIN CONFIRMAR: no llegó su UserPromptSubmit en %ds" % a.timeout))
+    reg["agents"][entry["session_id"]] = entry
+    registry.save(pid, reg)
+    return 0
+
+
+def cmd_resumen(a):
+    pid, _ = project(a.proyecto)
+    print(digest.render(pid, mark=not a.no_marcar, todo=a.todo))
+
+
+def cmd_espera(a):
+    pid, _ = project(a.proyecto)
+    import wait_event
+    owner = {"claude_pid": int(os.environ.get("CLAUDE_PID", "0") or 0), "session_id": os.environ.get("CLAUDE_CODE_SESSION_ID", "")}
+    return wait_event.wait(lookout_state.events_path(pid), digest.get_cursor(pid), digest.WAKE_TYPES,
+                           a.timeout, digest.pidfile(pid), digest.cursor_path(pid), owner if owner["claude_pid"] else None,
+                           revisa=pid)
+
+
+def cmd_retomar(a):
+    """Rewrite supervisor.md and print its «Como retomar» (manual relief of the supervisor, Fase 4)."""
+    pid, _ = project(a.proyecto)
+    md = supervisor_md.write(pid)
+    print("Estado escrito en %s. Dale al usuario este bloque tal cual y pídele /exit (o /clear) y pegarlo en la sesión nueva:" % md)
+    print(supervisor_md.retomar_block(pid))
+    return 0
+
+
+def cmd_suelta(a):
+    pid, _ = project(a.proyecto)
+    me = lock.me()
+    if not lock.release(pid, me["session_id"]):
+        print("No suelto nada: el candado no es de esta sesión.")
+        return 3
+    for sid in registry.load(pid).get("agents", {}):
+        lookout_state.remove_marker(sid)
+    supervisor_md.unmark_supervisor(me["session_id"])
+    # No signal to any pid (adversary F4 round 2: pid reuse): with the lock gone the waiter's watchdog sees its
+    # session no longer supervises and exits by itself within 10 s.
+    w = digest.waiter_alive(pid)
+    extra = ", el waiter se cierra solo en ≤10 s" if w else ""
+    print("Candado suelto, marcadores borrados%s." % extra)
+    return 0
+
+
+def nota_for(pid):
+    return lambda nombre: render_nota(pid, {"nombre": nombre})
+
+
+def cmd_pendientes(a):
+    pid, common = project(a.proyecto)
+    if a.match:
+        items = pendientes.parse(lote.pendientes_file(common))
+        found = pendientes.match(items, a.match)
+        for it in found:
+            print(pendientes.one_line(it))
+        if not found:
+            print("(ningún pendiente abierto menciona: %s)" % ", ".join(a.match))
+        return 0
+    prop = lote.propone(pid, common, a.tope, a.rehacer)
+    print(lote.render_propuesta(prop))
+    return 0
+
+
+def cmd_lanza(a):
+    pid, common = project(a.proyecto)
+    lk = lock.read(pid) or {}
+    if (lk.get("supervisor") or {}).get("session_id") != lock.me()["session_id"]:
+        print("No lanzo nada: el candado de %s no es de esta sesión (corre `lookout inicia` antes)." % pid)
+        return 3
+    res = lote.lanza(pid, common, a.ids, nota_for(pid), a.modelo, a.confirmar, a.tope,
+                     log=lambda m: print("  " + m))
+    bad = 0
+    for pend, ok, msg in res:
+        print("%s %s: %s" % ("OK" if ok else "FALLO", pend, msg))
+        bad += not ok
+    return 0 if not bad else 4
+
+
+def cmd_libera(a):
+    pid, common = project(a.proyecto)
+    reg = registry.load(pid)
+    e = registry.find(reg, a.agente)
+    if not e or not e.get("tarea"):
+        sys.exit("agente %r sin tarea registrada" % a.agente)
+    estado = "fallida" if a.fallida else "terminada"
+    with lote.project_mutex(pid):
+        lote.set_estado(pid, e["session_id"], estado)
+    if e.get("worktree") and not e.get("sin_worktree"):
+        import ports
+        ports.libera(e["worktree"])  # Fase 6: its dev-server port goes back to the pool
+    print("%s: tarea %s marcada %s; su hueco queda libre. El pendiente se cierra por journal en F3." % (
+        e["nombre"], e["tarea"], estado))
+    print("")
+    print(lote.render_propuesta(lote.propone(pid, common)))
+    return 0
+
+
+def cmd_envia(a):
+    pid, _ = project(a.proyecto)
+    e = registry.find(registry.load(pid), a.agente)
+    if not e:
+        sys.exit("agente %r no registrado" % a.agente)
+    if a.tarea:
+        if not e.get("tarea"):
+            sys.exit("agente %r sin tarea registrada" % a.agente)
+        clave, texto = "tarea:" + e["tarea"], lote.TRIGGER.format(id=e["tarea"])
+    elif a.clave and a.texto:
+        clave, texto = a.clave, a.texto
+    else:
+        sys.exit("usa --tarea, o --clave y --texto")
+    code, msg = deliver.deliver(pid, e, clave, texto, a.confirmar)
+    if code == 0 and not a.tarea:
+        # an answer typed into the agent's box is a decision too: log it like a SendMessage (Fase 4, relief)
+        supervisor_md.log(pid, {"tipo": "respuesta", "to": e["nombre"], "via": "envia", "texto": supervisor_md.one_line(texto, 600)})
+        supervisor_md.write(pid)
+    if code == 0 and a.tarea and e.get("tarea_estado") in ("lanzando", "sin-confirmar"):
+        lote.set_estado(pid, e["session_id"], "trabajando", hooks="ok")
+    print(msg)
+    return code
+
+
+def agent_entry(pid, name):
+    e = registry.find(registry.load(pid), name)
+    if not e:
+        sys.exit("agente %r no registrado" % name)
+    return e
+
+
+def cmd_gobierno(a):
+    pid, _ = project(a.proyecto)
+    e = agent_entry(pid, a.agente)
+    if a.usuario_amplia:
+        d = decisiones.respondida(pid, a.decision or "")
+        if not d:
+            print("NO: --usuario-amplia necesita --decision <id> de una decisión que el usuario respondió con un sí "
+                  "(`lookout decision %s --abre …`, pregúntale, y `--cierra <id> --respuesta …`)." % pid)
+            return 5
+        gobierno.amplia(pid, e, a.usuario_amplia)
+        print("Decisión %s: %s → %s" % (d["id"], d["texto"], d.get("respuesta", "")))
+        print("Límite de rondas de %s: %d (lo aprobó el usuario)." % (e.get("tarea") or e["nombre"], a.usuario_amplia))
+        print(gobierno.render(gobierno.estado(pid, e)))
+        return 0  # recording the user's yes succeeded; ask --para push/ronda separately for a decision
+    st = gobierno.estado(pid, e)
+    print(gobierno.render(st))
+    ok, code, text = (gobierno.decide_ronda if a.para == "ronda" else gobierno.decide_push)(st)
+    print("")
+    print("%s — %s" % (code, text))
+    return 0 if ok else 5
+
+
+def cmd_publica(a):
+    pid, common = project(a.proyecto)
+    if a.cola or not a.agente:
+        print(publica.render_cola(pid))
+        return 0
+    e = agent_entry(pid, a.agente)
+    with lote.project_mutex(pid):
+        if a.hecho:
+            ok, lines = publica.hecho(pid, e)
+            print("\n".join(lines))
+            return 0 if ok else 5
+        if a.retira:
+            print("Retirada de la cola." if publica.retira(pid, e) else "No estaba en la cola.")
+            return 0
+        ok, code, lines = publica.pide(pid, e, gobierno.estado(pid, e))
+    print("\n".join(lines))
+    print("")
+    print("%s" % code)
+    if ok:
+        root = lote.repo_root(common)
+        est, _ = publica.regla_estado(root)
+        print("")
+        print("Siguiente: pásale al usuario este push para que lo apruebe (AskUserQuestion con el resumen de arriba).")
+        if est == "aplicada":
+            print("Regla temporal de push: APLICADA. Con el sí del usuario, dile al agente que corra la orden exacta, sola.")
+        else:
+            print("Regla temporal de push: %s. Con el sí del usuario NO le digas al agente que haga push: dale al "
+                  "usuario el texto de `lookout regla-push %s` y espera a que diga que la aplicó; compruébalo con "
+                  "`lookout regla-push %s --estado`. Solo con APLICADA el agente corre el push." % (est.upper(), pid, pid))
+    return 0 if ok else 5
+
+
+def cmd_permisos(a):
+    rules = permisos.load_rules()
+    estado = "ACTIVAS" if rules["activo"] else "NO ACTIVAS (todo permiso va al usuario)"
+    print("Reglas de permisos de los ejecutores: %s" % estado)
+    print("Plantilla del plugin: %s" % permisos.TEMPLATE)
+    print("Archivo del usuario: %s" % permisos.user_rules_path())
+    print("Las activa el USUARIO creando ese archivo con `activo = true` (yo no lo escribo). Solo aprueban en modo")
+    print("manual, una vez por llamada; en auto mode nada se aprueba y push/merge/borrados fuera del worktree piden diálogo.")
+    print("Bash permitido: " + ", ".join((rules.get("bash") or {}).get("comandos") or []))
+    return 0 if rules["activo"] else 5
+
+
+def cmd_regla_push(a):
+    pid, common = project(a.proyecto)
+    root = lote.repo_root(common)
+    if a.estado:
+        est, falta = publica.regla_estado(root)
+        print("Regla temporal de push en %s: %s" % (publica.settings_path(root), est.upper()))
+        if falta and est != "ausente":
+            print("Faltan: " + ", ".join(falta))
+        return 0 if est == "aplicada" else 5
+    print(publica.regla_texto(root))
+    return 0
+
+
+def cmd_cierra(a):
+    pid, common = project(a.proyecto)
+    e = agent_entry(pid, a.agente)
+    d = decisiones.respondida(pid, a.usuario_confirmo or "")
+    if a.usuario_confirmo and not d:
+        print("NO: --usuario-confirmo necesita el id de una decisión que el usuario respondió con un sí (p.ej. d3); "
+              "%r no lo es. Ábrela con `lookout decision`, pregúntale y ciérrala con su respuesta." % a.usuario_confirmo)
+        return 5
+    ok, lines = cierre.cierra(pid, common, e, gobierno.estado(pid, e), a.estado,
+                              a.nota + (" — confirmó el usuario: %s (%s)" % (d["id"], d.get("respuesta", "")) if d else ""),
+                              bool(d), a.sin_push)
+    print("\n".join(lines))
+    if ok:
+        print("")
+        print(lote.render_propuesta(lote.propone(pid, common)))
+    return 0 if ok else 5
+
+
+def cmd_corrige(a):
+    import heuristicas
+    pid, _ = project(a.proyecto)
+    e = agent_entry(pid, a.agente)
+    code, text = heuristicas.corrige(pid, e, a.resumen, a.firma, a.reporte)
+    if code == 0:
+        print("Corrección registrada. Mándasela TAL CUAL por SendMessage a %s (to = la dirección de su último mensaje, o "
+              "su nombre), y termina tu turno:" % e["nombre"])
+    print(text)
+    return code
+
+
+def cmd_puerto(a):
+    import ports
+    pid, _ = project(a.proyecto)
+    e = agent_entry(pid, a.agente)
+    if e.get("sin_worktree") or not (e.get("worktree") or e.get("cwd")):
+        print("%s no tiene worktree propio: no levanta servidores." % e["nombre"])
+        return 5
+    wt = e.get("worktree") or e.get("cwd")
+    port = ports.asigna(wt)
+    if not port:
+        print("No hay puerto libre en %d-%d." % (ports.base(), ports.base() + ports.span() - 1))
+        return 4
+    print("%s (%s): puerto %d. Si no lo lanzó lookout (no tiene $PORT), mándale por SendMessage: \"Para tu servidor "
+          "de desarrollo usa el puerto %d (PORT=%d); otros worktrees levantan los suyos a la vez.\"" % (
+              e["nombre"], wt, port, port, port))
+    return 0
+
+
+def cmd_relevo(a):
+    pid, _ = project(a.proyecto)
+    lk = lock.read(pid) or {}
+    if (lk.get("supervisor") or {}).get("session_id") != lock.me()["session_id"]:
+        print("No releva nada: el candado de %s no es de esta sesión." % pid)
+        return 3
+    e = agent_entry(pid, a.agente)
+    retomar = ""
+    if a.retomar:
+        with open(a.retomar, encoding="utf-8") as fh:
+            retomar = fh.read()
+    ok, msg = relevo.relevo(pid, e, nota_for(pid), retomar, a.modelo, a.confirmar, log=lambda m: print("  " + m))
+    print(msg)
+    return 0 if ok else 4
+
+
+def cmd_decision(a):
+    pid, _ = project(a.proyecto)
+    if a.abre:
+        agentes = [x for x in (a.agentes or "").split(",") if x]
+        previas = decisiones.tomadas_de(pid, agentes)
+        if previas and not a.nueva:
+            # Fase 4: a relief (or a forgetful turn) must not ask the user again what is already decided.
+            print("NO ABIERTA: ya hay decisiones del usuario sobre %s:" % ", ".join(agentes))
+            for d in previas:
+                print("- %s: %s → %s: %s" % (d["id"], d["texto"], "SÍ" if d.get("aprueba") else "NO", d.get("respuesta", "")))
+            print("Si una de ellas ya responde esto, úsala y no preguntes. Si es otra cosa, repite con --nueva.")
+            return 5
+        it = decisiones.abre(pid, a.abre, agentes)
+        supervisor_md.write(pid)
+        print("Decisión %s abierta (aviso de herdr mostrado). Ciérrala con `lookout decision %s --cierra %s --respuesta … --si|--no` "
+              "cuando el usuario conteste (--si solo si su respuesta autoriza lo preguntado)." % (it["id"], pid, it["id"]))
+        return 0
+    if a.cierra:
+        if a.si == a.no:
+            print("NO: di si el usuario aprobó: --si (su respuesta autoriza lo preguntado) o --no (no lo autoriza).")
+            return 5
+        it = decisiones.cierra(pid, a.cierra, a.respuesta or "", a.si)
+        supervisor_md.write(pid)
+        print("Decisión %s cerrada." % a.cierra if it else "No hay una decisión abierta %s." % a.cierra)
+        return 0 if it else 5
+    print(decisiones.render(pid) or "Decisiones del usuario pendientes: ninguna.")
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="lookout")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("quien")
+    p = sub.add_parser("inicia"); p.add_argument("proyecto"); p.add_argument("--nombre", default="")
+    p = sub.add_parser("entrega"); p.add_argument("proyecto"); p.add_argument("agente")
+    p.add_argument("--pasos", default="reload,rename,nota"); p.add_argument("--timeout", type=float, default=30)
+    p = sub.add_parser("nota"); p.add_argument("proyecto"); p.add_argument("agente")
+    p = sub.add_parser("resumen"); p.add_argument("proyecto"); p.add_argument("--no-marcar", action="store_true")
+    p.add_argument("--todo", action="store_true")
+    p = sub.add_parser("retomar"); p.add_argument("proyecto")
+    p = sub.add_parser("espera"); p.add_argument("proyecto"); p.add_argument("--timeout", type=float, default=WAITER_TIMEOUT)
+    p = sub.add_parser("suelta"); p.add_argument("proyecto")
+    p = sub.add_parser("pendientes"); p.add_argument("proyecto"); p.add_argument("--tope", type=int, default=None)
+    p.add_argument("--rehacer", action="store_true"); p.add_argument("--match", nargs="+", default=None)
+    p = sub.add_parser("lanza"); p.add_argument("proyecto"); p.add_argument("ids", nargs="+")
+    p.add_argument("--modelo", default=os.environ.get("LOOKOUT_MODELO")); p.add_argument("--confirmar", type=float, default=30)
+    p.add_argument("--tope", type=int, default=None)
+    p = sub.add_parser("libera"); p.add_argument("proyecto"); p.add_argument("agente"); p.add_argument("--fallida", action="store_true")
+    p = sub.add_parser("envia"); p.add_argument("proyecto"); p.add_argument("agente")
+    p.add_argument("--clave"); p.add_argument("--texto"); p.add_argument("--tarea", action="store_true")
+    p.add_argument("--confirmar", type=float, default=30)
+    p = sub.add_parser("gobierno"); p.add_argument("proyecto"); p.add_argument("agente")
+    p.add_argument("--para", choices=["push", "ronda"], default="push"); p.add_argument("--usuario-amplia", type=int)
+    p.add_argument("--decision", default="")
+    p = sub.add_parser("publica"); p.add_argument("proyecto"); p.add_argument("agente", nargs="?")
+    p.add_argument("--hecho", action="store_true"); p.add_argument("--retira", action="store_true")
+    p.add_argument("--cola", action="store_true")
+    p = sub.add_parser("regla-push"); p.add_argument("proyecto"); p.add_argument("--estado", action="store_true")
+    sub.add_parser("permisos")
+    p = sub.add_parser("cierra"); p.add_argument("proyecto"); p.add_argument("agente")
+    p.add_argument("--estado", choices=["resolved", "superseded", "abandoned"], default="resolved"); p.add_argument("--nota", required=True)
+    p.add_argument("--usuario-confirmo", metavar="DECISION_ID", default=""); p.add_argument("--sin-push", default="")
+    p = sub.add_parser("relevo"); p.add_argument("proyecto"); p.add_argument("agente")
+    p.add_argument("--retomar"); p.add_argument("--modelo", default=os.environ.get("LOOKOUT_MODELO"))
+    p.add_argument("--confirmar", type=float, default=30)
+    p = sub.add_parser("decision"); p.add_argument("proyecto"); p.add_argument("--abre"); p.add_argument("--agentes")
+    p.add_argument("--cierra"); p.add_argument("--respuesta"); p.add_argument("--lista", action="store_true")
+    p.add_argument("--si", action="store_true"); p.add_argument("--no", action="store_true")
+    p.add_argument("--nueva", action="store_true")
+    p = sub.add_parser("corrige"); p.add_argument("proyecto"); p.add_argument("agente")
+    p.add_argument("--resumen", required=True); p.add_argument("--firma", default=None)
+    p.add_argument("--reporte", default=None)
+    p = sub.add_parser("puerto"); p.add_argument("proyecto"); p.add_argument("agente")
+    a = ap.parse_args()
+    return {"quien": cmd_quien, "inicia": cmd_inicia, "entrega": cmd_entrega, "nota": cmd_nota,
+            "resumen": cmd_resumen, "espera": cmd_espera, "suelta": cmd_suelta,
+            "pendientes": cmd_pendientes, "lanza": cmd_lanza, "libera": cmd_libera, "envia": cmd_envia,
+            "gobierno": cmd_gobierno, "publica": cmd_publica, "regla-push": cmd_regla_push, "permisos": cmd_permisos, "cierra": cmd_cierra,
+            "relevo": cmd_relevo, "decision": cmd_decision, "retomar": cmd_retomar, "corrige": cmd_corrige,
+            "puerto": cmd_puerto}[a.cmd](a) or 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

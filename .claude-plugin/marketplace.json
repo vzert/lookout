@@ -1,0 +1,17 @@
+{
+  "name": "lookout-marketplace",
+  "owner": {
+    "name": "vzert"
+  },
+  "metadata": {
+    "description": "Marketplace of lookout: a supervisor for the coding agents of one project running in herdr panes.",
+    "version": "0.7.0"
+  },
+  "plugins": [
+    {
+      "name": "lookout",
+      "source": "./plugins/lookout",
+      "description": "Supervise the coding agents of one project running in herdr panes."
+    }
+  ]
+}

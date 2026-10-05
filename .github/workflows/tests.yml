@@ -1,0 +1,44 @@
+name: tests
+
+# Runs tools/run-tests.sh (shell syntax, Python compiles, manifests + version rule + skill frontmatter, unit suite) on
+# Linux and macOS. herdr is never needed: the suite replaces it with tests/fixtures/herdr_stub.py.
+# The closing tests (pendiente.resolve by journal) need 3-tier's journal scripts: CI takes them from the public
+# vzert/3-tier-memory repo; without them those 2 tests are skipped and counted, never passed.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  suite:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: tool versions
+        run: |
+          uname -s
+          bash --version | head -1
+          python3 --version
+          git --version
+      - name: git identity (the tests make commits in temp repos)
+        run: |
+          git config --global user.name "lookout CI"
+          git config --global user.email "ci@example.invalid"
+          git config --global init.defaultBranch main
+      - name: PyYAML (frontmatter check)
+        run: |
+          python3 -m pip install --user pyyaml \
+            || python3 -m pip install --user --break-system-packages pyyaml
+          python3 -c "import yaml; print('PyYAML', yaml.__version__)"
+      - name: 3-tier journal scripts (closing tests)
+        run: |
+          git clone --depth 1 https://github.com/vzert/3-tier-memory.git "$RUNNER_TEMP/3-tier-memory"
+          echo "LOOKOUT_3TIER_BIN=$RUNNER_TEMP/3-tier-memory/plugins/3-tier-memory/bin" >> "$GITHUB_ENV"
+      - name: run-tests
+        run: bash tools/run-tests.sh

@@ -1,0 +1,41 @@
+# lookout — reglas de permisos de los ejecutores (D6, Fase 5)
+#
+# Esta es la PLANTILLA del plugin. No se aplica sola: el evaluador solo aprueba algo cuando el usuario
+# la activó en su propio archivo ~/.config/lookout/permisos.toml con `activo = true`. Ese archivo puede
+# además ajustar cualquier lista de abajo (misma forma; una lista suya reemplaza a la de aquí).
+# El supervisor nunca escribe ese archivo.
+#
+# Qué hace el evaluador (hook PermissionRequest del ejecutor, solo en sesiones supervisadas):
+#   aprueba UNA llamada ("Yes" una vez; nunca "always allow" ni updatedPermissions) si TODO se cumple:
+#     1. el ejecutor está en modo manual (permission_mode "default"). En auto, plan o cualquier otro
+#        modo no aprueba nada: en auto mode un diálogo puede venir de un bloqueo del clasificador.
+#     2. la sesión tiene worktree registrado por lookout;
+#     3. la herramienta y su entrada encajan en [archivos] o [bash].
+#   Lo demás se queda en el diálogo para el usuario, con aviso de herdr. Decide por tool_name + tool_input,
+#   nunca por el texto de la pantalla.
+
+[archivos]
+# La ruta real (symlinks resueltos) debe quedar dentro del worktree del agente.
+herramientas = ["Edit", "Write", "MultiEdit", "NotebookEdit"]
+# Nunca, aunque estén dentro del worktree: cualquier componente de la ruta con uno de estos nombres.
+excluir = [".git", ".claude", ".mcp.json", ".gitmodules", ".envrc", ".env", ".vscode", ".idea", ".husky"]
+
+[bash]
+# Un solo comando: se niega si el texto lleva ; & | < > ` $( o salto de línea (también entre comillas).
+# Cada argumento con forma de ruta (empieza con / o ~, o contiene ..) debe quedar dentro del worktree.
+# El comando debe EMPEZAR por una de estas entradas, palabra por palabra.
+comandos = [
+  "git add", "git commit", "git status", "git diff", "git log", "git show", "git mv",
+  "git restore --staged", "git stash list",
+  "mkdir", "touch", "ls", "cat", "head", "tail", "wc", "grep",
+]
+# Aunque empiece por un comando permitido, se niega si contiene alguna de estas palabras.
+palabras_prohibidas = ["--force", "-f", "--amend", "--no-verify", "-C", "--git-dir", "--work-tree", "--exec"]
+
+[usuario]
+# Siempre van al usuario, en cualquier modo. En auto mode lookout además fuerza el diálogo (hook
+# PreToolUse "ask") para que el clasificador no las apruebe solo. Excepción: un push que encaja en la
+# regla temporal que el usuario aplicó con `lookout regla-push` (H15) sigue su regla.
+bash_empieza = ["git push", "git merge", "gh pr merge", "gh release", "gh workflow run", "npm publish"]
+# rm, rmdir y mv con alguna ruta fuera del worktree (o que no se pueda resolver).
+borrar_fuera = ["rm", "rmdir", "mv"]

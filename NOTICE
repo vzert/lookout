@@ -1,0 +1,9 @@
+lookout
+Copyright (c) 2026 Victor Zertuche
+Licensed under the MIT License (see LICENSE).
+
+lookout does not include or depend on third-party code. It calls these tools, which are installed and licensed
+separately: herdr (https://herdr.dev), Claude Code, git, Python 3. It can work together with the goalspec and
+3-tier memory plugins, each installed from its own marketplace.
+
+Ideas credited in CREDITS.md.
