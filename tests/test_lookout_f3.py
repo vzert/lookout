@@ -114,6 +114,29 @@ class GobiernoTest(Base):
         self.assertEqual(gobierno.family("Claude / UNKNOWN"), "")
         self.assertEqual(gobierno.family(""), "")
 
+    def test_stuck_counters_never_wipe_the_tasks(self):
+        # 0.7.3, claude-vzert: heuristicas.py rewrote counters.json whole and `lookout gobierno` crashed (KeyError
+        # 'tareas'); a limit the user raised was lost with it.
+        import heuristicas
+        e = self.agent("s1")
+        self.transcript("s1", [a_text("trabajo")])
+        gobierno.amplia(self.pid, e, 8)
+        heuristicas.guarda_contadores(self.pid)
+        st = gobierno.estado(self.pid, e, self.projects)
+        self.assertEqual(st["limite"], 8)
+        self.assertNotEqual(heuristicas.counters_path(self.pid), gobierno.counters_path(self.pid))
+
+    def test_a_counters_file_without_tareas_is_read(self):
+        # the file an older lookout left: {"ts", "agentes"} and no "tareas"
+        e = self.agent("s1")
+        self.transcript("s1", [a_text("trabajo")])
+        lookout_state.write_json(gobierno.counters_path(self.pid), {"ts": 1, "agentes": {"s9": {"errores": {}}}})
+        st = gobierno.estado(self.pid, e, self.projects)
+        self.assertEqual(st["limite"], gobierno.LIMITE_RONDAS)
+        data = lookout_state.read_json(gobierno.counters_path(self.pid))
+        self.assertIn("tareas", data)
+        self.assertNotIn("agentes", data)
+
     def test_markers_only_count_in_own_text_on_their_own_line(self):
         e = self.agent("s1")
         self.transcript("s1", [

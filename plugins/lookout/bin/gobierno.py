@@ -117,7 +117,17 @@ def counters_path(project_id):
 
 
 def load_counters(project_id):
-    return lookout_state.read_json(counters_path(project_id)) or {"tareas": {}}
+    """{"tareas": {task: {rondas, limite, ultimo, ...}}}. Up to 0.7.2 heuristicas.py also wrote this file and replaced
+    it whole ({"ts", "agentes"}), so an older file may lack "tareas": start it again and drop those keys. A limit the
+    user raised before that overwrite is gone; `lookout gobierno --usuario-amplia` raises it again."""
+    data = lookout_state.read_json(counters_path(project_id)) or {}
+    if not isinstance(data, dict):
+        data = {}
+    data.pop("agentes", None)
+    data.pop("ts", None)
+    if not isinstance(data.get("tareas"), dict):
+        data["tareas"] = {}
+    return data
 
 
 def task_key(entry):

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.3
+
+- Fix: `lookout gobierno` crashed with `KeyError: 'tareas'`. The stuck-agent counters (Fase 6) were written to the same
+  `counters.json` as the adversary-round counters of each task, and replaced the whole file. They now live in
+  `atascado.json`. An older `counters.json` without `tareas` is read and repaired. A round limit the user raised before
+  the overwrite is lost: raise it again with `lookout gobierno … --usuario-amplia`.
+
 ## 0.7.2
 
 - Agents are named to the user by their herdr **tab**, the one thing the user sees: `resumen`, events, herdr

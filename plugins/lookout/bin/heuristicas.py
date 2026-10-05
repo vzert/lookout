@@ -138,7 +138,9 @@ def contadores(events):
 
 
 def counters_path(project_id):
-    return os.path.join(lookout_state.project_dir(project_id), "counters.json")
+    # Its own file: counters.json belongs to gobierno.py (adversary rounds and the user's raised limits per task).
+    # Writing this snapshot there wiped them (0.7.3, KeyError 'tareas' in `lookout gobierno` on claude-vzert).
+    return os.path.join(lookout_state.project_dir(project_id), "atascado.json")
 
 
 class mutex(object):
