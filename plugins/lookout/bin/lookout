@@ -120,18 +120,26 @@ def cmd_inicia(a):
     if relevo_sup:
         supervisor_md.unmark_supervisor((data.get("anterior") or {}).get("session_id", ""))
     supervisor_md.mark_supervisor(me["session_id"], pid)
-    found = discover.discover(common)
-    reg = registry.register(pid, me, found)
+    lock.set_contexto_inicial(pid, me["session_id"], digest.context_tokens(me["session_id"]))
+    todos = herdr_cli.agent_list()
+    found = discover.discover(common, todos)
+    mine = {f.get("session_id") for f in found}
+    ajenos = {t.get("name") for t in todos if (t.get("agent_session") or {}).get("value") not in mine}
+    reg = registry.register(pid, me, found, ajenos)
     others = [f for f in found if f.get("kind") != "claude" or not f.get("session_id")]
     print("Proyecto %s (%s). Raíces: %s" % (pid, common, ", ".join(roots)))
     print("Supervisor: %s → %s" % (me["nombre"], me["address"]))
+    print(nombra_supervisor(me))
     print("")
-    print("nombre | pane | worktree | rama | estado herdr | session")
+    print("Al usuario nombra a cada agente por su pestaña de herdr (columna `pestaña`): es lo que él ve. El pane "
+          "(wS:p25) no le dice nada.")
+    print("nombre | pestaña | worktree | rama | estado herdr | session")
     for e in reg["agents"].values():
-        print("%s | %s | %s | %s | %s | %s" % (e["nombre"], e["pane_id"], e["worktree"], e["branch"] or "-",
+        print("%s | %s | %s | %s | %s | %s" % (e["nombre"], e.get("pestana") or "-", e["worktree"], e["branch"] or "-",
                                              e["estado_herdr"], e["session_id"][:8]))
     for o in others:
-        print("(no registrado: %s en %s, kind=%s, sin session_id de Claude)" % (o["pane_id"], o["cwd"], o["kind"]))
+        print("(no registrado: pestaña %s en %s, kind=%s, sin session_id de Claude)" % (
+            o.get("pestana") or o["pane_id"], o["cwd"], o["kind"]))
     print("")
     md = supervisor_md.write(pid)
     if relevo_sup:
@@ -174,6 +182,40 @@ def box_state(pane):
     return inputbox.classify(out) if code == 0 else "desconocida"
 
 
+SUPERVISOR_TAB = "Supervisor"
+
+
+def nombra_supervisor(me):
+    """Name the supervisor's own herdr tab, pane and Claude session, so the user tells it apart at a glance.
+
+    The tab becomes "Supervisor" only when it holds just this pane and nobody named it (a label the user chose
+    stays). The session gets `/rename <nombre>` through herdr: herdr accepts a prompt while the session is working
+    and Claude Code applies a queued /rename (spike 2026-10-05: custom-title written, terminal title changed); it
+    is skipped when the input box has text (the user is typing there) or the session already has that name."""
+    pane = me.get("pane") or ""
+    if not pane:
+        return "Supervisor sin pane de herdr: no renombro pestaña ni sesión."
+    live = herdr_cli.agent_get(pane) or {}
+    tab = herdr_cli.tab_get(live.get("tab_id", ""))
+    hecho = []
+    if tab and (tab.get("pane_count") or 1) == 1 and not herdr_cli.own_label(tab):
+        if herdr_cli.run(["tab", "rename", live["tab_id"], SUPERVISOR_TAB])[0] == 0:
+            hecho.append("pestaña «%s»" % SUPERVISOR_TAB)
+    elif tab:
+        hecho.append("pestaña «%s» (la dejo: tiene nombre propio o más panes)" % (tab.get("label") or ""))
+    herdr_cli.run(["pane", "rename", pane, "lookout: supervisor"])
+    nombre = me.get("nombre") or ""
+    if nombre and (live.get("terminal_title_stripped") or "") != nombre:
+        if box_state(pane) in ("vacia", "sugerencia"):
+            herdr_cli.run(["agent", "prompt", pane, "/rename " + nombre])
+            hecho.append("sesión «%s» (al terminar este turno)" % nombre)
+        else:
+            hecho.append("sesión sin renombrar: la caja de entrada tiene texto")
+    elif nombre:
+        hecho.append("sesión «%s»" % nombre)
+    return "Supervisor en herdr: " + (", ".join(hecho) or "sin cambios") + "."
+
+
 def cmd_entrega(a):
     pid, _ = project(a.proyecto)
     reg = registry.load(pid)
@@ -202,7 +244,13 @@ def cmd_entrega(a):
         herdr_cli.run(["agent", "rename", pane, entry["nombre"]])
         herdr_cli.run(["pane", "rename", pane, "lookout: " + entry["nombre"]])
         entry["herdr_name"] = entry["nombre"]
-        print("rename: %s (sesión, agente de herdr y pane)" % entry["nombre"])
+        # The tab is what the user sees. herdr's default label (the tab number) names nothing: put the agent's name
+        # there. A label the user chose, or a tab shared with other panes, is never touched.
+        tab = herdr_cli.tab_get(live.get("tab_id") or entry.get("tab_id", ""))
+        if tab and (tab.get("pane_count") or 1) == 1 and not herdr_cli.own_label(tab):
+            if herdr_cli.run(["tab", "rename", live.get("tab_id") or entry["tab_id"], entry["nombre"]])[0] == 0:
+                entry["pestana"] = entry["nombre"]
+        print("rename: %s (sesión, agente de herdr y pane; pestaña «%s»)" % (entry["nombre"], entry.get("pestana") or "-"))
     if "nota" in pasos:
         try:
             offset = os.path.getsize(lookout_state.events_path(pid))
@@ -236,7 +284,12 @@ def cmd_retomar(a):
     """Rewrite supervisor.md and print its «Como retomar» (manual relief of the supervisor, Fase 4)."""
     pid, _ = project(a.proyecto)
     md = supervisor_md.write(pid)
-    print("Estado escrito en %s. Dale al usuario este bloque tal cual y pídele /exit (o /clear) y pegarlo en la sesión nueva:" % md)
+    # The relief needs the user (/exit or /clear + paste): a line in the chat got lost on claude-vzert (2026-10-05).
+    herdr_cli.run(["notification", "show", "lookout: el supervisor necesita relevo",
+                   "--body", "Su contexto llegó al presupuesto. Abre la pestaña «Supervisor»: /exit o /clear y pega su "
+                   "«Como retomar». Mientras tanto sigue vigilando.", "--sound", "request"], timeout=3)
+    print("Estado escrito en %s. Dale al usuario este bloque tal cual y pídele /exit (o /clear) y pegarlo en la sesión nueva."
+          " Sigue supervisando (y relanzando tu waiter) hasta que el relevo tome el candado:" % md)
     print(supervisor_md.retomar_block(pid))
     return 0
 
@@ -403,7 +456,9 @@ def cmd_permisos(a):
     print("Plantilla del plugin: %s" % permisos.TEMPLATE)
     print("Archivo del usuario: %s" % permisos.user_rules_path())
     print("Las activa el USUARIO creando ese archivo con `activo = true` (yo no lo escribo). Solo aprueban en modo")
-    print("manual, una vez por llamada; en auto mode nada se aprueba y push/merge/borrados fuera del worktree piden diálogo.")
+    print("manual, una vez por llamada; en auto mode nada se aprueba, y push, merge, publicar, gh repo delete/archive,")
+    print("gh api con escritura y borrados fuera del worktree piden diálogo (leído del texto del comando: cubre las formas")
+    print("usuales, no las que el texto no muestra; el clasificador de auto mode sigue juzgando cada comando).")
     print("Bash permitido: " + ", ".join((rules.get("bash") or {}).get("comandos") or []))
     return 0 if rules["activo"] else 5
 

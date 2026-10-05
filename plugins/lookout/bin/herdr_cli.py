@@ -40,6 +40,25 @@ def agent_get(target):
     return res.get("agent")
 
 
+def tab_get(tab_id):
+    """The tab as herdr shows it: label, number, pane_count. None on any failure."""
+    if not tab_id:
+        return None
+    res = run_json(["tab", "get", tab_id]) or {}
+    return res.get("tab")
+
+
+def own_label(tab):
+    """The tab's label when someone chose it; '' for herdr's default (the tab number) or no tab.
+
+    A new herdr tab is labelled with its number ("1"); `herdr tab rename` or the UI replaces it (seen 2026-10-05:
+    "Cambio DeepSeek" on tab 69, "1" on an untouched tab)."""
+    if not tab:
+        return ""
+    label = str(tab.get("label") or "").strip()
+    return "" if label in ("", str(tab.get("number", ""))) else label
+
+
 def report_metadata(pane, estado, display=None, ttl_ms=3600000, timeout=3):
     """Display-only label on the pane (V3 plan B). Silent on any failure."""
     if not pane:

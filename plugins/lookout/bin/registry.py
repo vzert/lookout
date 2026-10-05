@@ -1,7 +1,8 @@
 """Identity registry of a project's agents, keyed by Claude session_id (docs/plan.md 3.3).
 
 Each agent gets one descriptive name (V12) that the supervisor applies in three layers:
-/rename (Claude session -> ListAgents name), `herdr agent rename` and `herdr pane rename`.
+/rename (Claude session -> ListAgents name), `herdr agent rename` and `herdr pane rename`. When the user already
+named the agent's herdr tab, the name comes from that label, and the user is always told the tab (`quien`).
 """
 import os
 import re
@@ -48,10 +49,16 @@ def git_info(cwd):
 
 
 def propose_name(agent, worktree, taken):
-    base = os.path.basename(worktree or agent.get("cwd", "")) or "agente"
-    title = agent.get("title", "").strip()
-    tail = "" if title.lower() in GENERIC_TITLES or title.startswith(base) else slug(title)
-    name = slug(base, 20) + ("-" + tail if tail else "")
+    """A tab the user named, alone in its tab, gives the name (what the user sees in herdr is what lookout says).
+    Otherwise: worktree folder + the session title."""
+    own = slug(agent.get("pestana_propia") or "", 40) if (agent.get("pestana_panes") or 1) == 1 else ""
+    if own:
+        name = own
+    else:
+        base = os.path.basename(worktree or agent.get("cwd", "")) or "agente"
+        title = agent.get("title", "").strip()
+        tail = "" if title.lower() in GENERIC_TITLES or title.startswith(base) else slug(title)
+        name = slug(base, 20) + ("-" + tail if tail else "")
     name = name[:40].rstrip("-")
     candidate, n = name, 2
     while candidate in taken:
@@ -60,11 +67,25 @@ def propose_name(agent, worktree, taken):
     return candidate
 
 
-def register(project_id, supervisor, agents):
-    """Add or refresh the discovered agents; write their supervision markers. Returns the registry."""
+def quien(entry):
+    """How to name an agent to the user: its herdr tab, which is what the user sees (a pane id says nothing).
+    'Cambio DeepSeek (cambio-deepseek)' when they differ; the name alone when the tab carries it or is unknown."""
+    nombre = entry.get("nombre") or ""
+    tab = (entry.get("pestana") or "").strip()
+    if not tab or tab == nombre:
+        return nombre
+    return "%s (%s)" % (tab, nombre)
+
+
+def register(project_id, supervisor, agents, ajenos=()):
+    """Add or refresh the discovered agents; write their supervision markers. Returns the registry.
+
+    A registered agent keeps its name (agents address the supervisor and are addressed by it); only new ones get
+    one. `ajenos`: herdr names of other agents in the herdr session, which a new name must not take (herdr names
+    are unique across the whole session)."""
     reg = load(project_id)
     known = reg.setdefault("agents", {})
-    taken = {a.get("nombre") for a in known.values()}
+    taken = {a.get("nombre") for a in known.values()} | set(n for n in ajenos if n)
     for a in agents:
         sid = a.get("session_id")
         if not sid or a.get("kind") != "claude":
@@ -77,6 +98,10 @@ def register(project_id, supervisor, agents):
         entry.update({
             "session_id": sid,
             "pane_id": a.get("pane_id", ""),
+            "tab_id": a.get("tab_id", ""),
+            "pestana": a.get("pestana", ""),
+            "pestana_propia": a.get("pestana_propia", ""),
+            "pestana_panes": a.get("pestana_panes") or 1,
             "terminal_id": a.get("terminal_id", ""),
             "herdr_name": a.get("herdr_name", ""),
             "cwd": a.get("cwd", ""),

@@ -142,10 +142,28 @@ class DigestBudgetTest(Base):
         self.transcript(SUP, [{"type": "assistant", "message": {"id": "m1", "usage": {
             "input_tokens": 3, "cache_read_input_tokens": 125000, "cache_creation_input_tokens": 2000}}}])
         self.assertEqual(digest.presupuesto_line(PID, session_id="otro"), "")
+        # 0.7.2: the budget counts from what the session held at `inicia` (a fixed 120k forced a relief after 7
+        # minutes on claude-vzert, whose supervisor started at 71k). Without that record: 370k.
+        import lock
+        self.assertEqual(digest.presupuesto_limite(PID), (370000, 0))
+        lock.set_contexto_inicial(PID, "otro", 50000)  # only the lock owner records it
+        self.assertEqual(digest.presupuesto_limite(PID), (370000, 0))
+        # `inicia` found no usage line yet (the transcript lags): the first summary records the size then
+        self.assertEqual(digest.presupuesto_line(PID, session_id=SUP), "Contexto: 127k de 427k (arranque 127k + 300k).")
+        lock.set_contexto_inicial(PID, SUP, 90000)  # once recorded for this session, it is kept
+        self.assertEqual(digest.presupuesto_limite(PID), (427003, 127003))
+        path = os.path.join(lookout_state.project_dir(PID), "lock.json")
+        data = lookout_state.read_json(path)
+        data["contexto_inicial"] = 71000
+        lookout_state.write_json(path, data)
+        self.assertIn("Contexto: 127k de 371k (arranque 71k + 300k).", digest.presupuesto_line(PID, session_id=SUP))
+        self.transcript(SUP, [{"type": "assistant", "message": {"id": "m2", "usage": {
+            "input_tokens": 3, "cache_read_input_tokens": 372000, "cache_creation_input_tokens": 0}}}])
         line = digest.presupuesto_line(PID, session_id=SUP)
-        self.assertIn("Contexto: 127k de 120k", line)
         self.assertIn("PRESUPUESTO SUPERADO", line)
         self.assertIn("lookout retomar %s" % PID, line)
+        self.transcript(SUP, [{"type": "assistant", "message": {"id": "m3", "usage": {
+            "input_tokens": 3, "cache_read_input_tokens": 125000, "cache_creation_input_tokens": 2000}}}])
         os.environ["LOOKOUT_PRESUPUESTO"] = "150000"
         self.assertNotIn("SUPERADO", digest.presupuesto_line(PID, session_id=SUP))
         os.environ["CLAUDE_CODE_SESSION_ID"] = SUP

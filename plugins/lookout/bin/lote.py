@@ -397,13 +397,20 @@ def lanza_uno(project_id, common_dir, item, plan, draft, modelo, confirmar, log,
     # herdr agent names are unique across the whole herdr session, not per project (agent_name_taken,
     # seen 2026-10-02 with two test repos): suffix the name if another agent already has it.
     plan = dict(plan, nombre=unique_name(plan["nombre"]))
+    # `--label` names the new WORKSPACE; its tab keeps herdr's default label "1" (seen 2026-10-05). The tab is what the
+    # user looks for, so it carries the agent's name too.
+    tab_id = ((res or {}).get("tab") or {}).get("tab_id") or ((res or {}).get("root_pane") or {}).get("tab_id") or ""
+    pestana = ""
+    if tab_id and herdr_cli.run(["tab", "rename", tab_id, plan["nombre"]])[0] == 0:
+        pestana = plan["nombre"]
     sid = str(uuid.uuid4())
     lk = lookout_state.read_json(os.path.join(lookout_state.project_dir(project_id), "lock.json")) or {}
     sup = lk.get("supervisor") or {}
     sysfile = system_prompt(project_id, item, draft, nota)
     reg = registry.load(project_id)
     reg.setdefault("agents", {})[sid] = {
-        "session_id": sid, "nombre": plan["nombre"], "pane_id": pane, "terminal_id": "", "herdr_name": plan["nombre"],
+        "session_id": sid, "nombre": plan["nombre"], "pane_id": pane, "tab_id": tab_id, "pestana": pestana,
+        "terminal_id": "", "herdr_name": plan["nombre"],
         "cwd": wt, "worktree": wt, "branch": plan["rama"], "estado_herdr": "", "hooks": "sin-confirmar",
         "tarea": item["id"], "tarea_estado": "lanzando", "prompt_sistema": sysfile, "base": plan["base"],
         "sin_worktree": bool(plan.get("sin_worktree")), "modelo": modelo or "",

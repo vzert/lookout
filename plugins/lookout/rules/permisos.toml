@@ -33,9 +33,10 @@ comandos = [
 palabras_prohibidas = ["--force", "-f", "--amend", "--no-verify", "-C", "--git-dir", "--work-tree", "--exec"]
 
 [usuario]
-# Siempre van al usuario, en cualquier modo. En auto mode lookout además fuerza el diálogo (hook
-# PreToolUse "ask") para que el clasificador no las apruebe solo. Excepción: un push que encaja en la
+# lookout nunca las aprueba, en ningún modo. En auto mode además fuerza el diálogo (hook PreToolUse
+# "ask") para que el clasificador no las apruebe solo. Ese diálogo se decide leyendo el texto del
+# comando: cubre las formas usuales, no un comando armado de forma que el texto no muestre. Excepción: un push que encaja en la
 # regla temporal que el usuario aplicó con `lookout regla-push` (H15) sigue su regla.
-bash_empieza = ["git push", "git merge", "gh pr merge", "gh release", "gh workflow run", "npm publish"]
+bash_empieza = ["git push", "git merge", "gh pr merge", "gh release", "gh workflow run", "gh repo delete", "gh repo archive", "npm publish"]
 # rm, rmdir y mv con alguna ruta fuera del worktree (o que no se pueda resolver).
 borrar_fuera = ["rm", "rmdir", "mv"]

@@ -120,13 +120,14 @@ def render(project_id, now=None):
          "", "## Candado",
          "- supervisor: %s, sesión %s, pid %s, dirección %s, desde %s" % (
              sup.get("nombre"), sup.get("session_id"), sup.get("pid"), sup.get("address"), lk.get("desde")),
-         "", "## Agentes y tareas", "nombre | pane | rama | tarea | estado de la tarea | último evento"]
+         "", "## Agentes y tareas", "pestaña (nombre) | rama | tarea | estado de la tarea | último evento",
+         "Al usuario nombra a cada agente por su pestaña de herdr; el pane no le dice nada."]
     for sid, e in reg.get("agents", {}).items():
         if e.get("tarea_estado") == "relevada":
             continue
         ev = last.get(sid)
-        L.append("%s | %s | %s | %s | %s | %s" % (
-            e.get("nombre"), e.get("pane_id"), e.get("branch") or "-", e.get("tarea") or "-", e.get("tarea_estado") or "-",
+        L.append("%s | %s | %s | %s | %s" % (
+            registry.quien(e), e.get("branch") or "-", e.get("tarea") or "-", e.get("tarea_estado") or "-",
             ("%s %s" % (ev.get("event"), hhmm(ev.get("ts")))) if ev else "sin eventos"))
     L += ["", "## Decisiones del usuario — tomadas"]
     respuestas = [x for x in slog if x.get("tipo") == "usuario"]

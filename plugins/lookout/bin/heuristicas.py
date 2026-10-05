@@ -510,10 +510,10 @@ def transicion(project_id, ev, notificar=True):
         data[sid] = {"grupo": new, "ts": time.time(), "por": ev.get("event"), "avisado": avisa}
         lookout_state.write_json(grupos_path(project_id), data)
     if avisa:
-        who = ev.get("nombre") or entry.get("nombre") or sid[:8]
+        who = (registry.quien(entry) if entry.get("nombre") else "") or ev.get("nombre") or sid[:8]
         title = "lookout: %s %s" % (who, "te necesita" if new == "te_necesita" else "está listo para revisar")
         import digest
-        herdr_cli.run(["notification", "show", title[:120], "--body", digest.describe(ev)[:300]], timeout=3)
+        herdr_cli.run(["notification", "show", title[:120], "--body", digest.describe(ev, {sid: who})[:300]], timeout=3)
     return old, new, avisa
 
 

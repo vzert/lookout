@@ -61,15 +61,42 @@ claude plugin install 3-tier-memory@3-tier-memory-marketplace
 
 ## Use
 
-Start the agents of a project in herdr panes. Then, in one more Claude Code session (also in a herdr pane):
+Start the supervisor **inside the project**, so you never type a path:
 
-```
-/lookout:supervisa /path/to/the/project
-/lookout:pendientes /path/to/the/project
-```
+1. In herdr, open one more pane in the project folder and start `claude` there.
+2. Type one of these. The `.` means "this project":
 
-Agents that were already running when you installed lookout get `/reload-plugins` from the supervisor, so their
-hooks are active.
+| You want to… | Type |
+|---|---|
+| supervise the agents that already work on the project | `/lookout:supervisa .` |
+| give open 3-tier pendientes to new agents | `/lookout:pendientes .` |
+
+The supervisor finds the project's agents by itself: the main checkout and its git worktrees. It does not count its
+own session as an agent. It names its own herdr tab «Supervisor» (unless you named it) and tells you about each agent
+by the name of its tab, the one you see. If you named an agent's tab, the agent takes its name from it. A full path (`/lookout:supervisa /path/to/the/project`) also works, from any folder.
+
+If the supervisor session was already open when you installed lookout, run `/reload-plugins` in it first. Agents
+that were already running get `/reload-plugins` from the supervisor, so their hooks are active.
+
+### What happens next
+
+- The supervisor sleeps until something happens: an agent writes to it, or its waiter reports an event. It does not
+  poll the screens.
+- herdr notifies you only when an agent **needs you** or is **ready for review**.
+- It decides what can be undone (take the recommended option, ask for another review round, follow the plan, correct
+  an agent that repeats an error, at most twice). It asks you about what cannot be undone (push, merge to main,
+  deletes, closing a pendiente), with the exact command for you to run with `!`.
+- With `/lookout:pendientes .` it proposes a batch of at most 3 pendientes (blocked ones and those with a future
+  review date are left out; items that touch the same files go one after the other). You approve the batch once.
+  Each agent works in its own branch and worktree.
+- When you want to stop, tell the supervisor. It releases the project and tells the agents to ask you again.
+
+| Message | Meaning |
+|---|---|
+| `NO ARRANCO` | herdr is missing, too old, or its server is not running. Nothing was touched. |
+| `AVISO: goalspec no está instalado` | lookout goes on, without an independent review before a push. |
+| `CANDADO OCUPADO` | another supervisor already has this project. There is one per project. |
+| `en pausa (límite del proveedor)` | an agent hit a usage limit. It is not a failure; it resumes by itself. |
 
 ### Tool permissions of the agents
 
@@ -77,7 +104,10 @@ By default every permission dialog of an agent stays with you. lookout can appro
 trivial actions inside an agent's own worktree. It does this only in manual mode, never with "always allow", and only
 after **you** turn the rules on. The supervisor shows the rules and where to turn them on with `lookout permisos`. The template is in
 `plugins/lookout/rules/permisos.toml`. You copy it to `~/.config/lookout/permisos.toml` and set `activo = true`. The
-supervisor never writes that file. Push, merge, publishing and deletes outside the worktree always go to you.
+supervisor never writes that file. lookout never approves a push, merge, publishing or delete outside the worktree.
+In auto mode it also forces a dialog for them, reading the command text: that catches the usual forms (including
+`sh -c`, `xargs`, `find -exec`, `gh api` writes), but it is a tripwire, not a boundary — a command built in ways the
+text does not show can pass it, and auto mode's own classifier still judges every command.
 
 ## Update
 
@@ -85,6 +115,10 @@ supervisor never writes that file. Push, merge, publishing and deletes outside t
 claude plugin marketplace update lookout-marketplace
 claude plugin update lookout@lookout-marketplace
 ```
+
+Agents that are already running keep the old version's hooks (permissions, events) until they reload: run
+`/reload-plugins` in each agent's tab, or ask the supervisor to deliver it (`lookout entrega <project> <agent> --pasos
+reload`). A relief supervisor does not do this on its own.
 
 Claude Code keeps one copy of a plugin per version. Each release bumps the version in
 `plugins/lookout/.claude-plugin/plugin.json` and in `.claude-plugin/marketplace.json` (`metadata.version`), and CI

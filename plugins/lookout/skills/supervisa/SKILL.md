@@ -16,17 +16,20 @@ sin `&&`, `;` ni `|` (cada subcomando tendría que tener su propio permiso).
 
 1. `lookout inicia <ruta>` — toma el candado del proyecto, descubre a los agentes por `git-common-dir`
    (incluye worktrees), los registra con un nombre único y marca sus sesiones como supervisadas.
-   - Si imprime **CANDADO OCUPADO**: dile al usuario quién lo tiene (nombre, pane, desde cuándo) y **para**.
+   - Si imprime **CANDADO OCUPADO**: dile al usuario quién lo tiene (nombre, desde cuándo) y **para**.
      No tomes nada ni toques a esos agentes.
    - Si imprime **NO ARRANCO**: herdr falta, es más viejo que el mínimo, o su cliente y su servidor no son compatibles.
      Pásale al usuario el motivo tal cual y **para**. No reintentes ni rodees el chequeo.
    - Si imprime **AVISO: goalspec no está instalado**: díselo al usuario y sigue. Sin goalspec no hay veredicto del
      adversario antes de un push; `lookout gobierno` dirá `SIN-GOALSPEC` (abajo).
    - Anota el `project_id` que imprime: lo usan los demás comandos.
+   - `inicia` también nombra **tu** pestaña de herdr «Supervisor» (si nadie la nombró y solo tiene tu pane) y tu
+     sesión (`/rename supervisor-<repo>`, aplicado al terminar el turno). Así el usuario te distingue de un vistazo.
 2. Para cada agente de la tabla: `lookout entrega <project_id> <nombre>`.
    Hace, solo si el agente está idle y su caja de entrada vacía: `/reload-plugins` (activa los hooks del
    plugin en una sesión que arrancó antes de instalarlo), `/rename` + nombres de herdr (un solo nombre en
-   todas partes) y la **nota de reporte**. Confirma los hooks con el evento `UserPromptSubmit` de la nota.
+   todas partes; si el usuario ya había nombrado la pestaña, el nombre sale de ella; si la pestaña tenía el número
+   que pone herdr, toma el nombre del agente; una pestaña nombrada por el usuario no se toca) y la **nota de reporte**. Confirma los hooks con el evento `UserPromptSubmit` de la nota.
    - `NO ENTREGADO … está working`: no insistas; entrégalo cuando llegue su evento `terminó su turno`.
    - `NO ENTREGADO … caja de entrada tiene borrador`: el usuario está escribiendo ahí. No escribas encima; avísale.
    - `hooks SIN CONFIRMAR`: dilo al usuario; ese agente no te avisará por hooks. Suscríbete a su fin de
@@ -34,7 +37,11 @@ sin `&&`, `;` ni `|` (cada subcomando tendría que tener su propio permiso).
      (un solo aviso; vuelve a suscribirte tras cada aviso). Ojo: no avisa mientras esté en un diálogo.
 3. Lanza el waiter: Bash con `run_in_background: true` y `timeout: 7200000`: `lookout espera <project_id>`.
 4. Carga ya `SendMessage` (ToolSearch `select:SendMessage`) si no lo tienes: lo usarás en cada respuesta.
-5. Muestra al usuario una tabla corta: agente, rama/worktree, estado, qué espera de él. Termina tu turno.
+5. Muestra al usuario una tabla corta: pestaña, agente, rama/worktree, estado, qué espera de él. Termina tu turno.
+
+**Cómo nombrar a un agente ante el usuario:** por su **pestaña de herdr**, que es lo que él ve: «**Cambio DeepSeek**
+espera tu permiso…». `resumen` y los eventos ya lo traen así: `Cambio DeepSeek (cambio-deepseek)`. **Nunca le cites el
+pane** (`wS:p25`): no lo ve en ningún lado. El pane y el nombre son para tus comandos (`lookout`, `herdr`, `SendMessage`).
 
 ## Si eres el relevo de otro supervisor
 
@@ -79,7 +86,7 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
 - **`espera tarea de fondo`**: el agente espera un proceso suyo (p. ej. su adversario o un CI).
   **No está terminado ni atascado.** No lo empujes; dile al usuario que espera esa tarea si pregunta.
 - **`espera permiso`**: un diálogo de permiso en su pane que las reglas del usuario no cubren (el motivo va
-  entre paréntesis). El usuario ya recibió el aviso de herdr. Dile en una línea qué agente espera, la
+  entre paréntesis). El usuario ya recibió el aviso de herdr. Dile en una línea qué agente espera (por su pestaña), la
   herramienta, el comando y el motivo. **Tú nunca apruebas permisos**: ni por `SendMessage`, ni con teclas
   (`send-keys`), ni escribiendo reglas o `settings`. Lo trivial ya lo aprobó el evaluador de reglas, una vez
   (`permiso aprobado por regla`, solo informativo). Si el motivo es «reglas no activadas», pásale al usuario lo que
@@ -205,12 +212,19 @@ Tu estado vive en `supervisor.md` (estado de lookout, no en la memoria 3-tier de
 cada `resumen`, en cada `decision` y antes de compactar tu contexto; tus `SendMessage` y las respuestas del usuario a
 tus `AskUserQuestion` se registran solos. No tienes que anotarlos.
 
-Cuando `resumen` diga `PRESUPUESTO SUPERADO` (o el usuario pida relevarte):
+El presupuesto cuenta desde lo que tu sesión ya ocupaba al correr `lookout inicia` (la línea dice
+`Contexto: Nk de Lk (arranque Bk + 300k)`). **Solo** te relevas cuando `resumen` diga `PRESUPUESTO SUPERADO`, o cuando el
+usuario lo pida. Un número alto sin esa marca no es motivo: sigue supervisando.
+
+Cuando toque:
 1. Cierra lo que esté a medias en este turno (respuestas pendientes a agentes; una decisión del usuario que no ha
    contestado queda abierta y viaja en el «Como retomar»).
-2. `lookout retomar <project_id>` — reescribe `supervisor.md` e imprime el bloque «Como retomar».
-3. Dale al usuario ese bloque **tal cual** y pídele: `/exit` (o `/clear`) y pegarlo en la sesión nueva. Termina tu turno.
-   No lances otro waiter.
+2. `lookout retomar <project_id>` — reescribe `supervisor.md`, imprime el bloque «Como retomar» y le manda al usuario
+   un aviso de herdr («el supervisor necesita relevo»).
+3. Dale al usuario ese bloque **tal cual** y pídele: `/exit` (o `/clear`) y pegarlo en la sesión nueva.
+4. **Sigue supervisando hasta que llegue el relevo**: relanza tu waiter como siempre y atiende lo que llegue. Un
+   proyecto sin waiter no ve a nadie. Cuando el relevo corre `lookout inicia`, toma el candado y tu waiter se cierra
+   solo; no tienes que hacer nada más.
 
 Gastar poco: lee `resumen`, no pantallas; una lectura de pantalla solo si falta un reporte que esperas; respuestas
 cortas al usuario. `lookout resumen --todo` solo si el resumen dice que dejó eventos sin mostrar y los necesitas.

@@ -11,6 +11,9 @@ Conf keys:
   read_after_prompt: new `agent_read` value once a prompt or Enter was sent
   version:     text printed for `--version` (default "herdr 0.9.1"); version_rc: its exit code
   status:      dict printed as JSON for `status --json` (default: client and server 0.9.1, compatible)
+  agent_list:  list returned by `agent list` (default [])
+  tabs:        {tab_id: {"label", "number", "pane_count"}} for `tab get` (an unknown tab exits 1)
+  results:     {"<word1> <word2>": result} printed for that command (e.g. "worktree create")
 """
 import json
 import os
@@ -47,6 +50,15 @@ if args[:1] == ["--version"]:
     sys.exit(conf.get("version_rc", 0))
 elif args[:1] == ["status"]:
     print(json.dumps(conf.get("status", STATUS)))
+elif " ".join(args[:2]) in (conf.get("results") or {}):
+    print(json.dumps({"result": conf["results"][" ".join(args[:2])]}))
+elif args[:2] == ["agent", "list"]:
+    print(json.dumps({"result": {"agents": conf.get("agent_list", [])}}))
+elif args[:2] == ["tab", "get"]:
+    tab = (conf.get("tabs") or {}).get(args[2])
+    if tab is None:
+        sys.exit(1)
+    print(json.dumps({"result": {"tab": dict(tab, tab_id=args[2])}}))
 elif args[:2] == ["agent", "get"]:
     print(json.dumps({"result": {"agent": conf.get("agent_get")}}))
 elif args[:2] == ["agent", "read"]:

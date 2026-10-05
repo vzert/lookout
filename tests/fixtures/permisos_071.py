@@ -1,3 +1,5 @@
+# lookout 0.7.1 (ba865a4) permisos.py, frozen: the floor that tests/test_lookout_diferencial.py compares against.
+# Do not edit. A newer version may stop a dialog only where that test says it may.
 #!/usr/bin/env python3
 """Tool permissions of the executors (D6, docs/plan.md 3.12 and Fase 5). Runs behind hooks/guard.sh, synchronous.
 
@@ -42,7 +44,7 @@ SPLIT_OPS = re.compile(r"&&|\|\||[;&|\n]")
 FILE_KEY = {"NotebookEdit": "notebook_path"}
 GLOB_CHARS = re.compile(r"[*?\[]")
 # [usuario] of the template, used when the rules lack it (template unreadable): the forced dialog fails closed.
-DEFAULT_USUARIO = {"bash_empieza": ["git push", "git merge", "gh pr merge", "gh release", "gh workflow run", "gh repo delete", "gh repo archive", "npm publish"],
+DEFAULT_USUARIO = {"bash_empieza": ["git push", "git merge", "gh pr merge", "gh release", "gh workflow run", "npm publish"],
                    "borrar_fuera": ["rm", "rmdir", "mv"]}
 
 
@@ -238,19 +240,8 @@ def evaluate(tool, ti, worktree, cwd, rules):
 
 # ---------- reserved to the user (forced dialog in auto mode) ----------
 
-WORD_EDGE_L, WORD_EDGE_R = r"(?<![\w./-])", r"(?![\w./-])"
-
-
 def _reserved_regex(entry):
-    """Each word stands alone: `git add bin/checkpoint-push.sh` is not a push (2026-10-05, claude-vzert)."""
-    parts = entry.split()
-    words = [WORD_EDGE_L + re.escape(w) + WORD_EDGE_R for w in parts]
-    words[0] = r"(?<![\w.-])" + re.escape(parts[0]) + WORD_EDGE_R  # the program may come with a path: /usr/bin/git
-    spaced = r"[^;&|\n]*".join(words)
-    # the same words glued by - or . run the same thing: git's own entry point (…/git-core/git-push) or a shell alias
-    # (`git.push`); 0.7.1's \b caught both (adversary 0.7.2 round 8). `checkpoint-push` is not glued to `git`.
-    glued = r"(?<![\w.-])" + r"[.-]".join(re.escape(w) for w in parts) + WORD_EDGE_R
-    return re.compile(spaced + "|" + glued if len(parts) > 1 else spaced)
+    return re.compile(r"\b" + r"\b[^;&|\n]*\b".join(re.escape(w) for w in entry.split()) + r"\b")
 
 
 def _strip_prefix(toks):
@@ -273,51 +264,6 @@ def _glob_subcommand(cmd):
             if j < len(toks) and re.search(r"[*?\[{]", toks[j]):
                 return True
     return False
-
-
-GH_API_WRITE = re.compile(r"(?:-X|--method)[\s=]*(?:POST|PUT|PATCH|DELETE)\b", re.I)
-GH_API_METHOD_DYN = re.compile(r"(?:-X|--method)[\s=]*\S*[$`]")
-GH_API_FIELDS = re.compile(r"(?:^|\s)(?:-[fF]|--field|--raw-field)")
-GH_API_INPUT = re.compile(r"(?:^|\s)--input")
-
-
-def _gh_api_writes(text):
-    """`gh api` that changes something on GitHub (it can merge, delete a repo...): a write method or one built at run
-    time, `--input` (a body the text does not show), or fields (they make gh send a POST) -- except fields on the
-    `graphql` endpoint whose text has no `mutation` and builds nothing at run time. Over-inclusive on purpose."""
-    for part in SPLIT_OPS.split(text):
-        toks = part.split()
-        rest = None
-        for i, t in enumerate(toks):
-            if os.path.basename(t) != "gh":
-                continue
-            j = i + 1  # global options may come before `api` (`gh -R o/r api …`)
-            while j < len(toks) and toks[j].startswith("-"):
-                j += 2 if toks[j] in ("-R", "--repo", "--hostname") else 1
-            if j < len(toks) and toks[j] == "api":
-                rest = " " + " ".join(toks[j + 1:])
-                break
-        if rest is None:
-            continue
-        if GH_API_WRITE.search(rest) or GH_API_METHOD_DYN.search(rest) or GH_API_INPUT.search(rest):
-            return True
-        if GH_API_FIELDS.search(rest):
-            args = [t for t in rest.split() if not t.startswith("-")]
-            endpoint = args[0] if args else ""
-            if not (endpoint == "graphql" and "mutation" not in rest.lower() and "$" not in rest and "`" not in rest):
-                return True
-    return False
-
-
-DYNAMIC = re.compile(r"\b(git|gh|npm)\b[^;&|\n]*(\$|`)")
-
-
-def _dynamic_subcommand(cmd):
-    """0.7.1's rule, unchanged: git/gh/npm followed by `$` or a backtick in the same simple command. Seven adversary
-    rounds on 0.7.2 showed that every exception for "a variable that is only an argument" was a hole (a variable can
-    expand to an option, `git status` writes the index, `cat-file --textconv` runs filters, `"$(…)"` runs a command).
-    Fewer dialogs on reads is the job of a real boundary (docs/plan.md, Fase 8), not of this text rule."""
-    return DYNAMIC.search(cmd) is not None
 
 
 def temp_push_rule_covers(cmd, worktree, cwd):
@@ -343,71 +289,32 @@ def reserved(cmd, worktree, cwd, rules):
     plain = re.sub(r"[\"'\\]", "", cmd)
     dynamic = "$(" in cmd or "`" in cmd or re.search(r"\beval\b|\$\{?[A-Za-z_]", cmd)
     for entry in usr.get("bash_empieza") or []:
-        # The last word must stand alone: "push" inside a file name (checkpoint-push.sh) is not a push (2026-10-05:
-        # a forced dialog on an ssh read that mentioned that script).
         hit = _reserved_regex(entry).search(cmd) or _reserved_regex(entry).search(plain) or (
-            dynamic and re.search(WORD_EDGE_L + re.escape(entry.split()[-1]) + WORD_EDGE_R, plain))
+            dynamic and re.search(r"\b%s\b" % re.escape(entry.split()[-1]), plain))
         if hit:
             if entry == "git push" and temp_push_rule_covers(raw, worktree, cwd):
                 continue
             return entry
-    if _gh_api_writes(plain):
-        return "gh api con escritura"
-    if re.search(r"\beval\b", cmd) or _dynamic_subcommand(cmd):
+    if re.search(r"\beval\b", cmd) or re.search(r"\b(git|gh|npm)\b[^;&|\n]*(\$|`)", cmd):
         return "comando armado en tiempo de ejecución"  # what it runs cannot be read from the text
     if _glob_subcommand(cmd):
         return "subcomando con comodines o llaves"  # `git p*sh`, `git p{u,}sh`: the shell picks the subcommand
     root = worktree or os.path.realpath(cwd)
     deleters = set(usr.get("borrar_fuera") or [])
-    if re.search(r"\|\s*(?:\S*/)?(?:sh|bash|zsh|dash|ksh)(?![\w.-])", cmd):
-        return "script por la entrada de un shell"  # `… | bash`: what runs is not in the text
     for part in SPLIT_OPS.split(cmd):
         try:
             toks = _strip_prefix(shlex.split(part))
         except ValueError:
             toks = _strip_prefix(part.split())
-        names = [os.path.basename(t) for t in toks]
-        # sh -c '…', bash -c '…': judge the inner command as a command of its own (adversary 0.7.2: `sh -c 'rm /etc/x'`)
-        for i, n in enumerate(names):
-            if n in ("sh", "bash", "zsh", "dash", "ksh") and "-c" in toks[i + 1:]:
-                k = toks.index("-c", i + 1)
-                if k + 1 < len(toks):
-                    why = reserved(toks[k + 1], worktree, cwd, rules)
-                    if why:
-                        return why
-        # xargs hands words the text does not show to a deleter or to git/gh/npm
-        if "xargs" in names:
-            x = names.index("xargs")
-            rest = [n for n in names[x + 1:] if not n.startswith("-")]
-            if rest and (rest[0] in deleters or rest[0] in ("git", "gh", "npm")):
-                return "%s con argumentos de xargs" % rest[0]
-        # find … -delete / -exec rm {}: allowed only when every starting path is inside the worktree
-        find_ok = False
-        if "find" in names:
-            f = names.index("find")
-            acts = set(toks[f + 1:])
-            execs = [toks[k + 1] for k, t in enumerate(toks) if t in ("-exec", "-execdir", "-ok", "-okdir") and k + 1 < len(toks)]
-            if "-delete" in acts or any(os.path.basename(e) in deleters or os.path.basename(e) in ("git", "gh", "npm")
-                                        for e in execs):
-                starts = []
-                for t in toks[f + 1:]:
-                    if t.startswith("-") or t in ("(", "!", "\\("):
-                        break
-                    starts.append(t)
-                if not starts or any("$" in t or "`" in t or not inside(real(t, cwd), root) for t in starts):
-                    return "find que borra fuera del worktree"
-                find_ok = True  # {} is a path under those starts; any other argument of the deleter is checked below
         # The deleter may come after wrappers with their own options (sudo -u root rm …): look for it anywhere.
-        at = next((i for i, n in enumerate(names) if n in deleters), None)
+        at = next((i for i, t in enumerate(toks) if os.path.basename(t) in deleters), None)
         if at is None:
             continue
         for t in toks[at + 1:]:
-            if t.startswith("-") or (find_ok and t in ("{}", "+", ";", "\\;")):
+            if t.startswith("-"):
                 continue
-            if t in ("-exec", "-execdir", "-ok", "-okdir"):
-                break
-            if "$" in t or "`" in t or t in ("{}", "+") or not inside(real(t, cwd), root):
-                return "%s fuera del worktree" % names[at]
+            if "$" in t or "`" in t or not inside(real(t, cwd), root):
+                return "%s fuera del worktree" % os.path.basename(toks[at])
     return ""
 
 
@@ -432,18 +339,6 @@ def emit(marker, ev):
         pass
 
 
-def quien(marker, sid):
-    """The agent as the user sees it: its herdr tab and name (registry.quien); the bare name if the registry fails."""
-    try:
-        import registry
-        entry = (registry.load(marker.get("project_id", "")).get("agents") or {}).get(sid) or {}
-        if entry.get("nombre"):
-            return registry.quien(entry)
-    except Exception:
-        pass
-    return marker.get("nombre") or sid[:8]
-
-
 def handle(data, marker, rules=None):
     """Returns the hook's stdout dict, or None for no output. Never raises past main()."""
     rules = rules if rules is not None else load_rules()
@@ -456,7 +351,7 @@ def handle(data, marker, rules=None):
     detalle = str(ti.get("command") or ti.get("file_path") or ti.get("notebook_path") or "")[:200]
     base = {"session_id": sid, "nombre": marker.get("nombre", ""), "pane": os.environ.get("HERDR_PANE_ID", ""),
             "hook": name, "tool_name": tool, "detalle": detalle, "modo": mode}
-    who = quien(marker, sid)
+    who = marker.get("nombre") or sid[:8]
 
     if name == "PreToolUse":
         if mode != "auto" or tool != "Bash":

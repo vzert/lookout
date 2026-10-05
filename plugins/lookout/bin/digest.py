@@ -79,9 +79,10 @@ def hhmmss(ts):
     return time.strftime("%H:%M:%S", time.localtime(ts or 0))
 
 
-def describe(ev):
+def describe(ev, quien=None):
+    """One line per event. `quien`: session_id -> how to name the agent to the user (its herdr tab, registry.quien)."""
     kind = ev.get("event", "")
-    who = ev.get("nombre") or ev.get("session_id", "")[:8]
+    who = (quien or {}).get(ev.get("session_id")) or ev.get("nombre") or ev.get("session_id", "")[:8]
     head = "%s %s %s" % (hhmmss(ev.get("ts")), who, ESTADO.get(kind, kind))
     if kind == "ask":
         qs = ev.get("questions") or []
@@ -144,7 +145,13 @@ def describe(ev):
 MAX_LINES = 40   # Fase 4: one digest per wake, at most 40 lines
 MAX_COLS = 160   # and at most 160 characters per line (lines alone do not bound tokens)
 KEEP_ALL = ("ask", "blocked", "negado", "crossrepo", "unknown", "repite", "sin_progreso", "largo", "correccion")  # events that need an answer are never collapsed
-PRESUPUESTO = 120000  # tokens of the supervisor's own context; LOOKOUT_PRESUPUESTO overrides
+# Budget of the supervisor's own context, counted FROM what the session already held when `lookout inicia` ran
+# (system prompt, tools, skills, project memory: 71k on claude-vzert, 2026-10-05). A fixed 120k left that supervisor
+# 49k of work and forced a relief after 7 minutes. LOOKOUT_PRESUPUESTO (absolute tokens) still overrides.
+# A model with a small window compacts before this: PreCompact rewrites supervisor.md and SessionStart[compact]
+# prints the «Como retomar», so that path is covered too.
+PRESUPUESTO_EXTRA = 300000
+PRESUPUESTO_SIN_ARRANQUE = 370000  # when the starting size was not recorded (a lock from an older lookout)
 
 
 def clip(line, n=MAX_COLS):
@@ -180,6 +187,19 @@ def context_tokens(session_id, projects_dir=None):
     return None
 
 
+def presupuesto_limite(project_id):
+    """(limit, starting size or 0). LOOKOUT_PRESUPUESTO, when set, is the whole limit."""
+    import lock
+    try:
+        env = int(os.environ.get("LOOKOUT_PRESUPUESTO") or 0)
+    except ValueError:
+        env = 0
+    if env > 0:
+        return env, 0
+    base = int((lock.read(project_id) or {}).get("contexto_inicial") or 0)
+    return (base + PRESUPUESTO_EXTRA, base) if base else (PRESUPUESTO_SIN_ARRANQUE, 0)
+
+
 def presupuesto_line(project_id, session_id=None, projects_dir=None):
     import lock
     sid = session_id if session_id is not None else os.environ.get("CLAUDE_CODE_SESSION_ID", "")
@@ -189,11 +209,12 @@ def presupuesto_line(project_id, session_id=None, projects_dir=None):
     tok = context_tokens(sid, projects_dir)
     if tok is None:
         return ""
-    try:
-        limit = int(os.environ.get("LOOKOUT_PRESUPUESTO") or PRESUPUESTO)
-    except ValueError:
-        limit = PRESUPUESTO
-    line = "Contexto: %dk de %dk." % (tok // 1000, limit // 1000)
+    # `inicia` may run before its session's transcript has a usage line (it lags the hooks ~1 s): then the first
+    # summary records the starting size, a little higher than the true start.
+    lock.set_contexto_inicial(project_id, sid, tok)
+    limit, base = presupuesto_limite(project_id)
+    line = "Contexto: %dk de %dk%s." % (tok // 1000, limit // 1000,
+                                        " (arranque %dk + %dk)" % (base // 1000, PRESUPUESTO_EXTRA // 1000) if base else "")
     if tok >= limit:
         line += (" PRESUPUESTO SUPERADO: termina lo que tengas abierto y haz el relevo (skill, «Relevo del supervisor»): "
                  "`lookout retomar %s`." % project_id)
@@ -231,6 +252,7 @@ def render(project_id, mark=True, limit=None, todo=False):
     maxl = 10 ** 6 if todo else MAX_LINES
     reg = registry.load(project_id)
     agents = reg.get("agents", {})
+    quien = {s: registry.quien(e) for s, e in agents.items()}
     all_events, _ = lookout_state.read_events(project_id, 0)
     last = {}
     for ev in all_events:
@@ -240,7 +262,7 @@ def render(project_id, mark=True, limit=None, todo=False):
     new, end = lookout_state.read_events(project_id, offset)
     import heuristicas
     vivos = {s: e for s, e in agents.items() if e.get("tarea_estado") != "relevada" and (last.get(s) or {}).get("event") != "end"}
-    head = ["Agentes (%d%s), por grupo: nombre | rama | tarea | último evento" % (
+    head = ["Agentes (%d%s), por grupo: pestaña (nombre) | rama | tarea | último evento" % (
         len(vivos), ", +%d terminados" % (len(agents) - len(vivos)) if len(agents) > len(vivos) else "")]
     now = time.time()
     by_group = {}
@@ -256,7 +278,7 @@ def render(project_id, mark=True, limit=None, todo=False):
             beat = heuristicas.ultimo_real(all_events, sid)
             if beat and beat.get("event") in heuristicas.EN_TURNO:
                 estado += " (sin eventos hace %ds)" % int(now - float(beat.get("ts") or now))
-            head.append(clip("  %s | %s | %s | %s" % (e.get("nombre"), e.get("branch") or "-", e.get("tarea") or "-", estado)))
+            head.append(clip("  %s | %s | %s | %s" % (registry.quien(e), e.get("branch") or "-", e.get("tarea") or "-", estado)))
     import decisiones
     import publica
     tail = []
@@ -294,7 +316,7 @@ def render(project_id, mark=True, limit=None, todo=False):
         shown = items[-cap:]
         body.append("Eventos nuevos (%d%s):" % (len(new), "; agrupados por agente, %d líneas" % len(shown) if len(shown) < len(new) else ""))
         for ev, n in shown:
-            body.append(clip("- " + describe(ev) + (" (+%d antes)" % n if n else "")))
+            body.append(clip("- " + describe(ev, quien) + (" (+%d antes)" % n if n else "")))
         if len(items) > len(shown):
             body.append("(+%d eventos más antiguos sin mostrar: `lookout resumen %s --todo`)" % (len(items) - len(shown), project_id))
     else:

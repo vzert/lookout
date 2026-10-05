@@ -82,3 +82,16 @@ def release(project_id, session_id):
         return False
     os.remove(path)
     return True
+
+
+def set_contexto_inicial(project_id, session_id, tokens):
+    """Record how much context the supervisor session held at `lookout inicia` (the budget counts from there).
+    Only for the lock owner; kept when the same session runs `inicia` again."""
+    path = os.path.join(lookout_state.project_dir(project_id), "lock.json")
+    data = lookout_state.read_json(path) or {}
+    if not tokens or (data.get("supervisor") or {}).get("session_id") != session_id:
+        return
+    if data.get("contexto_inicial_de") == session_id and data.get("contexto_inicial"):
+        return
+    data["contexto_inicial"], data["contexto_inicial_de"] = int(tokens), session_id
+    lookout_state.write_json(path, data)

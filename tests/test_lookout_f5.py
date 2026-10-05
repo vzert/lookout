@@ -255,6 +255,57 @@ class TestAutoMode(Base):
                     "ls && rm -r /tmp/x", "sudo rm x/../../fuera"):
             self.assertEqual(self.pre(cmd)["hookSpecificOutput"]["permissionDecision"], "ask", cmd)
 
+    def test_reserved_words_inside_file_names_are_left_to_auto_mode(self):
+        # 2026-10-05, claude-vzert: "push" inside checkpoint-push.sh forced a dialog on reads.
+        for cmd in ("ssh h 'gh api user; grep -n checkpoint-push.sh SKILL.md'",
+                    "git add .claude/bin/checkpoint-push.sh && git commit -q -m x", "wc -l bin/git-merge-helper.sh",
+                    "gh api graphql -f query='{ viewer { login } }'", "H=$(git rev-parse --short HEAD); echo $H"):
+            self.assertIsNone(self.pre(cmd), cmd)
+        # a variable after git/gh/npm keeps 0.7.1's dialog, also on reads (round 7: no exception survived); fewer
+        # dialogs there is the job of a real boundary (docs/plan.md, Fase 8)
+        for cmd in ("for n in 363 364; do gh pr view $n --repo o/r; done", 'git -C "$D" log -1'):
+            self.assertEqual((self.pre(cmd) or {}).get("hookSpecificOutput", {}).get("permissionDecision"), "ask", cmd)
+
+    def test_a_built_subcommand_or_a_variable_delete_still_gets_the_dialog(self):
+        for cmd in ("gh $(echo pr) merge 3", "gh pr $A 3", "git -C $D $CMD", "X=push; ssh h \"git $X\"",
+                    "bash checkpoint-push.sh; git push", "rm -f /tmp/$X", "rm -rf /tmp/a/$$", "rm /tmp/../etc/x$$",
+                    "/usr/bin/git push origin x", "./node_modules/.bin/npm publish", "env git push",
+                    "gh repo delete $R --yes", "gh repo archive o/r", "gh api -X DELETE repos/o/r",
+                    "gh api --method=PUT repos/o/r/pulls/$n/merge", "gh api repos/o/r/merges -f base=main -f head=x",
+                    "ssh h 'gh api graphql -f query=\"mutation { mergePullRequest }\"'"):
+            self.assertEqual((self.pre(cmd) or {}).get("hookSpecificOutput", {}).get("permissionDecision"), "ask", cmd)
+
+    def test_adversary_072_bypasses_get_the_dialog(self):
+        # codex, round 1 on 0.7.2: six regressions against 0.7.1, three holes in the new gh api rule, four older holes.
+        for cmd in ("gh${IFS}api -X DELETE repos/o/r", "C=$(printf 'pu%s' sh); git -c alias.x=$C x",
+                    "M=$(printf 'DEL%s' ETE); gh api -X $M repos/o/r", "printf 'mut%s' ation | gh api graphql --input -",
+                    "gh api repos/o/r -f graphql=x", "gh api repos/o/r -Fname=x", "printf 'pu%s\\n' sh | xargs git",
+                    "printf '%s\\n' | xargs rm" % self.outside, "find %s -exec rm {} \\;" % self.outside,
+                    "find %s -delete" % self.outside, "sh -c 'rm %s/v'" % self.outside, "bash -c 'git push'",
+                    "printf x | bash", "rm /tmp/other.$$", "rmdir /tmp/other.$$", "mv a /tmp/other.$$",
+                    "printf x > /tmp/a.$$; mv b /tmp/a.$$",
+                    # round 2: a redirect in the text does not prove the file is the command's own; find -exec args
+                    "sh -c 'printf x > /tmp/m.$$'; rm /tmp/m.$$", "false && printf x > /tmp/m.$$; rm /tmp/m.$$",
+                    "find . -exec rm %s/v ;" % self.outside, "find . -execdir rm %s/v ;" % self.outside,
+                    # round 3: the program out of a substitution, then a built word (0.7.1 caught it)
+                    "$(printf git) $PUSH_VAR", "$(printf npm) $(printf $P)", "`echo gh` api -X $M repos/o/r",
+                    # round 4 and the differential sweep against 0.7.1
+                    "if $(printf git) $P; then :; fi", "nice $(printf git) $P", "H=$(printf git) $P",
+                    "`echo gh` api -X DELETE x", "gh -R o/r api -X DELETE x", "gh --repo=o/r api x -f a=b",
+                    # round 5: nested substitutions, options with a value the rule does not know
+                    "$(echo $(true); printf git) $P", "git --namespace foo $C", "git --config-env alias.x=ENV $C",
+                    "npm --workspace foo $C",
+                    # round 8: git's dashed entry point and a glued alias run the reserved command
+                    "/Library/Developer/CommandLineTools/usr/libexec/git-core/git-push origin main",
+                    "/usr/libexec/git-core/git-merge x", "git.push origin main", "gh-pr-merge 3",
+                    # round 6: an unquoted variable can split into options (`$n` = `1 -X DELETE`); as in 0.7.1
+                    "gh api repos/o/r/pulls/$n --jq .mergeable", "git rebase $X \"$Y\" --root", "npm exec $S",
+                    "git -C $D log", "gh -R $R api x"):
+            self.assertEqual((self.pre(cmd) or {}).get("hookSpecificOutput", {}).get("permissionDecision"), "ask", cmd)
+        for cmd in ("find . -name '*.pyc' -delete", "git ls-files | xargs grep -n x", "sh -c 'ls -la'",
+                    "find build -exec rm -f {} +", "H=$(git rev-parse --short HEAD); echo $H"):
+            self.assertIsNone(self.pre(cmd), cmd)
+
     def test_work_inside_the_worktree_is_left_to_auto_mode(self):
         for cmd in ("rm build/x.o", "git commit -m x", "ls", "mv a b"):
             self.assertIsNone(self.pre(cmd), cmd)
