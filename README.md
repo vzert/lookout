@@ -105,9 +105,13 @@ trivial actions inside an agent's own worktree. It does this only in manual mode
 after **you** turn the rules on. The supervisor shows the rules and where to turn them on with `lookout permisos`. The template is in
 `plugins/lookout/rules/permisos.toml`. You copy it to `~/.config/lookout/permisos.toml` and set `activo = true`. The
 supervisor never writes that file. lookout never approves a push, merge, publishing or delete outside the worktree.
-In auto mode it also forces a dialog for them, reading the command text: that catches the usual forms (including
-`sh -c`, `xargs`, `find -exec`, `gh api` writes), but it is a tripwire, not a boundary — a command built in ways the
-text does not show can pass it, and auto mode's own classifier still judges every command.
+
+In auto mode, auto mode's own classifier decides, as it does for your agents without lookout. Since 0.8.0 lookout adds
+no dialogs of its own there. If you want an extra alarm, put `dialogo_forzado = true` in
+`~/.config/lookout/permisos.toml`: lookout then forces a dialog for pushes, merges, publishing, `gh api` writes and
+deletes outside the worktree, reading the command text. It catches the usual forms (including `sh -c`, `xargs`,
+`find -exec`), but it is a tripwire, not a boundary — a command built in ways the text does not show can pass it — and
+it also asks on some reads that use variables (`gh pr view $n`).
 
 ## Update
 

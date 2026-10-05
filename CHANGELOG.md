@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0
+
+- Auto mode: the forced dialog is now opt-in, off by default. lookout adds no dialogs of its own in auto mode; auto
+  mode's own classifier decides, as it does without lookout (decision of the user, 2026-10-05: on claude-vzert about 4 of
+  every 14 dialogs came from lookout, mostly reads with variables). Turn it on with `dialogo_forzado = true` in
+  `~/.config/lookout/permisos.toml`; its rules and the CI check against 0.7.1 are unchanged. `lookout permisos` says
+  whether it is on. Push governance (`lookout gobierno`, `publica`, `regla-push`) does not depend on it.
+
 ## 0.7.3
 
 - Fix: `lookout gobierno` crashed with `KeyError: 'tareas'`. The stuck-agent counters (Fase 6) were written to the same

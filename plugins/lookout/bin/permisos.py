@@ -125,6 +125,9 @@ def load_rules():
         if isinstance(values, dict):
             rules.setdefault(section, {}).update(values)
     rules["activo"] = activo
+    # 0.8.0: the forced dialog of auto mode is opt-in. By default auto mode's own classifier decides alone, as it does
+    # for the user's agents without lookout (decision of the user, 2026-10-05).
+    rules["dialogo_forzado"] = bool(user and user.get("dialogo_forzado") is True)
     return rules
 
 
@@ -459,8 +462,8 @@ def handle(data, marker, rules=None):
     who = quien(marker, sid)
 
     if name == "PreToolUse":
-        if mode != "auto" or tool != "Bash":
-            return None
+        if mode != "auto" or tool != "Bash" or not rules.get("dialogo_forzado"):
+            return None  # off by default (0.8.0): the user turns it on with `dialogo_forzado = true`
         why = reserved(ti.get("command") or "", worktree_of(sid, marker), cwd, rules)
         if not why:
             return None

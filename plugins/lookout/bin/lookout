@@ -456,9 +456,11 @@ def cmd_permisos(a):
     print("Plantilla del plugin: %s" % permisos.TEMPLATE)
     print("Archivo del usuario: %s" % permisos.user_rules_path())
     print("Las activa el USUARIO creando ese archivo con `activo = true` (yo no lo escribo). Solo aprueban en modo")
-    print("manual, una vez por llamada; en auto mode nada se aprueba, y push, merge, publicar, gh repo delete/archive,")
-    print("gh api con escritura y borrados fuera del worktree piden diálogo (leído del texto del comando: cubre las formas")
-    print("usuales, no las que el texto no muestra; el clasificador de auto mode sigue juzgando cada comando).")
+    print("manual, una vez por llamada. En auto mode lookout no aprueba nada y decide el clasificador de Claude Code.")
+    print("Diálogo forzado en auto mode: %s. Con `dialogo_forzado = true` en ese archivo, push, merge, publicar, gh repo"
+          % ("ENCENDIDO" if rules.get("dialogo_forzado") else "apagado (por omisión)"))
+    print("delete/archive, gh api con escritura y borrados fuera del worktree piden diálogo (leído del texto del comando:")
+    print("cubre las formas usuales, no las que el texto no muestra).")
     print("Bash permitido: " + ", ".join((rules.get("bash") or {}).get("comandos") or []))
     return 0 if rules["activo"] else 5
 

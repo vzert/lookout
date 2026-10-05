@@ -217,6 +217,18 @@ class TestScreenIsData(Base):
 
 
 class TestAutoMode(Base):
+    """The forced dialog, with the user's option on (`dialogo_forzado = true`; off by default since 0.8.0)."""
+
+    def setUp(self):
+        super().setUp()
+        self.write_rules("dialogo_forzado = true\n")
+
+    def test_off_by_default_auto_mode_decides_alone(self):
+        self.write_rules("activo = true\n")
+        for cmd in ("git push origin tarea", "rm -rf %s" % self.outside, "gh pr merge 3"):
+            self.assertIsNone(self.pre(cmd), cmd)
+        self.assertFalse(permisos.load_rules()["dialogo_forzado"])
+
     def test_pushes_merges_and_publishing_get_a_forced_dialog_in_auto_mode(self):
         for cmd in ("git push origin tarea", "cd docs && git push", "sh -c 'git push origin x'",
                     "git -C . push origin x", "gh pr merge 3", "npm publish", "git merge main"):
@@ -244,7 +256,7 @@ class TestAutoMode(Base):
 
     def test_an_unreadable_template_still_forces_the_dialog(self):
         out = permisos.handle(self.payload("PreToolUse", "Bash", {"command": "git push origin x"}, mode="auto"),
-                              self.marker, rules={"activo": True})
+                              self.marker, rules={"activo": True, "dialogo_forzado": True})
         self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "ask")
         out = permisos.handle(self.payload("PermissionRequest", "Edit", {"file_path": os.path.join(self.wt, "a")}),
                               self.marker, rules={"activo": True})
