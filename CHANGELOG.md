@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.1
+
+- The supervisor explains every decision it asks the user for. Each one is a block that stands on its own: the
+  problem in plain words, where it comes from (which agent, by tab), each option with what happens if chosen, a
+  recommendation, and ids only at the end. A decision still open is asked again with its full block, never as a
+  one-line reminder; one topic per question; the text of `lookout decision --abre` stands on its own too, since a relief
+  supervisor reads it. The batch approval of `/lookout:pendientes` says what each pendiente solves in plain words.
+  Seen on claude-vzert, 2026-10-06: three decisions asked as reminders ("plan A/B", "954 rutas", an id) could not be
+  answered; with the context the user answered all three in one line.
+- Fix: the supervisor's end-of-turn check ("no live waiter: launch `lookout espera`") never blocked. It ran from an
+  async Stop hook, and an async hook cannot block: on claude-vzert it arrived six times as a loose note and the project
+  went unwatched. It now has its own synchronous Stop entry (supervisor sessions only, behind `guard-sup.sh`).
+- `lookout espera` prints the digest when it wakes and marks it handled, so the supervisor does not have to run
+  `lookout resumen` between two waiters. Before, a waiter relaunched without `resumen` woke at once on the same old
+  event; the supervisor took it for broken and stopped launching it.
+- The supervisor never asks the user to run `lookout` or `herdr` commands.
+- What the user must decide, run or paste goes in a code fence, which the terminal shows in color: the closing
+  question of a decision, a command for the user, the «Como retomar» block. Nothing else, so it stands out.
+
 ## 0.8.0
 
 - Auto mode: the forced dialog is now opt-in, off by default. lookout adds no dialogs of its own in auto mode; auto

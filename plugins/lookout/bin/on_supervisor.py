@@ -5,10 +5,12 @@ with a supervisor marker through (written by `lookout inicia`); executors never 
 - PostToolUse[SendMessage]: log what the supervisor told whom (its answers to the agents) and rewrite supervisor.md.
 - PreToolUse[AskUserQuestion] (via hooks/guard.sh): log the question as asked; PostToolUse: log the user's answers.
   A question asked and never answered is a pending user decision in supervisor.md.
-- Stop (via hooks/guard.sh): no live waiter → block the stop once and say to launch `lookout espera`.
+- Stop (its own synchronous entry, via hooks/guard-sup.sh; an async hook cannot block): no live waiter → block the
+  stop once and say to launch `lookout espera`.
 - PreCompact: rewrite supervisor.md before the context is summarized.
 - SessionStart[compact]: print the «Como retomar» (plain stdout reaches the model's context after a compaction; V14).
-Never blocks anything: exit 0 always.
+Exit 0 always. Its only block is the Stop check above, from the synchronous entry; the async on_state.py entry
+(--async) never runs it, because an async hook cannot block.
 """
 import json
 import os
@@ -18,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import supervisor_md  # noqa: E402
 
 
-def handle(data):
+def handle(data, via_async=False):
     sid = data.get("session_id", "")
     pid = supervisor_md.supervised_by(sid)
     if not pid:
@@ -39,7 +41,7 @@ def handle(data):
         supervisor_md.log(pid, {"tipo": "usuario", "session_id": sid, "tool_use_id": data.get("tool_use_id", ""),
                                 "answers": answers or ti.get("answers") or {}})
     elif ev == "Stop":
-        return stop_check(data, pid, sid)
+        return "" if via_async else stop_check(data, pid, sid)
     elif ev == "PreCompact":
         supervisor_md.log(pid, {"tipo": "precompact", "session_id": sid, "trigger": data.get("trigger", "")})
     elif ev == "SessionStart":
@@ -83,7 +85,7 @@ def main():
     except ValueError:
         return 0
     try:
-        out = handle(data)
+        out = handle(data, via_async="--async" in sys.argv[1:])
     except Exception as exc:  # a hook must never break the supervisor's turn
         sys.stderr.write("lookout on_supervisor: %s\n" % exc)
         return 0

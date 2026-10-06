@@ -65,6 +65,15 @@
             "async": true
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}\"/hooks/guard-sup.sh on_supervisor.py",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "StopFailure": [

@@ -270,14 +270,64 @@ class DigestBudgetTest(Base):
             w.kill()
             w.wait()
 
-    def test_guard_routes_the_supervisors_stop(self):
-        gate = os.path.join(HOOKS, "guard.sh")
+    def test_the_supervisors_stop_goes_through_a_synchronous_hook(self):
+        # claude-vzert, 2026-10-06: the Stop check ran from the async on_state.py entry; an async hook cannot block,
+        # so "no hay waiter vivo" reached the supervisor six times as a loose note and it never relaunched its waiter.
         supervisor_md.mark_supervisor(SUP, PID)
         env = dict(os.environ, LOOKOUT_STATE_DIR=self.state)
         ev = {"session_id": SUP, "hook_event_name": "Stop", "stop_hook_active": False}
-        r = subprocess.run(["sh", gate, "on_state.py"], input=json.dumps(ev), capture_output=True, text=True, env=env)
-        self.assertEqual(json.loads(r.stdout)["decision"], "block")
+        for payload in (json.dumps(ev), json.dumps(ev, separators=(",", ":")), json.dumps(ev, indent="\t"),
+                        '{"session_id": "%s",\n "stop_hook_active": false,\n\t"hook_event_name" :\t"Stop"}' % SUP):
+            if True:  # any valid JSON layout: the event name is read after parsing, not from the text (adversary r1)
+                r = subprocess.run(["sh", os.path.join(HOOKS, "guard.sh"), "on_state.py"], input=payload,
+                                   capture_output=True, text=True, env=env)
+                self.assertEqual((r.returncode, r.stdout), (0, ""))           # the async entry stays silent
+                r = subprocess.run(["sh", os.path.join(HOOKS, "guard-sup.sh"), "on_supervisor.py"], input=payload,
+                                   capture_output=True, text=True, env=env)
+                self.assertEqual(json.loads(r.stdout)["decision"], "block")
         self.assertEqual(lookout_state.read_events(PID, 0)[0], [])   # not logged as an executor event
+        stop = json.load(open(os.path.join(HOOKS, "hooks.json")))["hooks"]["Stop"]
+        sync = [h for e in stop for h in e["hooks"] if "guard-sup.sh on_supervisor.py" in h["command"]]
+        self.assertEqual(len(sync), 1)
+        self.assertFalse(sync[0].get("async"))
+
+    def test_a_waiter_wake_carries_the_digest_and_a_relaunch_does_not_repeat_it(self):
+        # claude-vzert, 2026-10-06: relaunched without `resumen`, the waiter woke at once on the same 12:58 event,
+        # the supervisor took it for broken and stopped launching it.
+        self.agent("s-a", "uno")
+        lookout_state.append_event(PID, {"event": "bg_wait", "session_id": "s-a", "nombre": "uno", "ts": time.time()})
+        r = self.run_lk("espera", PID, "--timeout", "5")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Resumen (ya marcado como atendido", r.stdout)
+        self.assertIn("Eventos nuevos (1", r.stdout)
+        self.assertNotIn("corre lookout resumen", r.stdout)
+        self.assertEqual(digest.get_cursor(PID), os.path.getsize(lookout_state.events_path(PID)))
+        r = self.run_lk("espera", PID, "--timeout", "1")
+        self.assertEqual(r.returncode, 2, r.stdout)                  # nothing new: it waits, it does not repeat
+
+    def test_two_waiter_wakes_without_resumen_are_both_shown_once(self):
+        # the mechanism itself (adversary r1: the end-to-end test below also passes on 0.8.0, which never marked)
+        self.agent("s-a", "uno")
+        lookout_state.append_event(PID, {"event": "ask", "session_id": "s-a", "nombre": "uno", "ts": time.time()})
+        digest.render(PID, mark=True, por_waiter=True)
+        lookout_state.append_event(PID, {"event": "idle", "session_id": "s-a", "nombre": "uno", "ts": time.time()})
+        digest.render(PID, mark=True, por_waiter=True)
+        out = digest.render(PID)
+        self.assertIn("Eventos nuevos (2", out)
+        self.assertIn("Eventos nuevos: ninguno", digest.render(PID))
+        self.assertNotIn("desde", lookout_state.read_json(digest.cursor_path(PID)))
+
+    def test_resumen_after_a_waiter_wake_still_shows_what_woke_it(self):
+        # a supervisor that answers the task notification with `lookout resumen` instead of reading the waiter's
+        # output must still see the event: the waiter's marking is undone once for `resumen`, never twice
+        self.agent("s-a", "uno")
+        lookout_state.append_event(PID, {"event": "ask", "session_id": "s-a", "nombre": "uno", "ts": time.time(),
+                                         "pregunta": "¿A o B?"})
+        self.assertEqual(self.run_lk("espera", PID, "--timeout", "5").returncode, 0)
+        r = self.run_lk("resumen", PID)
+        self.assertIn("Eventos nuevos (1", r.stdout)
+        self.assertIn("Eventos nuevos: ninguno", self.run_lk("resumen", PID).stdout)
+        self.assertEqual(self.run_lk("espera", PID, "--timeout", "1").returncode, 2)
 
 
 class ReportedTurnTest(Base):

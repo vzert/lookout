@@ -5,7 +5,7 @@
   },
   "metadata": {
     "description": "Marketplace of lookout: a supervisor for the coding agents of one project running in herdr panes.",
-    "version": "0.8.0"
+    "version": "0.8.1"
   },
   "plugins": [
     {

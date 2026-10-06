@@ -275,9 +275,16 @@ def cmd_espera(a):
     pid, _ = project(a.proyecto)
     import wait_event
     owner = {"claude_pid": int(os.environ.get("CLAUDE_PID", "0") or 0), "session_id": os.environ.get("CLAUDE_CODE_SESSION_ID", "")}
-    return wait_event.wait(lookout_state.events_path(pid), digest.get_cursor(pid), digest.WAKE_TYPES,
-                           a.timeout, digest.pidfile(pid), digest.cursor_path(pid), owner if owner["claude_pid"] else None,
-                           revisa=pid)
+    rc = wait_event.wait(lookout_state.events_path(pid), digest.get_cursor(pid), digest.WAKE_TYPES,
+                         a.timeout, digest.pidfile(pid), digest.cursor_path(pid), owner if owner["claude_pid"] else None,
+                         revisa=pid, hint=False)
+    if rc == 0:
+        # The wake carries the digest and marks it handled. A supervisor that relaunched its waiter without running
+        # `resumen` got the same old event again at once, took the waiter for broken and stopped launching it
+        # (claude-vzert, 2026-10-06): nothing it must remember to run between two waiters.
+        print("Resumen (ya marcado como atendido; no hace falta `lookout resumen`):")
+        print(digest.render(pid, mark=True, por_waiter=True))
+    return rc
 
 
 def cmd_retomar(a):

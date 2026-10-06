@@ -17,9 +17,13 @@ root="${LOOKOUT_STATE_DIR:-$HOME/.local/state/lookout}"
 # Fase 4: the supervisor's own AskUserQuestion goes to its log when it is ASKED (PreToolUse), so a question the user
 # never answered survives a relief. Same hook entry, so a live supervisor gets it without reloading hooks.json. Checked
 # FIRST: a supervisor's question is never denied, even if its session also carries an executor marker (adversary F4).
-# Its Stop goes there too (on_state.py entries): a supervisor ending its turn with no live waiter is told to launch one.
+# Its Stop does not: see below.
 if { [ "$1" = on_ask.py ] || [ "$1" = on_state.py ]; } && [ -f "$root/supervisores/$sid.json" ]; then
-  printf '%s' "$input" | python3 "$(dirname "$0")/../bin/on_supervisor.py"
+  # Its Stop has its own synchronous entry (guard-sup.sh): an async hook cannot block the stop, so the "launch your
+  # waiter" check only reached the supervisor as a loose note it ignored (claude-vzert, 2026-10-06, six times).
+  # --async tells on_supervisor.py this is that entry; it reads the event name from the parsed JSON, not the text.
+  via=""; [ "$1" = on_state.py ] && via="--async"
+  printf '%s' "$input" | python3 "$(dirname "$0")/../bin/on_supervisor.py" $via
   exit 0  # an `exec` inside a pipeline only replaces the subshell: without this exit the executor path ran too
 fi
 [ -f "$root/sessions/$sid.json" ] || exit 0

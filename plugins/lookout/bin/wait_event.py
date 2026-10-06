@@ -94,7 +94,7 @@ def owner_path(pidfile):
     return pidfile + ".owner"
 
 
-def short(event):
+def short(event, hint=True):
     """One short line for the task notification: it lands in the supervisor's context (Fase 4 budget)."""
     try:
         import digest
@@ -102,7 +102,8 @@ def short(event):
     except Exception:
         text = "%s %s" % (event.get("event"), event.get("nombre") or event.get("session_id", "")[:8])
     text = " ".join(text.split())
-    return "evento: %s → corre lookout resumen\n" % (text if len(text) <= 160 else text[:159] + "…")
+    text = text if len(text) <= 160 else text[:159] + "…"
+    return "evento: %s%s\n" % (text, " → corre lookout resumen" if hint else "")
 
 
 WATCH_EVERY = float(os.environ.get("LOOKOUT_WATCH_EVERY") or 10.0)  # s between checks that its supervisor still supervises
@@ -155,7 +156,7 @@ def end_of_pass(timeout=120.0):
         _REVISANDO.release()
 
 
-def wait(path, offset=0, types="", timeout=0, pidfile="", cursor="", owner=None, wait_stale=25.0, revisa=None):
+def wait(path, offset=0, types="", timeout=0, pidfile="", cursor="", owner=None, wait_stale=25.0, revisa=None, hint=True):
     wanted = {t for t in types.split(",") if t}
     if not claim_pidfile(pidfile, wait_stale if owner else 0.0):
         print("waiter ya vivo (pidfile %s): no lances otro" % pidfile)
@@ -212,7 +213,7 @@ def wait(path, offset=0, types="", timeout=0, pidfile="", cursor="", owner=None,
             if pos <= handled_offset(cursor):
                 continue
             end_of_pass(pass_budget(revisa) if revisa else 0)
-            sys.stdout.write(short(event))
+            sys.stdout.write(short(event, hint))
             sys.stdout.flush()
             return 0
     finally:

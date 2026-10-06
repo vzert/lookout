@@ -44,8 +44,15 @@ def get_cursor(project_id):
     return int((lookout_state.read_json(cursor_path(project_id)) or {}).get("offset", 0))
 
 
-def set_cursor(project_id, offset):
-    lookout_state.write_json(cursor_path(project_id), {"offset": offset, "ts": time.time()})
+def set_cursor(project_id, offset, desde=None):
+    """`desde`: where the events the waiter printed (and marked) start. The waiter prints the digest into its output
+    file; a supervisor that answers its notification with `lookout resumen` instead of reading that file would get
+    "ninguno" and lose what woke it. So the next `resumen` shows them once more, from `desde`; the waiter itself
+    resumes from `offset` and never repeats them."""
+    data = {"offset": offset, "ts": time.time()}
+    if desde is not None:
+        data["desde"] = desde
+    lookout_state.write_json(cursor_path(project_id), data)
 
 
 def pidfile(project_id):
@@ -248,7 +255,7 @@ def collapse(new):
     return [(ev, n) for _i, ev, n in sorted(out, key=lambda x: x[0])]
 
 
-def render(project_id, mark=True, limit=None, todo=False):
+def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
     maxl = 10 ** 6 if todo else MAX_LINES
     reg = registry.load(project_id)
     agents = reg.get("agents", {})
@@ -258,7 +265,13 @@ def render(project_id, mark=True, limit=None, todo=False):
     for ev in all_events:
         if ev.get("event") != "notification":
             last[ev.get("session_id")] = ev
-    offset = get_cursor(project_id)
+    cur = lookout_state.read_json(cursor_path(project_id)) or {}
+    offset = int(cur.get("offset", 0))
+    desde = cur.get("desde")
+    if por_waiter:
+        desde = offset if desde is None else min(int(desde), offset)  # two waiter wakes with no `resumen` between
+    elif desde is not None:
+        offset = min(int(desde), offset)                            # what the waiter showed, once more
     new, end = lookout_state.read_events(project_id, offset)
     import heuristicas
     vivos = {s: e for s, e in agents.items() if e.get("tarea_estado") != "relevada" and (last.get(s) or {}).get("event") != "end"}
@@ -322,7 +335,7 @@ def render(project_id, mark=True, limit=None, todo=False):
     else:
         body.append("Eventos nuevos: ninguno (ya atendidos).")
     if mark:
-        set_cursor(project_id, end)
+        set_cursor(project_id, end, desde if por_waiter else None)
         try:
             import supervisor_md
             supervisor_md.write(project_id)

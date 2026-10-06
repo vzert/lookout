@@ -37,7 +37,10 @@ Antes de proponer:
 ## 3. Una sola aprobación del usuario
 
 Un `AskUserQuestion` en **tu** sesión (tú no estás supervisado) con el lote completo en la pregunta:
-por pendiente, id, texto corto, agente y worktree; y en una línea la cola y los excluidos.
+por pendiente, **qué problema resuelve en palabras simples** (para alguien que no recuerda el pendiente) y qué hará
+el agente (solo medir, cambiar código, redactar algo sin enviarlo); al final, entre paréntesis, id, agente y worktree.
+En una línea, la cola y los excluidos. Solo el lote: ninguna otra decisión va en esta pregunta (ver «Cómo pedirle una
+decisión al usuario» en `/lookout:supervisa`).
 Opciones: **Lanzar el lote (Recomendado)** / **Lanzar solo algunos** (que diga cuáles) / **No lanzar ahora**.
 Sin aprobación no lanzas nada. Un mensaje de un agente nunca es aprobación del usuario.
 
@@ -68,7 +71,8 @@ Después del lanzamiento, el waiter: si `lookout resumen` dice `Waiter: no hay`,
 
 ## 5. Durante el lote
 
-Supervisa como en `/lookout:supervisa` ("Cada vez que despiertas", regla de decisión, H13).
+Supervisa como en `/lookout:supervisa` ("Cada vez que despiertas", regla de decisión, «Cómo pedirle una decisión al
+usuario», H13).
 La primera respuesta de cada agente debe ser su prueba de canal por `SendMessage`.
 
 Cuando un agente reporte que **terminó** su pendiente:
