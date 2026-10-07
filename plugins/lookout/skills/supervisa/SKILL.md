@@ -201,7 +201,8 @@ NO, no lo rodees ni lo reformules: pásale al agente el texto del NO.
      cambió), o dame una razón. Criterio de corte: lo que falla hacia el lado inseguro (`unsafe` > 0) se
      arregla sí o sí; lo seguro y caro puede quedar como pendiente propuesto.
    - `MISMO-MODELO`: el hold vino de su mismo modelo (o sin modelo confirmado). Para algo terminal exige
-     una ronda con modelo distinto (backend externo de goalspec) antes de aceptar el hold.
+     la ronda del subagente `goalspec:goal-adversary` con otro `model` más el backend externo (`backends=both`)
+     antes de aceptar el hold.
    - `SIN-VEREDICTO`: pídele la ronda. Si da una razón para no hacerla, pásala al usuario como razón, no como hold.
    - `SIN-GOALSPEC`: goalspec no está instalado; no hay ronda que pedir. Sigue con el paso 2, y en la pregunta al
      usuario di que este push **no tuvo revisión independiente**.
@@ -235,6 +236,15 @@ abre la decisión (`lookout decision … --abre`) y pregunta al usuario (AskUser
 respuesta y `--si`, y: `lookout cierra <project_id> <agente> --nota "<qué quedó hecho y cómo se verificó>" --usuario-confirmo <id>` (añade `--sin-push "<razón>"` si la tarea no necesitaba push).
 Escribe solo un evento `pendiente.resolve` en el journal; `_pendientes.md` cambia al compactar. Nunca edites
 `_pendientes.md` ni otro índice.
+- **Abandonar** la tarea de un agente (ya no hace falta, o la reemplaza otra): `lookout cierra … --estado abandoned`
+  (o `superseded`), con la misma decisión del usuario; no pide hold ni push.
+- **Un pendiente que nunca tuvo agente** (el usuario dice que ya no se necesita):
+  `lookout descarta <project_id> <p-id> --estado abandoned|superseded --nota "<por qué>" --usuario-confirmo <id>`.
+- **Nunca** corras `journal-emit.py --type pendiente.resolve` tú mismo: todo cierre pasa por `lookout cierra` o
+  `lookout descarta`, que exigen la decisión del usuario.
+- **Todo cierre lo decide el usuario, también el que pide un agente que ya corría** (p. ej. en su `/checkpoint-3t`):
+  si un agente te avisa que va a cerrar un pendiente, no le das tu OK; abres la decisión, se lo preguntas al usuario
+  y le pasas su respuesta.
 **Hallazgos que quedan sin arreglar** (residuales del adversario): no los escribes tú. Propónselos al usuario
 con el texto del pendiente y la orden exacta (`journal-emit.py --memory-dir <repo>/memory --type pendiente.add
 --prioridad … --origen … --text "…"`); él decide.

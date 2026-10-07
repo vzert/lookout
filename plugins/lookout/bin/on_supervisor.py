@@ -4,6 +4,7 @@ with a supervisor marker through (written by `lookout inicia`); executors never 
 
 - PostToolUse[SendMessage]: log what the supervisor told whom (its answers to the agents) and rewrite supervisor.md.
 - PreToolUse[AskUserQuestion] (via hooks/guard.sh): log the question as asked; PostToolUse: log the user's answers.
+  Both also go to decisiones.json (Fase 9 C4), so no question of the supervisor is off the record.
   A question asked and never answered is a pending user decision in supervisor.md.
 - Stop (its own synchronous entry, via hooks/guard-sup.sh; an async hook cannot block): no live waiter → block the
   stop once and say to launch `lookout espera`.
@@ -17,6 +18,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import decisiones  # noqa: E402
 import supervisor_md  # noqa: E402
 
 
@@ -33,13 +35,19 @@ def handle(data, via_async=False):
                                 "texto": supervisor_md.one_line(ti.get("message") or ti.get("summary"), 600)})
     elif ev == "PreToolUse" and tool == "AskUserQuestion":
         # never decide anything here: no output means the question goes to the user as usual
+        preguntas = [supervisor_md.one_line(q.get("question"), 300) for q in ti.get("questions") or []]
         supervisor_md.log(pid, {"tipo": "pregunta", "session_id": sid, "tool_use_id": data.get("tool_use_id", ""),
-                                "preguntas": [supervisor_md.one_line(q.get("question"), 300) for q in ti.get("questions") or []]})
+                                "preguntas": preguntas})
+        decisiones.registra_pregunta(pid, data.get("tool_use_id", ""), " | ".join(preguntas))  # Fase 9 C4
     elif ev == "PostToolUse" and tool == "AskUserQuestion":
         tr = data.get("tool_response") or {}
         answers = tr.get("answers") if isinstance(tr, dict) else None
+        answers = answers or ti.get("answers") or {}
         supervisor_md.log(pid, {"tipo": "usuario", "session_id": sid, "tool_use_id": data.get("tool_use_id", ""),
-                                "answers": answers or ti.get("answers") or {}})
+                                "answers": answers})
+        decisiones.registra_respuesta(pid, data.get("tool_use_id", ""), "; ".join(
+            "%s = %s" % (supervisor_md.one_line(q, 80), supervisor_md.one_line(a, 200)) for q, a in answers.items())
+            if isinstance(answers, dict) else supervisor_md.one_line(str(answers), 300))
     elif ev == "Stop":
         return "" if via_async else stop_check(data, pid, sid)
     elif ev == "PreCompact":

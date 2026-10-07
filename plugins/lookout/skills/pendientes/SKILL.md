@@ -1,6 +1,6 @@
 ---
 name: pendientes
-description: Take a project's open 3-tier pendientes (memory/_pendientes.md), propose a batch of at most 3 (blocked ones excluded, items that touch the same files kept in series), get the user's approval once, and launch one Claude agent per item in its own git worktree (an investigation runs in plan mode without edit tools on the main checkout, no worktree) with its task prompt delivered exactly once; then supervise them. Use when the user runs /lookout:pendientes <project path> or asks to work a project's pendientes with parallel agents in herdr.
+description: Take a project's open 3-tier pendientes (memory/_pendientes.md), propose a batch of at most 3 (blocked ones excluded, items that touch the same files kept in series), get the user's approval once, and launch one Claude agent per item in its own git worktree (an investigation, a message or a credential task runs without edit tools on the main checkout, no worktree) with its task prompt delivered exactly once; then supervise them. Use when the user runs /lookout:pendientes <project path> or asks to work a project's pendientes with parallel agents in herdr.
 ---
 
 # /pendientes <ruta del proyecto>
@@ -24,13 +24,18 @@ al usuario el motivo (herdr falta o no sirve) y para.
   la ruta del **prompt de tarea** ya redactado (plantilla `references/prompt-tarea.md` de supervisa).
 - **EN COLA**: por tope, o **acoplado** (cita un archivo que otro del lote o un agente vivo ya toca: va en serie).
 - **EXCLUIDOS**: `_bloqueado`, `_revisar` futuro, o ya tiene agente.
-- Un pendiente de **investigación** (empieza con Investigar/Analizar/Evaluar/…) sale "SIN worktree": su agente
-  lee el checkout principal en modo plan y sin herramientas de edición; una escritura por Bash le pide permiso
-  al usuario (3.8.3). Si te llega su `espera permiso`, díselo al usuario como cualquier permiso.
+- Un pendiente de **investigación** (empieza con Investigar/Analizar/Evaluar/Medir/…), de **comunicación**
+  (Comunicar/Enviar/Avisar/…: su agente redacta el mensaje y no lo envía) o de **credencial** (rotar o revocar un
+  token o clave, o un secreto expuesto: riesgo alto, el usuario es quien actúa) sale "SIN worktree": su agente
+  lee el checkout principal sin herramientas de edición y sin modo plan (Fase 9: en modo plan no corría ni un `ssh`
+  de lectura). Sus comandos pasan por las reglas de permiso del usuario; si te llega su `espera permiso`, díselo al
+  usuario como cualquier permiso. Lo que escriba fuera lo ves en su reporte antes de `libera --fuera`.
 
-Antes de proponer:
+Antes de proponer, **en cada lote** (también el que imprimen `libera` y `cierra`, el 2.º y el 3.º):
 - Lee cada prompt de tarea (`Read` de la ruta que imprime). Puedes afinar **Criterios de aceptación** y
   **Checks** en ese archivo (vive en el estado de lookout, no en el repo). No cambies el resto.
+- Lo que le dices al usuario de cada pendiente sale de ese archivo (su línea `hará:`, su tipo, sus criterios), no
+  de tu resumen del pendiente: si la tarea pide un commit, no la describas como «solo medir».
 - Puedes **quitar** un pendiente del lote (dilo y por qué). **Nunca añadas** uno que el script dejó fuera:
   el tope, los bloqueos y el acoplamiento los decide el script, no tú.
 
@@ -78,11 +83,18 @@ La primera respuesta de cada agente debe ser su prueba de canal por `SendMessage
 Cuando un agente reporte que **terminó** su pendiente:
 1. Verifica su evidencia con una lectura corta (`git -C <su worktree> log --oneline <base>..HEAD`, el archivo).
    No corras sus builds ni sus tests.
-2. `lookout libera <project_id> <agente>` — marca la tarea terminada y libera su hueco. Imprime la
-   propuesta nueva: si trae lote (p. ej. el que estaba en cola por el tope), vuelve al paso 3
-   (una aprobación por lote). Si falló de verdad: `lookout libera … --fallida`.
-3. Cerrar el pendiente en 3-tier **no es de esta fase**: queda para la verificación y el journal (F3).
-   No edites `memory/` ni pidas al agente que lo cierre.
+2. Compara su reporte con su tarea (el archivo de la tarea, no tu resumen): «Alcance / no tocar», «Restricciones»
+   y «Criterios de aceptación» contra lo que dice que escribió, dónde y su «riesgo asumido». Lo que escribió fuera
+   del worktree o en un host remoto (scp, `mktemp`, `rm`, clones) se lo dices al usuario en un bloque de decisión
+   **antes** de liberar; nunca le ordenes al agente arreglarlo por su cuenta (p. ej. borrar el `/tmp` remoto).
+3. `lookout libera <project_id> <agente> --fuera ninguno` — o, si algo se salió, `--fuera "<qué>"
+   --usuario-confirmo <id de la decisión>` (sin esa revisión, `libera` se niega). Marca la tarea terminada y
+   libera su hueco. Imprime la propuesta nueva: si trae lote (p. ej. el que estaba en cola por el tope), vuelve
+   al paso 3 de esta skill (una aprobación por lote). Si falló de verdad: `lookout libera … --fallida` (con la
+   misma revisión).
+4. Cerrar el pendiente: con el sí del usuario en una decisión, `lookout cierra` (la orden exacta la imprime
+   `libera`; ver «Cerrar el pendiente de un agente» en `/lookout:supervisa`). No edites `memory/` ni pidas al agente
+   que lo cierre.
 
 ## Reglas fijas
 

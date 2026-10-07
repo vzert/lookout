@@ -20,6 +20,7 @@ import gobierno
 import lote
 import pendientes
 import publica
+import registry
 import requisitos
 
 
@@ -69,12 +70,28 @@ def cierra(project_id, common_dir, entry, st, estado, nota, usuario_confirmo, si
         return False, ["NO: cerrar un pendiente lo confirma el usuario. Abre la decisión (`lookout decision … --abre`), "
                        "pregúntale (AskUserQuestion), ciérrala con su respuesta y repite con --usuario-confirmo <id>."]
     last = st["ultimo"]
-    if not last or last["veredicto"] != "hold":
+    # Fase 9 C2: abandoning (or superseding) claims no result: no hold and no push needed, only the user's yes.
+    sin_resultado = estado != "resolved"
+    if not sin_resultado and (not last or last["veredicto"] != "hold"):
         return False, ["NO: sin hold del adversario (último: %s). Verificación independiente antes de cerrar." % (
             last["linea"] if last else "ninguno")]
-    if not sin_push and not entry.get("sin_worktree") and not published(entry):
+    if not sin_resultado and not sin_push and not entry.get("sin_worktree") and not published(entry):
         return False, ["NO: los commits de %s no están en origin. Publica primero (lookout publica), o di por qué esta "
                        "tarea no necesita push con --sin-push \"<razón>\"." % entry.get("nombre")]
+    nota_full = nota + (" — sin push: " + sin_push if sin_push else "")
+    if not sin_resultado and gobierno.misma_familia(st)[0]:
+        nota_full += " — ojo: el hold fue del mismo modelo que el agente"
+    ok, lines = emite(common_dir, tarea, estado, nota_full, entry["session_id"], run)
+    if lines and lines[0].startswith("NO:"):
+        return False, lines
+    lote.set_estado(project_id, entry["session_id"], "terminada", "cerrado por journal")
+    publica.retira_sesion(project_id, entry["session_id"], "cerrada")
+    return ok, lines
+
+
+def emite(common_dir, tarea, estado, nota, sesion, run=subprocess.run):
+    """One pendiente.resolve event in the supervised repo's own journal. (ok, lines); lines[0] starts with "NO:" when
+    nothing was written."""
     root = lote.repo_root(common_dir)
     mem = os.path.join(root, "memory")
     pend_file = os.path.join(mem, "_pendientes.md")
@@ -86,12 +103,8 @@ def cierra(project_id, common_dir, entry, st, estado, nota, usuario_confirmo, si
     if not tb:
         return False, ["NO: no encuentro el plugin 3-tier (journal-emit.py)."]
     before = digest_file(pend_file)
-    nota_full = nota + (" — sin push: " + sin_push if sin_push else "")
-    if gobierno.misma_familia(st)[0]:
-        nota_full += " — ojo: el hold fue del mismo modelo que el agente"
     cmd = ["python3", os.path.join(tb, "journal-emit.py"), "--memory-dir", mem, "--type", "pendiente.resolve",
-           "--id", tarea, "--estado", estado, "--nota", nota_full, "--sesion", entry["session_id"],
-           "--text-prefix", it["texto"][:40]]
+           "--id", tarea, "--estado", estado, "--nota", nota, "--sesion", sesion, "--text-prefix", it["texto"][:40]]
     try:
         out = run(cmd, capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -99,9 +112,23 @@ def cierra(project_id, common_dir, entry, st, estado, nota, usuario_confirmo, si
     if out.returncode != 0:
         return False, ["NO: journal-emit salió %d: %s" % (out.returncode, (out.stderr or out.stdout).strip()[:300])]
     after = digest_file(pend_file)
-    lines = ["Evento pendiente.resolve escrito en %s/.journal (id %s, estado %s)." % (mem, tarea, estado),
-             "_pendientes.md %s." % ("sin cambios: se actualiza al compactar el journal (SessionStart de 3-tier o "
-                                     "/checkpoint-3t)" if before == after else "CAMBIÓ al emitir: revisa (no debía)")]
-    lote.set_estado(project_id, entry["session_id"], "terminada", "cerrado por journal")
-    publica.retira_sesion(project_id, entry["session_id"], "cerrada")
-    return before == after, lines
+    return before == after, [
+        "Evento pendiente.resolve escrito en %s/.journal (id %s, estado %s)." % (mem, tarea, estado),
+        "_pendientes.md %s." % ("sin cambios: se actualiza al compactar el journal (SessionStart de 3-tier o "
+                                "/checkpoint-3t)" if before == after else "CAMBIÓ al emitir: revisa (no debía)")]
+
+
+def descarta(project_id, common_dir, tarea, estado, nota, usuario_confirmo, sesion, run=subprocess.run):
+    """Fase 9 C1: close a pendiente that never had an agent (abandoned or superseded), through the journal and with
+    the user's yes. Until now there was no way, and the supervisor emitted journal events by hand. (ok, lines)"""
+    if estado not in ("abandoned", "superseded"):
+        return False, ["NO: `descarta` solo cierra como abandoned o superseded; uno resuelto lo cierra `lookout cierra` "
+                       "con el agente que lo hizo."]
+    if not usuario_confirmo:
+        return False, ["NO: descartar un pendiente lo confirma el usuario. Abre la decisión (`lookout decision … "
+                       "--abre`), pregúntale, ciérrala con su respuesta y repite con --usuario-confirmo <id>."]
+    for e in lote.tasks(registry.load(project_id)):
+        if e.get("tarea") == tarea and e.get("tarea_estado") not in ("terminada", "fallida"):
+            return False, ["NO: %s tiene un agente (%s, %s). Ciérralo con `lookout cierra … --estado %s`." % (
+                tarea, e.get("nombre"), e.get("tarea_estado") or "-", estado)]
+    return emite(common_dir, tarea, estado, nota, sesion, run)

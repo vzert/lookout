@@ -134,6 +134,35 @@ class DigestBudgetTest(Base):
         lookout_state.append_event(PID, {"event": "notification", "session_id": "s1", "nombre": "uno", "tipo": "idle_prompt"})
         self.assertIn("aviso (idle_prompt)", digest.render(PID))   # alone, it is shown with its type
 
+    def test_hidden_agents_are_counted(self):
+        # Fase 9 E1: clip() collapsed the indent, so "(+0 agentes más)" hid 2 of 9 agents in claude-vzert
+        self.load(agents=30, events=0, decisions=0)
+        lines = digest.render(PID).splitlines()
+        shown = sum(1 for x in lines if x.startswith("  agente-"))
+        oculto = next(x for x in lines if "agentes más" in x)
+        n = int(oculto.split("+", 1)[1].split()[0])
+        self.assertGreater(n, 0)
+        self.assertEqual(shown + n, 30)
+
+    def test_events_cut_for_room_come_back_in_the_next_digest(self):
+        # Fase 9 E10 (adversary of 0.8.1, round 1): `resumen` used to mark as attended what it cut
+        self.agent("s1", "uno")
+        for i in range(60):
+            lookout_state.append_event(PID, {"event": "ask", "session_id": "s1", "nombre": "uno",
+                                             "questions": [{"question": "¿Pregunta %02d?" % i, "options": ["A"]}]})
+        primero = digest.render(PID)
+        self.assertIn("¿Pregunta 59?", primero)
+        self.assertNotIn("¿Pregunta 00?", primero)
+        self.assertIn("vuelven en el siguiente resumen", primero)
+        vistas = set()
+        for _ in range(6):
+            out = digest.render(PID)
+            vistas |= {"%02d" % i for i in range(60) if "¿Pregunta %02d?" % i in out}
+            if "Eventos nuevos: ninguno" in out:
+                break
+        primeras = {"%02d" % i for i in range(60) if "¿Pregunta %02d?" % i in primero}
+        self.assertEqual(vistas | primeras, {"%02d" % i for i in range(60)})  # every one was shown once
+
     def test_todo_shows_everything(self):
         self.load(agents=3, events=80, decisions=0)
         self.assertGreater(len(digest.render(PID, mark=False, todo=True).splitlines()), 40)
@@ -479,6 +508,19 @@ class SupervisorHooksTest(Base):
         lookout_state.write_marker(SUP, {"project_id": PID, "nombre": "x", "address": "uds:/tmp/o.sock"})
         r = subprocess.run(["sh", gate, "on_ask.py"], input=json.dumps(ev), capture_output=True, text=True, env=env)
         self.assertEqual((r.returncode, r.stdout), (0, ""))
+
+    def test_a_supervisor_that_is_also_an_executor_keeps_its_state_events(self):
+        # Fase 9 E11 (adversary of 0.8.1, round 1): its StopFailure went to on_supervisor only and never to on_state
+        gate = os.path.join(HOOKS, "guard.sh")
+        env = dict(os.environ, LOOKOUT_STATE_DIR=self.state, HERDR_PANE_ID="")
+        supervisor_md.mark_supervisor(SUP, PID)
+        ev = {"session_id": SUP, "hook_event_name": "StopFailure", "error": "rate_limit", "error_details": "429"}
+        subprocess.run(["sh", gate, "on_state.py"], input=json.dumps(ev), capture_output=True, text=True, env=env)
+        self.assertEqual(lookout_state.read_events(PID, 0)[0], [])       # supervisor only: no executor event
+        lookout_state.write_marker(SUP, {"project_id": PID, "nombre": "x", "address": "uds:/tmp/o.sock"})
+        subprocess.run(["sh", gate, "on_state.py"], input=json.dumps(ev), capture_output=True, text=True, env=env)
+        evs = lookout_state.read_events(PID, 0)[0]
+        self.assertEqual([e.get("hook") for e in evs], ["StopFailure"])
 
     def test_session_start_after_compact_prints_como_retomar(self):
         supervisor_md.mark_supervisor(SUP, PID)

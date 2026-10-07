@@ -65,7 +65,9 @@ def revisa_cada():
 
 def _norm(text):
     text = re.sub(r"(?:~|\.{0,2})?/[^\s:'\"()]+", "<ruta>", text)
-    text = re.sub(r"0x[0-9a-fA-F]+|\d+", "#", text)
+    # Fase 9 E9: only a number standing alone (a line, a count, a port); digits inside a name stay («python3» vs
+    # «python», «sha256sum», «utf8» are different errors)
+    text = re.sub(r"\b0x[0-9a-fA-F]+\b|(?<![\w.-])\d+(?:\.\d+)?(?![\w-])", "#", text)
     return " ".join(text.split())[:120]
 
 
@@ -375,6 +377,27 @@ def revisa_log(project_id, row):
         fh.write(json.dumps(dict(row, ts=time.time()), ensure_ascii=False) + "\n")
 
 
+def ultimas_revisiones(project_id, cola=200000):
+    """{session_id: its last revisa.log row}, from the file's tail (it only grows)."""
+    import json
+    path = os.path.join(lookout_state.project_dir(project_id), "revisa.log")
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(max(0, os.path.getsize(path) - cola))
+            data = fh.read().decode("utf-8", "replace")
+    except OSError:
+        return {}
+    out = {}
+    for line in data.splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if row.get("session_id"):
+            out[row["session_id"]] = row
+    return out
+
+
 def revisa(project_id, now=None, agents=None, proceso=estado_proceso, reciente=worktree_reciente):
     """One check of every registered agent; appends and returns the `sin_progreso` / `largo` events it decided.
     Cheap when nobody is quiet: herdr and ps are asked only about an agent whose hooks went stale."""
@@ -386,7 +409,7 @@ def revisa(project_id, now=None, agents=None, proceso=estado_proceso, reciente=w
         events = _project_events(project_id)
         reg = registry.load(project_id).get("agents", {})
         for sid, entry in reg.items():
-            if entry.get("tarea_estado") == "relevada":
+            if entry.get("tarea_estado") == "relevada" or entry.get("retirado"):
                 continue
             last = ultimo_real(events, sid)
             if not last or last.get("event") not in EN_TURNO:

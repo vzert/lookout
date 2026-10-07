@@ -29,6 +29,7 @@ import registry  # noqa: E402
 import relevo  # noqa: E402
 
 SALUDO = "p-e2be0f2c64"
+FAQ, CHANGELOG = "p-743ebd0898", "p-990b334946"  # never launched in these tests (Fase 9 C1)
 HOLD = "[ADVERSARY-VERDICT: hold ungrounded=0 unfalsified=0 incomplete=0 autonomy-violations=0 unsafe=0]"
 BREAK = "[ADVERSARY-VERDICT: break ungrounded=1 unfalsified=0 incomplete=0 autonomy-violations=0 unsafe=1]"
 BREAK_SAFE = "[ADVERSARY-VERDICT: break ungrounded=0 unfalsified=0 incomplete=2 autonomy-violations=0 unsafe=0]"
@@ -417,6 +418,45 @@ class CierreTest(Base):
         self.assertFalse(ok)
         self.assertIn("hold", lines[0])
         self.assertFalse(os.path.exists(os.path.join(self.root, "memory", ".journal")))
+
+    def compacta(self):
+        subprocess.run(["python3", os.path.join(self.tb, "journal-compact.py"), "--memory-dir",
+                        os.path.join(self.root, "memory"), "--quiet"], check=True)
+        return [it["id"] for it in pendientes.parse(self.pend)]
+
+    def test_abandoning_needs_the_user_but_no_hold_and_no_push(self):
+        # Fase 9 C2: an abandoned task claims no result; claude-vzert had no way to close one without a hold or a push.
+        e = self.agent("s1", tarea=SALUDO)
+        self.transcript("s1", [EXT, a_text(M_EXT + "\n" + BREAK)])
+        st = gobierno.estado(self.pid, e, self.projects)
+        ok, lines = cierre.cierra(self.pid, self.common, e, st, "abandoned", "ya no hace falta", False)
+        self.assertFalse(ok)
+        self.assertIn("usuario", lines[0])
+        ok, lines = cierre.cierra(self.pid, self.common, e, st, "abandoned", "ya no hace falta", True)
+        self.assertTrue(ok, lines)
+        self.assertNotIn(SALUDO, self.compacta())
+        ok, lines = cierre.cierra(self.pid, self.common, dict(e, tarea=FAQ), st, "resolved", "n", True)
+        self.assertFalse(ok)  # a resolved close still needs the hold
+        self.assertIn("hold", lines[0])
+
+    def test_a_pendiente_that_never_had_an_agent_is_discarded_by_journal(self):
+        # Fase 9 C1: before `descarta`, the supervisor emitted journal events by hand for p-1bb49d113a.
+        ok, lines = cierre.descarta(self.pid, self.common, FAQ, "abandoned", "n", False, "sup")
+        self.assertFalse(ok)
+        self.assertIn("usuario", lines[0])
+        ok, lines = cierre.descarta(self.pid, self.common, FAQ, "resolved", "n", True, "sup")
+        self.assertFalse(ok)
+        self.assertIn("lookout cierra", lines[0])
+        self.agent("s1", tarea=CHANGELOG, tarea_estado="trabajando")
+        ok, lines = cierre.descarta(self.pid, self.common, CHANGELOG, "abandoned", "n", True, "sup")
+        self.assertFalse(ok)
+        self.assertIn("tiene un agente", lines[0])
+        self.assertFalse(os.path.exists(os.path.join(self.root, "memory", ".journal")))
+        ok, lines = cierre.descarta(self.pid, self.common, FAQ, "superseded", "lo cubre otro", True, "sup")
+        self.assertTrue(ok, lines)
+        abiertos = self.compacta()
+        self.assertNotIn(FAQ, abiertos)
+        self.assertIn(CHANGELOG, abiertos)
 
 
 class RegistryAfterReliefTest(Base):

@@ -23,6 +23,7 @@ import lookout_state  # noqa: E402
 import lote  # noqa: E402
 import on_state  # noqa: E402
 import pendientes  # noqa: E402
+import ports  # noqa: E402
 import registry  # noqa: E402
 
 PEND = os.path.join(FIX, "pendientes-3t.md")
@@ -52,11 +53,13 @@ class PendientesTest(unittest.TestCase):
 
     def test_batch_excludes_blocked_and_never_pairs_coupled(self):
         p = pendientes.propose(self.items, 3, hoy="2026-10-02")
-        self.assertEqual(ids(p["lote"]), [GUIA_INST, SALUDO, FAQ])
+        # Fase 9: highest priority first and, within it, the newest first (top line of the section); inside a
+        # coupled pair the older one ("Crear docs/guia.md") goes before the newer ("Añadir a docs/guia.md").
+        self.assertEqual(ids(p["lote"]), [SALUDO, GUIA_INST, CHANGELOG])
         self.assertEqual(sorted(ids(p["excluidos"])), sorted([PUBLICAR, LIMPIA]))
         cola = {r["id"]: r["motivo"] for r in p["cola"]}
         self.assertIn("acoplado con %s" % GUIA_INST, cola[GUIA_USO])
-        self.assertEqual(cola[CHANGELOG], "tope de 3 agentes")
+        self.assertEqual(cola[FAQ], "tope de 3 agentes")
         self.assertFalse(set(ids(p["lote"])) & {PUBLICAR, LIMPIA})
 
     def test_running_tasks_hold_slots_and_files(self):
@@ -289,6 +292,56 @@ class LoteTest(StubCase):
         self.assertIn("modo lectura en el checkout principal", text)
         self.assertNotIn("Tu cambio queda en un commit", text)
 
+    def test_every_task_forbids_writing_outside_and_on_remote_hosts(self):
+        # Fase 9 A1 (claude-vzert): "**Medir** ..." was typed as code and its agent did scp + rm -rf on the VPS.
+        items = pendientes.parse(PEND)
+        base = {i["id"]: i for i in items}[FAQ]
+        for tipo in ("codigo", "investigacion"):
+            it = dict(base, texto="**Medir** si el certificado del VPS sigue vigente", tipo=tipo)
+            plan = lote.plan_for(it, self.tmp.name, "origin/main")
+            text = lote.render_tarea(self.pid, it, plan, items)
+            restricciones = text.split("## Restricciones", 1)[1].split("\n## ", 1)[0]
+            self.assertIn("hosts remotos", restricciones, tipo)
+            self.assertIn("`ssh host 'bash -s' < script`", restricciones, tipo)
+            for verbo in ("`scp`", "`mktemp`", "`rm`"):
+                self.assertIn(verbo, restricciones, tipo)
+            self.assertIn("en ninguna parte" if tipo == "investigacion" else "fuera de tu worktree", restricciones)
+
+    def test_related_memory_is_capped_and_ignores_generic_files(self):
+        # Fase 9 A2 (claude-vzert): matching on `memory/_pendientes.md` put ~17 unrelated items (18 KB) in one task.
+        items = pendientes.parse(PEND)
+        base = dict({i["id"]: i for i in items}[FAQ], prioridad="media", linea=0)
+        it = dict(base, id="p-objetivo00", texto="Arreglar `src/a.py` y anotar en `memory/_pendientes.md`",
+                  archivos=["memory/_pendientes.md", "src/a.py"])
+        ajenos = [dict(base, id="p-ajeno%05d" % n, archivos=["memory/_pendientes.md"],
+                       texto="El certificado .p12 y su contraseña están en X (`memory/_pendientes.md`)")
+                  for n in range(6)]
+        cercanos = [dict(base, id="p-cerca%05d" % n, archivos=["src/a.py"], texto="Revisar `src/a.py` " + "x" * 900)
+                    for n in range(5)]
+        plan = lote.plan_for(it, self.tmp.name, "origin/main")
+        text = lote.render_tarea(self.pid, it, plan, [it] + ajenos + cercanos)
+        memoria = text.split("## Memoria relevante", 1)[1].split("\n## ", 1)[0]
+        self.assertNotIn("p-ajeno", memoria)
+        self.assertNotIn("contraseña", memoria)
+        self.assertEqual(memoria.count("relacionado p-cerca"), 3)
+        self.assertIn("2 pendientes más", memoria)
+        self.assertLess(len(memoria), 2000)
+
+    def test_only_code_tasks_get_a_port_and_a_database(self):
+        # Fase 9 A3: a task that measures or writes a message has nothing to serve; no port is reserved for it.
+        items = pendientes.parse(PEND)
+        base = {i["id"]: i for i in items}[FAQ]
+        for tipo, con_puerto in (("comunicacion", False), ("credencial", False), ("codigo", True)):
+            it = dict(base, tipo=tipo)
+            plan = lote.plan_for(it, os.path.join(self.tmp.name, "repo-" + tipo), "origin/main")
+            text = lote.render_tarea(self.pid, it, plan, items)
+            recursos = text.split("## Recursos de tu worktree", 1)[1].split("\n## ", 1)[0]
+            self.assertEqual("Puerto para tu servidor" in recursos, con_puerto, tipo)
+            self.assertEqual("Base de datos" in recursos, con_puerto, tipo)
+            self.assertEqual(bool(ports.de(plan["worktree"])), con_puerto, tipo)
+            if not con_puerto:
+                self.assertIn("no levantes servidores ni bases de datos", recursos)
+
     def test_draft_from_an_older_plan_is_rewritten(self):
         items = pendientes.parse(PEND)
         it = {i["id"]: i for i in items}[FAQ]
@@ -323,8 +376,8 @@ class LoteTest(StubCase):
         args = lote.exec_args(None)
         self.assertEqual(json.loads(args[-1]), {"env": {"LOOKOUT_STATE_DIR": self.state}})
         ro = lote.exec_args(None, solo_lectura=True)
-        self.assertEqual(ro[-7:], ["--permission-mode", "plan", "--disallowedTools", "Edit", "Write", "MultiEdit",
-                                   "NotebookEdit"])  # last on the command line: the variadic list ends there
+        self.assertEqual(ro[-5:], ["--disallowedTools", "Edit", "Write", "MultiEdit", "NotebookEdit"])  # last: variadic
+        self.assertNotIn("--permission-mode", ro)  # Fase 9: in plan mode a measuring agent would not run a read-only ssh
 
     def test_parallel_launches_are_serialised(self):
         import threading

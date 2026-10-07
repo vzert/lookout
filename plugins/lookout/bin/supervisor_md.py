@@ -59,7 +59,8 @@ def one_line(text, n=TXT):
 
 
 def hhmm(ts):
-    return time.strftime("%H:%M", time.localtime(ts or 0))
+    t = time.localtime(ts or 0)
+    return time.strftime("%H:%M" if t[:3] == time.localtime()[:3] else "%d-%m %H:%M", t)  # Fase 9 E2
 
 
 def agent_name(reg, to):
@@ -123,7 +124,7 @@ def render(project_id, now=None):
          "", "## Agentes y tareas", "pestaña (nombre) | rama | tarea | estado de la tarea | último evento",
          "Al usuario nombra a cada agente por su pestaña de herdr; el pane no le dice nada."]
     for sid, e in reg.get("agents", {}).items():
-        if e.get("tarea_estado") == "relevada":
+        if e.get("tarea_estado") == "relevada" or e.get("retirado"):
             continue
         ev = last.get(sid)
         L.append("%s | %s | %s | %s | %s" % (
@@ -132,12 +133,18 @@ def render(project_id, now=None):
     L += ["", "## Decisiones del usuario — tomadas"]
     respuestas = [x for x in slog if x.get("tipo") == "usuario"]
     L += ["- %s (%s): %s → %s: %s" % (d["id"], hhmm(d.get("hasta")), one_line(d["texto"], 120),
-                                      "SÍ" if d.get("aprueba") else "NO", one_line(d.get("respuesta"), 120))
+                                      {True: "SÍ", False: "NO"}.get(d.get("aprueba"), "respondió"),
+                                      one_line(d.get("respuesta"), 120))
           for d in tomadas] or ([] if respuestas else ["- ninguna"])
     if respuestas:
         L.append("Respuestas del usuario en tus AskUserQuestion (registradas por hook):")
         L += ["- %s %s → %s" % (hhmm(x["ts"]), one_line(q, 100), one_line(a, 80))
               for x in respuestas[-8:] for q, a in (x.get("answers") or {}).items()]
+    directas = [x for x in slog if x.get("tipo") == "directa"]
+    if directas:  # Fase 9 C5
+        L.append("Decisiones directas del usuario en el pane de un agente (registradas por hook; no pasaron por ti):")
+        L += ["- %s %s: %s" % (hhmm(x["ts"]), x.get("nombre") or "-", one_line(x.get("texto"), 160))
+              for x in directas[-8:]]
     sin_resp = unanswered(slog)
     L += ["", "## Decisiones del usuario — pendientes"]
     L += ["- %s (abierta hace %s; esperan: %s): %s" % (d["id"], decisiones.edad(d["desde"], now),

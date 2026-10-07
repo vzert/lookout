@@ -24,6 +24,11 @@ if { [ "$1" = on_ask.py ] || [ "$1" = on_state.py ]; } && [ -f "$root/supervisor
   # --async tells on_supervisor.py this is that entry; it reads the event name from the parsed JSON, not the text.
   via=""; [ "$1" = on_state.py ] && via="--async"
   printf '%s' "$input" | python3 "$(dirname "$0")/../bin/on_supervisor.py" $via
+  # Fase 9 E11: a session that is also an executor (both markers) still needs its state events (StopFailure, Stop,
+  # SessionEnd…) in on_state.py; on_ask.py stays exclusive: a supervisor's question is never denied.
+  if [ "$1" = on_state.py ] && [ -f "$root/sessions/$sid.json" ]; then
+    printf '%s' "$input" | python3 "$(dirname "$0")/../bin/on_state.py"
+  fi
   exit 0  # an `exec` inside a pipeline only replaces the subshell: without this exit the executor path ran too
 fi
 [ -f "$root/sessions/$sid.json" ] || exit 0

@@ -20,7 +20,8 @@ Subcommands (PROYECTO = a path inside the repo, or its project_id):
                                 and one task prompt per batch item in the state folder
   pendientes PROYECTO --match T [T...]  open pendientes that mention these terms (H13)
   lanza PROYECTO ID [ID...] [--modelo M]  launch approved batch items: worktree + agent + its task, once
-  libera PROYECTO AGENTE [--fallida]      the agent's task is done (or failed): free its slot, propose again
+  libera PROYECTO AGENTE --fuera ninguno|TEXTO [--usuario-confirmo D] [--fallida]
+                                        the agent's task is done (or failed): free its slot, propose again
   envia PROYECTO AGENTE (--tarea | --clave K --texto T)
                                 idempotent delivery (bin/deliver.py); --tarea = the agent's task trigger again
   gobierno PROYECTO AGENTE [--para push|ronda] [--usuario-amplia N --decision ID]
@@ -31,6 +32,8 @@ Subcommands (PROYECTO = a path inside the repo, or its project_id):
   regla-push PROYECTO [--estado]  the temporary push rule the USER applies (H15); --estado reads whether it is on
   permisos                      the executors' permission rules (D6, F5): active or not, where the user activates them
   cierra PROYECTO AGENTE [--estado resolved|superseded|abandoned] --nota N --usuario-confirmo DECISION_ID [--sin-push RAZON]
+  descarta PROYECTO P-ID [--estado abandoned|superseded] --nota N --usuario-confirmo DECISION_ID
+                                close by journal a pendiente that never had an agent (Fase 9 C1)
                                 close the agent's pendiente by journal (pendiente.resolve), never by editing
   relevo PROYECTO AGENTE [--retomar ARCHIVO] [--modelo M]
                                 /exit + a new session on the same task with its "Como retomar" (F3)
@@ -125,8 +128,10 @@ def cmd_inicia(a):
     found = discover.discover(common, todos)
     mine = {f.get("session_id") for f in found}
     ajenos = {t.get("name") for t in todos if (t.get("agent_session") or {}).get("value") not in mine}
-    reg = registry.register(pid, me, found, ajenos)
+    reg = registry.register(pid, me, found, ajenos, todos)
     others = [f for f in found if f.get("kind") != "claude" or not f.get("session_id")]
+    for x in publica.concilia(pid):  # Fase 9 E3
+        print(x)
     print("Proyecto %s (%s). Raíces: %s" % (pid, common, ", ".join(roots)))
     print("Supervisor: %s → %s" % (me["nombre"], me["address"]))
     print(nombra_supervisor(me))
@@ -135,8 +140,10 @@ def cmd_inicia(a):
           "(wS:p25) no le dice nada.")
     print("nombre | pestaña | worktree | rama | estado herdr | session")
     for e in reg["agents"].values():
-        print("%s | %s | %s | %s | %s | %s" % (e["nombre"], e.get("pestana") or "-", e["worktree"], e["branch"] or "-",
-                                             e["estado_herdr"], e["session_id"][:8]))
+        if e.get("retirado"):
+            continue  # Fase 9 E2: its pane is another session's now
+        print("%s | %s | %s | %s | %s | %s" % (e["nombre"], e.get("pestana") or "-", e.get("worktree") or "-",
+                                             e.get("branch") or "-", e.get("estado_herdr") or "-", e["session_id"][:8]))
     for o in others:
         print("(no registrado: pestaña %s en %s, kind=%s, sin session_id de Claude)" % (
             o.get("pestana") or o["pane_id"], o["cwd"], o["kind"]))
@@ -358,14 +365,26 @@ def cmd_libera(a):
     e = registry.find(reg, a.agente)
     if not e or not e.get("tarea"):
         sys.exit("agente %r sin tarea registrada" % a.agente)
+    ok, lines = lote.revisa_alcance(pid, e, a.fuera, a.usuario_confirmo)
+    if lines:
+        print("\n".join(lines))
+    if not ok:
+        return 5
+    if a.fuera.strip().lower() != "ninguno":
+        reg = registry.load(pid)
+        reg["agents"][e["session_id"]]["fuera_de_tarea"] = a.fuera.strip()
+        registry.save(pid, reg)
     estado = "fallida" if a.fallida else "terminada"
     with lote.project_mutex(pid):
         lote.set_estado(pid, e["session_id"], estado)
     if e.get("worktree") and not e.get("sin_worktree"):
         import ports
         ports.libera(e["worktree"])  # Fase 6: its dev-server port goes back to the pool
-    print("%s: tarea %s marcada %s; su hueco queda libre. El pendiente se cierra por journal en F3." % (
-        e["nombre"], e["tarea"], estado))
+    print("%s: tarea %s marcada %s; su hueco queda libre." % (e["nombre"], e["tarea"], estado))
+    # Fase 9 E4: the exact close command, not "F3"
+    print("Para cerrar el pendiente (con el sí del usuario en una decisión): `lookout cierra %s %s --nota \"<qué quedó "
+          "hecho y cómo se verificó>\" --usuario-confirmo <id>`%s." % (
+              pid, e["nombre"], " (si no hizo falta push: `--sin-push \"<razón>\"`; si se abandona: `--estado abandoned`)"))
     print("")
     print(lote.render_propuesta(lote.propone(pid, common)))
     return 0
@@ -485,6 +504,23 @@ def cmd_regla_push(a):
     return 0
 
 
+def cmd_descarta(a):
+    """Fase 9 C1: close, through the journal, a pendiente that never had an agent; with the user's yes."""
+    pid, common = project(a.proyecto)
+    d = decisiones.respondida(pid, a.usuario_confirmo or "")
+    if not d:
+        print("NO: --usuario-confirmo necesita el id de una decisión que el usuario respondió con un sí (p.ej. d3); "
+              "%r no lo es. Ábrela con `lookout decision`, pregúntale y ciérrala con su respuesta." % a.usuario_confirmo)
+        return 5
+    lk = lookout_state.read_json(os.path.join(lookout_state.project_dir(pid), "lock.json")) or {}
+    sesion = (lk.get("supervisor") or {}).get("session_id") or "lookout-descarta"
+    ok, lines = cierre.descarta(pid, common, a.pendiente, a.estado,
+                                a.nota + " — confirmó el usuario: %s (%s)" % (d["id"], d.get("respuesta", "")),
+                                True, sesion)
+    print("\n".join(lines))
+    return 0 if ok else 5
+
+
 def cmd_cierra(a):
     pid, common = project(a.proyecto)
     e = agent_entry(pid, a.agente)
@@ -597,6 +633,8 @@ def main():
     p.add_argument("--modelo", default=os.environ.get("LOOKOUT_MODELO")); p.add_argument("--confirmar", type=float, default=30)
     p.add_argument("--tope", type=int, default=None)
     p = sub.add_parser("libera"); p.add_argument("proyecto"); p.add_argument("agente"); p.add_argument("--fallida", action="store_true")
+    p.add_argument("--fuera", default="", metavar="ninguno|TEXTO")
+    p.add_argument("--usuario-confirmo", metavar="DECISION_ID", default="")
     p = sub.add_parser("envia"); p.add_argument("proyecto"); p.add_argument("agente")
     p.add_argument("--clave"); p.add_argument("--texto"); p.add_argument("--tarea", action="store_true")
     p.add_argument("--confirmar", type=float, default=30)
@@ -611,6 +649,9 @@ def main():
     p = sub.add_parser("cierra"); p.add_argument("proyecto"); p.add_argument("agente")
     p.add_argument("--estado", choices=["resolved", "superseded", "abandoned"], default="resolved"); p.add_argument("--nota", required=True)
     p.add_argument("--usuario-confirmo", metavar="DECISION_ID", default=""); p.add_argument("--sin-push", default="")
+    p = sub.add_parser("descarta"); p.add_argument("proyecto"); p.add_argument("pendiente")
+    p.add_argument("--estado", choices=["abandoned", "superseded"], default="abandoned"); p.add_argument("--nota", required=True)
+    p.add_argument("--usuario-confirmo", metavar="DECISION_ID", default="")
     p = sub.add_parser("relevo"); p.add_argument("proyecto"); p.add_argument("agente")
     p.add_argument("--retomar"); p.add_argument("--modelo", default=os.environ.get("LOOKOUT_MODELO"))
     p.add_argument("--confirmar", type=float, default=30)
@@ -625,7 +666,7 @@ def main():
     a = ap.parse_args()
     return {"quien": cmd_quien, "inicia": cmd_inicia, "entrega": cmd_entrega, "nota": cmd_nota,
             "resumen": cmd_resumen, "espera": cmd_espera, "suelta": cmd_suelta,
-            "pendientes": cmd_pendientes, "lanza": cmd_lanza, "libera": cmd_libera, "envia": cmd_envia,
+            "pendientes": cmd_pendientes, "lanza": cmd_lanza, "libera": cmd_libera, "descarta": cmd_descarta, "envia": cmd_envia,
             "gobierno": cmd_gobierno, "publica": cmd_publica, "regla-push": cmd_regla_push, "permisos": cmd_permisos, "cierra": cmd_cierra,
             "relevo": cmd_relevo, "decision": cmd_decision, "retomar": cmd_retomar, "corrige": cmd_corrige,
             "puerto": cmd_puerto}[a.cmd](a) or 0

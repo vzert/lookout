@@ -19,6 +19,10 @@ Prioridad: {prioridad}. Tipo: {tipo}. Riesgo: {riesgo}.
 - Sin push ni merge. Quédate en tu worktree. No lances otros agentes.{usa_goalspec}
 - `git push` y `gh workflow run` van solos, sin `&&`, `;` ni `|`, y solo si el supervisor te lo pasa aprobado por el usuario.
 - Si te niegan un comando, no lo reformules ni lo reintentes por otra vía: repórtalo tal cual.
+- Un bloqueo de un hook (`PreToolUse:… hook error: …`) no es una negación del usuario: si pide algo de tu tarea
+  (p. ej. correr el adversario antes del push), hazlo y vuelve a pedir; nunca lo rodees con otro comando. Si no
+  sabes qué pide, díselo al supervisor con el texto exacto.
+{fuera}
 
 ## Recursos de tu worktree
 {recursos}

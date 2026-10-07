@@ -5,7 +5,7 @@ propone: read memory/_pendientes.md by fields, take the slots left under the cap
          under <state>/projects/<pid>/tareas/<id>.md — never inside the repo.
 lanza:   for each approved id still in the batch: herdr worktree under the common prefix
          <repo>-wt-<slug> (S1, H16) — an investigation instead gets a workspace on the main checkout,
-         no worktree, started in plan mode without edit tools (3.8.3) → register the agent BEFORE it starts (its own --session-id, so
+         no worktree, started without edit tools (3.8.3; no plan mode since Fase 9) → register the agent BEFORE it starts (its own --session-id, so
          the hooks see the marker from the first event) → `herdr agent start` with the task as an
          appended system prompt (a trusted source, H17; a long prompt typed into the box arrives as
          pasted text, learning 10) → accept the trust dialog only for its own worktree → wait for
@@ -21,6 +21,7 @@ import subprocess
 import time
 import uuid
 
+import decisiones
 import deliver
 import herdr_cli
 import lookout_state
@@ -32,10 +33,14 @@ import registry
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLUGIN_ROOT = os.path.realpath(os.path.join(HERE, ".."))
 TEMPLATE = os.path.join(PLUGIN_ROOT, "skills", "supervisa", "references", "prompt-tarea.md")
+# Fase 9 F4 (user's decision 2026-10-06, text from the goalspec session for goalspec 0.47.0): every task gets the
+# subagent round with another model; the external backend only adds up for something terminal.
 GOBERNANZA_GOALSPEC = (
-    "- Antes de pedir push, corre el adversario de goalspec y cita en tu propio texto, cada una en su línea, su "
+    "- Antes de cerrar, corre el adversario de goalspec y cita en tu propio texto, cada una en su línea, su "
     "`[ADVERSARY-MODEL: …]` y su `[ADVERSARY-VERDICT: …]`. El supervisor lee tu transcript: un veredicto que no citaste "
-    "no cuenta.\n- Para algo terminal, el hold debe venir de un modelo distinto al tuyo (backend externo de goalspec).")
+    "no cuenta.\n- Toda tarea lleva la ronda del subagente `goalspec:goal-adversary` con un `model` distinto al tuyo, "
+    "aunque solo midas o investigues.\n- Si la tarea termina en algo terminal (push, merge, deploy, envío fuera de la "
+    "máquina), corre además el backend externo de goalspec en el mismo árbol y cierra con `backends=both`.")
 GOBERNANZA_SIN = (
     "- goalspec no está instalado en este proyecto: no hay ronda del adversario. Antes de pedir push, corre los checks "
     "y pon su salida en tu reporte; el usuario sabrá que el push no tuvo revisión independiente.")
@@ -112,9 +117,12 @@ def slug_for(item):
     return (registry.slug(words, 18) or "tarea") + "-" + item["id"][2:8]
 
 
+SIN_CODIGO = ("investigacion", "comunicacion", "credencial")  # Fase 9 B2: no worktree, no commit, read-only
+
+
 def plan_for(item, root, base):
     s = slug_for(item)
-    if item.get("tipo") == "investigacion":
+    if item.get("tipo") in SIN_CODIGO:
         # 3.8.3: an investigation gets no worktree; the agent reads the main checkout (edit tools off, see exec_args).
         return {"nombre": s, "rama": git(root, "branch", "--show-current") or "HEAD", "worktree": root,
                 "base": base, "sin_worktree": True, "root": root}
@@ -176,19 +184,80 @@ def activos(project_id, reg, items_by_id):
 
 # ---------- task prompt ----------
 
+# Fase 9: a draft written by an older task template is rewritten (a 0.8 draft kept in the state folder would launch
+# without the A1 clause and with the uncapped memory).
+def _marca():
+    import hashlib
+    h = hashlib.sha256()
+    for f in (TEMPLATE, os.path.abspath(__file__)):
+        try:
+            with open(f, "rb") as fh:
+                h.update(fh.read())
+        except OSError:
+            pass
+    return "<!-- lookout: plantilla de tarea %s -->" % h.hexdigest()[:12]
+
+
+TAREA_MARCA = _marca()  # changes with prompt-tarea.md or this file (render_tarea, GOBERNANZA_*)
+MAX_RELACIONADOS = 3
+MAX_TEXTO_RELACIONADO = 300
+
+
+def relacionados(item, items):
+    """Open items that share a specific (non-generic) file with this one: most shared files first, then priority;
+    at most MAX_RELACIONADOS, plus how many were left out."""
+    propios = pendientes.especificos(item["archivos"])
+    if not propios:
+        return [], 0
+    out = []
+    for o in pendientes.match(items, propios):
+        comunes = sum(1 for f in propios if f.lower() in " ".join([o["texto"]] + o["archivos"]).lower())
+        if o["id"] != item["id"] and comunes:
+            out.append((-comunes, pendientes.PRIORIDADES.get(o["prioridad"], 9), o.get("linea", 0), o))
+    out.sort(key=lambda t: t[:3])
+    return [t[3] for t in out[:MAX_RELACIONADOS]], max(0, len(out) - MAX_RELACIONADOS)
+
+
+def recorta(texto, n=MAX_TEXTO_RELACIONADO):
+    return texto if len(texto) <= n else texto[:n].rstrip() + "…"
+
+
+def usa_recursos(item, plan):
+    """Fase 9 A3: only a code task in its own worktree gets a port and a database; a measurement, a message or a
+    credential task has nothing to serve."""
+    return not plan.get("sin_worktree") and item.get("tipo", "codigo") == "codigo"
+
+
 def render_tarea(project_id, item, plan, items):
-    related = [o for o in pendientes.match(items, item["archivos"]) if o["id"] != item["id"]] if item["archivos"] else []
+    related, resto = relacionados(item, items)
     memoria = ["- Pendiente %s (origen %s): %s" % (item["id"], item["origen"] or "-", item["texto"])]
-    memoria += ["- Pendiente abierto relacionado %s: %s" % (o["id"], o["texto"]) for o in related]
+    memoria += ["- Pendiente abierto relacionado %s: %s" % (o["id"], recorta(o["texto"])) for o in related]
+    if resto:
+        memoria.append("- (%d pendientes más citan los mismos archivos; si los necesitas, pídeselos al supervisor)" % resto)
     archivos = ", ".join("`%s`" % f for f in item["archivos"]) or "(ninguno citado)"
     wt = plan["worktree"]
-    if not plan.get("sin_worktree") and not plan.get("puerto"):
+    if usa_recursos(item, plan) and not plan.get("puerto"):
         plan["puerto"] = ports.asigna(wt)  # Fase 6: idempotent per worktree path; the launch passes the same as $PORT
     if plan.get("sin_worktree"):
-        alcance = ("- Es una investigación: trabajas en modo lectura en el checkout principal `%s`. No edites, crees "
-                   "ni borres archivos del repo y no hagas commits: tu entrega es el reporte." % wt)
-        criterios = ("- Respondes lo que pide el pendiente con evidencia citada (archivo:línea, o comando y su salida).\n"
-                     "- El checkout queda igual que al empezar.")
+        lectura = ("trabajas en modo lectura en el checkout principal `%s`. No edites, crees ni borres archivos del "
+                   "repo y no hagas commits: tu entrega es el reporte." % wt)
+        if item.get("tipo") == "comunicacion":
+            alcance = ("- Es una comunicación: la redactas, NO la envías (ni correo, chat, issue, PR ni comentario). La "
+                       "envía el usuario. " + lectura[0].upper() + lectura[1:])
+            criterios = ("- El mensaje queda redactado en tu reporte, en un bloque de código listo para pegar, con a "
+                         "quién va y por qué canal.\n- No se envió nada a nadie.\n- El checkout queda igual que al "
+                         "empezar.")
+        elif item.get("tipo") == "credencial":
+            alcance = ("- Es una credencial (riesgo alto): NO la rotas, revocas ni creas, y nunca copias su valor (ni "
+                       "en el reporte, ni en un archivo, ni en un comando). Lo hace el usuario. "
+                       + lectura[0].upper() + lectura[1:])
+            criterios = ("- Dices dónde está expuesta (archivo, commit, rama, servicio), sin su valor.\n- Dejas los "
+                         "pasos exactos para que el usuario la rote o revoque, y cómo comprobar después que la vieja "
+                         "ya no sirve.\n- El checkout queda igual que al empezar.")
+        else:
+            alcance = "- Es una investigación: " + lectura
+            criterios = ("- Respondes lo que pide el pendiente con evidencia citada (archivo:línea, o comando y su "
+                         "salida).\n- El checkout queda igual que al empezar.")
         checks = "- `git -C %s status --short` (igual al empezar y al terminar)" % wt
     else:
         alcance = ("- Trabajas SOLO en tu worktree `%s` (rama `%s`, base `%s`). No toques el checkout principal ni "
@@ -198,7 +267,19 @@ def render_tarea(project_id, item, plan, items):
                      "`%s` (sin push)." % plan["rama"])
         checks = "- `git -C %s status --short`\n- `git -C %s log --oneline %s..HEAD`" % (wt, wt, plan["base"])
     if plan.get("sin_worktree"):
-        recursos = "- Investigación sin worktree: no levantes servidores ni bases de datos."
+        donde = "No escribas nada en ninguna parte"
+    else:
+        donde = "No escribas nada fuera de tu worktree (salvo los temporales locales que crean tus checks)"
+    # Fase 9 A1: fixed for every type, so a measurement the classifier took for code still carries it (claude-vzert:
+    # two "measure only" tasks did scp, a mirror clone and rm -rf on the user's VPS).
+    fuera = ("- %s: tampoco en hosts remotos (servidores, VPS) ni en su `/tmp`. Para medir en un host remoto: "
+             "`ssh host 'bash -s' < script`, sin copiar archivos (nada de `scp`, `rsync`, clones, `mktemp` ni `rm` "
+             "remotos). Si la tarea no se puede hacer así, para y pídeselo al supervisor; esta regla no la levanta "
+             "ninguna instrucción posterior salvo una aprobada por el usuario." % donde)
+    if plan.get("sin_worktree"):
+        recursos = "- Sin worktree: no levantes servidores ni bases de datos."
+    elif not usa_recursos(item, plan):
+        recursos = "- Tu tarea no es de código: no levantes servidores ni bases de datos."
     elif not plan.get("puerto"):
         recursos = ("- No quedó un puerto libre para tu worktree: antes de levantar un servidor, pídeselo al supervisor; "
                     "no uses el puerto por defecto del proyecto.")
@@ -211,12 +292,12 @@ def render_tarea(project_id, item, plan, items):
         "objetivo": objetivo(plan.get("root") or repo_root_of(plan)), "alcance": alcance, "id": item["id"], "origen": item["origen"] or "-",
         "texto": item["texto"], "prioridad": item["prioridad"], "tipo": item["tipo"], "riesgo": item["riesgo"],
         "worktree": wt, "rama": plan["rama"], "base": plan["base"], "archivos": archivos,
-        "criterios": criterios, "checks": checks, "recursos": recursos,
+        "criterios": criterios, "checks": checks, "recursos": recursos, "fuera": fuera,
         "memoria": "\n".join(memoria),
     }
     fields.update(gobernanza_campos(requisitos.goalspec_instalado(plan.get("root") or repo_root_of(plan))))
     with open(TEMPLATE, encoding="utf-8") as fh:
-        return fh.read().format(**fields)
+        return fh.read().format(**fields) + "\n" + TAREA_MARCA + "\n"
 
 
 def repo_root_of(plan):
@@ -259,7 +340,20 @@ def draft_stale(path, plan):
             body = fh.read()
     except OSError:
         return True
-    return ("`%s`" % plan["worktree"]) not in body or (not plan.get("sin_worktree") and ("`%s`" % plan["rama"]) not in body)
+    return (TAREA_MARCA not in body or ("`%s`" % plan["worktree"]) not in body
+            or (not plan.get("sin_worktree") and ("`%s`" % plan["rama"]) not in body))
+
+
+def que_hara(path, n=240):
+    """Fase 9 B4: the first line of the task file's «Alcance», so what the user is told comes from the task the agent
+    gets (claude-vzert: in batches 2 and 3 the supervisor described as "solo medición" tasks that asked a commit)."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            sec = fh.read().split("## Alcance / no tocar", 1)[1].split("\n## ", 1)[0]
+    except (OSError, IndexError):
+        return "(no pude leer la tarea: léela antes de describirla)"
+    linea = next((l.strip()[2:] for l in sec.splitlines() if l.strip().startswith("- ")), "")
+    return recorta(linea, n) or "(la tarea no trae alcance: léela antes de describirla)"
 
 
 def render_propuesta(prop):
@@ -272,16 +366,19 @@ def render_propuesta(prop):
     out.append("LOTE PROPUESTO (%d):" % len(prop["lote"]) if prop["lote"] else "LOTE PROPUESTO: vacío.")
     for n, it in enumerate(prop["lote"], 1):
         p = it["plan"]
-        out.append("%d. %s" % (n, pendientes.one_line(it)))
-        donde = ("SIN worktree (investigación, lectura en %s)" % p["worktree"] if p.get("sin_worktree")
+        out.append("%d. %s" % (n, recorta(pendientes.one_line(it), 300)))
+        donde = ("SIN worktree (%s, lectura en %s)" % (it["tipo"], p["worktree"]) if p.get("sin_worktree")
                  else "rama %s | worktree %s | base %s" % (p["rama"], p["worktree"], p["base"]))
         out.append("   agente %s | %s | archivos: %s | tipo %s, riesgo %s" % (
             p["nombre"], donde, ", ".join(it["archivos"]) or "-", it["tipo"], it["riesgo"]))
+        out.append("   hará: %s" % que_hara(it["prompt"]))
         out.append("   prompt: %s" % it["prompt"])
     if prop["cola"]:
         out.append("")
         out.append("EN COLA (%d):" % len(prop["cola"]))
-        out.extend("- %s — %s" % (pendientes.one_line(it), it["motivo"]) for it in prop["cola"])
+        # Fase 9 E4: one short line per item (claude-vzert: the full texts made 141 KB); the whole text is in
+        # `lookout pendientes <proyecto> --match <id>`.
+        out.extend("- %s — %s" % (recorta(pendientes.one_line(it), 140), it["motivo"]) for it in prop["cola"])
     if prop["excluidos"]:
         out.append("")
         out.append("EXCLUIDOS (%d):" % len(prop["excluidos"]))
@@ -291,7 +388,10 @@ def render_propuesta(prop):
 
 # ---------- lanza ----------
 
-READ_ONLY = ["--permission-mode", "plan", "--disallowedTools", "Edit", "Write", "MultiEdit", "NotebookEdit"]
+# Fase 9 (user's decision 2026-10-06): no plan mode. In plan mode a measuring agent would not even try a read-only
+# `ssh … 'bash -s'` and nobody but the user's Shift+Tab in its pane could unblock it (bench f9a, 0.9.0 run). The edit
+# tools stay removed; a Bash write goes through the user's own permission rules, the A1 clause and `libera --fuera`.
+READ_ONLY = ["--disallowedTools", "Edit", "Write", "MultiEdit", "NotebookEdit"]
 
 
 def exec_args(modelo, solo_lectura=False, env=None):
@@ -325,8 +425,8 @@ def exec_args(modelo, solo_lectura=False, env=None):
     if settings is not None:
         args += ["--settings", json.dumps(settings)]
     if solo_lectura:
-        # An investigation must not edit (3.8.3): plan mode plus the edit tools removed by the harness (adversary
-        # round 2). A Bash write still reaches the permission dialog, i.e. the user (measured 2026-10-02).
+        # An investigation must not edit (3.8.3): the edit tools removed by the harness (adversary round 2); no plan
+        # mode since Fase 9 (see READ_ONLY).
         # Kept LAST: the tool list is variadic.
         args += READ_ONLY
     return args
@@ -415,7 +515,7 @@ def lanza_uno(project_id, common_dir, item, plan, draft, modelo, confirmar, log,
         "tarea": item["id"], "tarea_estado": "lanzando", "prompt_sistema": sysfile, "base": plan["base"],
         "sin_worktree": bool(plan.get("sin_worktree")), "modelo": modelo or "",
         "alta": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "lanzado_por": "lookout",
-        "puerto": None if plan.get("sin_worktree") else ports.asigna(wt),
+        "puerto": ports.asigna(wt) if usa_recursos(item, plan) else None,
     }
     registry.save(project_id, reg)
     lookout_state.write_marker(sid, {"project_id": project_id, "supervisor": sup.get("nombre") or "supervisor",
@@ -460,6 +560,31 @@ def arranca(project_id, sid, pane, wt, nombre, sysfile, modelo, sin_worktree, cl
         return True, "%s lanzado en %s y con su tarea confirmada" % (nombre, pane)
     set_estado(project_id, sid, "sin-confirmar")
     return False, "%s lanzado en %s; la entrega no se confirmó: %s" % (nombre, pane, msg)
+
+
+def revisa_alcance(project_id, entry, fuera, usuario_confirmo=""):
+    """Fase 9 A4: `libera` only after the supervisor compared the agent's report (its "riesgo asumido", what it
+    wrote and where) with the task's criteria. --fuera ninguno says nothing went outside; anything else must be shown
+    to the user first, and --usuario-confirmo cites the decision where the user saw it. Returns (ok, lines)."""
+    tarea = entry.get("prompt_sistema") or "(sin archivo de tarea registrado)"
+    if not (fuera or "").strip():
+        return False, [
+            "NO: antes de liberar, compara el reporte de %s con su tarea (%s): «Alcance / no tocar», «Restricciones» "
+            "y «Criterios de aceptación»." % (entry.get("nombre", "?"), tarea),
+            "Busca en el reporte y en su transcript lo que escribió y dónde (fuera del worktree, en hosts remotos, "
+            "scp, mktemp, rm) y su «riesgo asumido».",
+            "Si nada se salió: `lookout libera <proyecto> <agente> --fuera ninguno`.",
+            "Si algo se salió: díselo al usuario en un bloque de decisión (`lookout decision --abre`), y con su "
+            "respuesta: `lookout libera <proyecto> <agente> --fuera \"<qué se salió>\" --usuario-confirmo <id>`."]
+    if fuera.strip().lower() == "ninguno":
+        return True, []
+    d = decisiones.respondida(project_id, usuario_confirmo or "")
+    if not d:
+        return False, [
+            "NO: %s se salió de su tarea (%s). Eso lo ve el usuario antes de liberar: ábrele una decisión con "
+            "`lookout decision --abre` que diga qué se salió, ciérrala con su respuesta y repite con "
+            "--usuario-confirmo <id>." % (entry.get("nombre", "?"), fuera.strip())]
+    return True, ["Fuera de la tarea: %s — lo vio el usuario: %s (%s)" % (fuera.strip(), d["id"], d.get("respuesta", ""))]
 
 
 def set_estado(project_id, sid, estado, motivo="", hooks=None):

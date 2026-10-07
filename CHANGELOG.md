@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.9.0
+
+What the first real session taught (claude-vzert, 2026-10-06; docs/plan.md, Fase 9).
+
+- **Breaking:** `lookout libera <proyecto> <agente>` now requires `--fuera ninguno`, or `--fuera "<what went outside the
+  task>" --usuario-confirmo <decision id>`. Without it, it refuses and names the task file to compare the agent's report
+  against. On claude-vzert a "measure only" agent copied files to the user's VPS and removed them there, and the slot
+  was freed without the user hearing of it.
+- Every task carries a fixed rule: write nothing outside the worktree, nor on remote hosts or their `/tmp`; measure a
+  remote host with `ssh host 'bash -s' < script`, copying nothing.
+- Investigation, message and credential tasks run without a worktree and without edit tools, and no longer in plan
+  mode: in plan mode a measuring agent would not even try a read-only `ssh`, and only the user's Shift+Tab could unblock
+  it. **Accepted risk (decision of the user):** such an agent keeps Bash. A write by Bash is stopped only by the task's
+  rule, the user's own permission rules, and `libera --fuera`, which comes after the fact.
+- The batch classifier reads the item without markdown (`**Medir** …` was typed as code), knows `comunicacion` (the
+  agent drafts, never sends) and `credencial` (rotate or revoke; high risk; the user acts), keeps a fix as code even if it
+  names a token, does not take git refs (`origin/develop`) or generic files (`_pendientes.md`, `CLAUDE.md`) as coupling
+  files, and orders the batch by priority and, within it, newest first (inside a coupled pair, the older one first).
+- «Memoria relevante» in a task: at most 3 related items, no matches through generic files, texts cut to 300 chars
+  (one task weighed 18 KB and handed another agent where a certificate and its password live). Port and database only
+  for code tasks. A task draft written by an older template is rewritten.
+- The batch proposal says what each agent will do, taken from its task file (`hará:`), in every batch.
+- Closing: `lookout descarta` closes, through the journal and with the user's yes, a pendiente that never had an agent;
+  `lookout cierra --estado abandoned|superseded` needs no adversary hold and no push. The supervisor never runs
+  `journal-emit` by hand, and every close goes through the user, also one an agent asks for in its `/checkpoint-3t`.
+- Every `AskUserQuestion` of the supervisor is recorded in `decisiones.json` from its hook (the answer is kept as given
+  and never counts as a yes). What the user types straight into an agent's pane appears in `supervisor.md` as a direct
+  decision.
+- Task governance (goalspec 0.47.0): every task gets the `goalspec:goal-adversary` round with another model; something
+  terminal adds the external backend (`backends=both`).
+- Digest and state: hidden agents are counted; events cut for room come back in the next digest; a registry entry whose
+  pane holds another session is retired; hours from another day carry their date; the publication queue is reconciled
+  at `inicia` and in every digest; the queue prints one short line per item and `libera` names the exact close command;
+  an agent the check saw alive is not shown as silent; a background `monitor` (an artifact) is not work; the last line
+  skips code fences; goal markers come from the whole turn; a `PreToolUse` block by another plugin's hook (read from the
+  transcript at the end of the turn; in the measured setup no hook event reported it) is reported as such, not as the user's denial; a failure's signature keeps
+  digits inside names; a session that is both supervisor and executor gets its state events.
+
 ## 0.8.1
 
 - The supervisor explains every decision it asks the user for. Each one is a block that stands on its own: the

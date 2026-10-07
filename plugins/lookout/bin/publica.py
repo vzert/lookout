@@ -222,6 +222,8 @@ def caducada(project_id, p):
     e = registry.load(project_id).get("agents", {}).get(p["session_id"])
     if not e or e.get("tarea_estado") in ("relevada", "terminada", "fallida", "relevo-fallido"):
         return "su sesión ya no tiene la tarea (%s)" % ((e or {}).get("tarea_estado") or "sin registro")
+    if e.get("retirado"):
+        return "su sesión salió del registro (%s)" % e.get("retirado_por", "retirada")
     if p["session_id"] in lote.ended_sessions(project_id):
         return "su sesión terminó (SessionEnd)"
     if p["estado"] == "lista":
@@ -231,6 +233,32 @@ def caducada(project_id, p):
         if not gobierno.decide_push(gobierno.estado(project_id, e, guardar=False))[0]:
             return "su último veredicto ya no es un hold válido"
     return ""
+
+
+def concilia(project_id, remote_tip=remote_tip):
+    """Fase 9 E3: bring the queue in line with reality, at `inicia` and in every `resumen` (claude-vzert: a publication
+    stuck in "turno" since the day before). A live entry whose holder lost its task or session expires (caducada);
+    a `lista` whose verified head is already origin's tip was pushed without `--hecho`: publicada. Asks origin
+    (ls-remote) only for `lista` entries. Returns the lines that say what changed."""
+    led = load(project_id)
+    out = []
+    for p in led["cola"]:
+        if p["estado"] not in ("esperando",) + VIVAS:
+            continue
+        if p["estado"] == "lista" and p.get("head"):
+            tip = remote_tip(p.get("worktree") or "", p.get("rama_remota") or "")
+            if tip and tip == p["head"]:
+                p.update(estado="publicada", publicada=time.time(), motivo="conciliada: origin ya tiene su commit")
+                out.append("Publicación de %s conciliada: origin ya tiene %s (nadie corrió --hecho)." % (
+                    p.get("nombre"), tip[:9]))
+                continue
+        why = caducada(project_id, p)
+        if why:
+            p.update(estado="caducada", motivo=why)
+            out.append("Publicación de %s caducada: %s." % (p.get("nombre"), why))
+    if out:
+        save(project_id, led)
+    return out
 
 
 def retira_sesion(project_id, session_id, motivo):

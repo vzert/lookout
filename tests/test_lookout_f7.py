@@ -22,6 +22,7 @@ sys.path.insert(0, BIN)
 import gobierno  # noqa: E402
 import herdr_cli  # noqa: E402
 import lookout_state  # noqa: E402
+import registry  # noqa: E402
 import lote  # noqa: E402
 import requisitos  # noqa: E402
 
@@ -193,6 +194,24 @@ class IniciaTest(Case):
         r = self.inicia()
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertNotIn("goalspec", r.stdout)
+
+
+    def test_inicia_retires_a_reused_pane_and_reconciles_the_queue(self):
+        # Fase 9 E2/E3 wiring, adversary round 1 (subagent): without these calls in cmd_inicia every test stayed green
+        import publica
+        pid = lookout_state.project_id_for(lookout_state.git_common_dir(self.repo))
+        reg = registry.load(pid)
+        reg["agents"] = {"s-viejo": {"session_id": "s-viejo", "nombre": "viejo", "pane_id": "w1:p9", "tarea": "p-1",
+                                     "tarea_estado": "terminada", "cwd": self.repo}}
+        registry.save(pid, reg)
+        publica.save(pid, {"cola": [{"session_id": "s-viejo", "nombre": "viejo", "estado": "turno", "pedida": 1}]})
+        self.stub(agent_list=[{"name": "ajeno", "pane_id": "w1:p9", "cwd": "/private/tmp/otro-proyecto",
+                               "kind": "claude", "agent_session": {"value": "s-ajeno"}}])
+        r = self.inicia()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("s-ajeno", registry.load(pid)["agents"]["s-viejo"].get("retirado_por", ""))
+        self.assertIn("Publicación de viejo caducada", r.stdout)
+        self.assertNotIn("\nviejo |", r.stdout)  # a retired entry is not listed as an agent
 
 
 class SinGoalspecTest(unittest.TestCase):

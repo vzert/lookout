@@ -77,7 +77,7 @@ def quien(entry):
     return "%s (%s)" % (tab, nombre)
 
 
-def register(project_id, supervisor, agents, ajenos=()):
+def register(project_id, supervisor, agents, ajenos=(), todos=None):
     """Add or refresh the discovered agents; write their supervision markers. Returns the registry.
 
     A registered agent keeps its name (agents address the supervisor and are addressed by it); only new ones get
@@ -120,6 +120,18 @@ def register(project_id, supervisor, agents, ajenos=()):
             "nombre": entry["nombre"],
             "display": entry["nombre"] + " (lookout)",
         })
+    # Fase 9 E2: an entry whose pane now holds another session is gone (its session ended or the pane was reused);
+    # left as is, the digest kept showing it as an agent. Retired, not deleted: its task history stays.
+    vivos = {a.get("pane_id"): a.get("session_id") for a in agents if a.get("session_id") and a.get("pane_id")}
+    for t in todos or ():  # every herdr agent: a pane reused by another project's session counts too
+        s = (t.get("agent_session") or {}).get("value")
+        if s and t.get("pane_id"):
+            vivos.setdefault(t["pane_id"], s)
+    for sid, entry in known.items():
+        otro = vivos.get(entry.get("pane_id"))
+        if otro and otro != sid and not entry.get("retirado"):
+            entry["retirado"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+            entry["retirado_por"] = "su pane ya es de otra sesión (%s)" % otro[:8]
     save(project_id, reg)
     return reg
 
@@ -132,5 +144,5 @@ def find(reg, key):
     if key in agents:
         return agents[key]
     hits = [e for sid, e in agents.items() if key in (e.get("nombre"), e.get("pane_id"), e.get("herdr_name"))]
-    live = [e for e in hits if e.get("tarea_estado") != "relevada"]
+    live = [e for e in hits if e.get("tarea_estado") != "relevada" and not e.get("retirado")]
     return (live or hits or [None])[0]

@@ -7,6 +7,7 @@ It never prints a decision: every path exits 0 with no stdout.
 """
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -18,11 +19,16 @@ MARKERS = ("[ADVERSARY-VERDICT", "[ADVERSARY-MODEL", "[COMPLETION-REVIEW")
 
 
 def last_line(text, limit=200):
-    for line in reversed((text or "").splitlines()):
-        line = line.strip()
-        if line:
-            return line[:limit]
-    return ""
+    """The last line that says something. Fase 9 E7: a code fence or a rule is skipped (claude-vzert: «```» twice),
+    and a very short one («Sí.») carries the line before it."""
+    lines = [l.strip() for l in (text or "").splitlines()]
+    lines = [l for l in lines if l and not l.startswith("```") and l.strip("-*_=~ ")]
+    if not lines:
+        return ""
+    line = lines[-1]
+    if len(line) < 12 and len(lines) > 1:
+        line = lines[-2] + " … " + line
+    return line[:limit]
 
 
 def goal_markers(text):
@@ -31,6 +37,87 @@ def goal_markers(text):
         line = line.strip()
         if line.startswith(MARKERS):
             found.append(line[:200])
+    return found
+
+
+HOOK_BLOQUEO = re.compile(r"^(?:Error: )?PreToolUse:(\w+) hook error: (.*)", re.S)
+
+
+def turn_rows(transcript_path, max_bytes=300000):
+    """The transcript rows of the turn that just ended, oldest first (back to the last real user prompt)."""
+    import json
+    if not transcript_path:
+        return []
+    try:
+        with open(transcript_path, "rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - max_bytes))
+            lines = fh.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return []
+    rows = []
+    for line in reversed(lines):
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        content = (d.get("message") or {}).get("content")
+        if d.get("type") == "user" and (isinstance(content, str) or any(
+                isinstance(b, dict) and b.get("type") == "text" for b in content or [])):
+            break
+        rows.append(d)
+    return rows[::-1]
+
+
+def hook_blocks(rows):
+    """Fase 9 E8: what another plugin's PreToolUse hook denied this turn. No hook event reports it (spike 2026-10-06:
+    no PostToolUseFailure, no PermissionDenied); it is only a tool_result «PreToolUse:<Tool> hook error: <reason>»."""
+    out = []
+    for d in rows:
+        content = (d.get("message") or {}).get("content")
+        if d.get("type") != "user" or not isinstance(content, list):
+            continue
+        for b in content:
+            if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("is_error"):
+                text = b.get("content") if isinstance(b.get("content"), str) else json.dumps(b.get("content"))
+                m = HOOK_BLOQUEO.match(text or "")
+                if m:
+                    out.append({"tool": m.group(1), "motivo": " ".join(m.group(2).split())[:200]})
+    return out
+
+
+def markers_this_turn(transcript_path, max_bytes=300000):
+    """Fase 9 E7: the goal markers of the whole turn that just ended (assistant text and SendMessage bodies, up to
+    the last real user prompt), not only of its last message."""
+    import json
+    if not transcript_path:
+        return []
+    try:
+        with open(transcript_path, "rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - max_bytes))
+            lines = fh.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return []
+    found = []
+    for line in reversed(lines):
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        content = (d.get("message") or {}).get("content")
+        if d.get("type") == "user":
+            if isinstance(content, str) or any(isinstance(b, dict) and b.get("type") == "text" for b in content or []):
+                break
+        elif d.get("type") == "assistant" and isinstance(content, list):
+            for b in content:
+                if not isinstance(b, dict):
+                    continue
+                if b.get("type") == "text":
+                    found = goal_markers(b.get("text")) + found
+                elif b.get("type") == "tool_use" and b.get("name") == "SendMessage":
+                    msg = (b.get("input") or {}).get("message")
+                    found = goal_markers(msg if isinstance(msg, str) else "") + found
     return found
 
 
@@ -82,6 +169,37 @@ def reported_this_turn(transcript_path, address, max_bytes=300000):
     return False
 
 
+LOOKOUT_TECLEA = ("/rename ", "/exit")
+# Adversary round 1: only the wrappers Claude Code itself puts around a peer's or the system's text; a prompt the user
+# types that happens to start with «<» is still the user's.
+PEGADO = re.compile(r"^<pasted_content[^>]*>\s*(.*?)\s*</pasted_content[^>]*>\s*$", re.S)
+ETIQUETA_SISTEMA = re.compile(r"^<(cross-session-message|task-notification|system-reminder|local-command-[\w-]+|"
+                              r"command-[\w-]+|bash-[\w-]+)[\s>]")
+
+
+def origen_prompt(project_id, session_id, prompt):
+    """Who typed this prompt into the agent (Fase 9 C5): "par" (another session's SendMessage, or a system tag),
+    "lookout" (a delivery of its ledger, or a /rename or /exit it types), else "usuario": the user deciding straight
+    in the agent's pane (claude-vzert: production changes decided in handoff-balanceador's pane, off the record)."""
+    p = prompt.lstrip()
+    if ETIQUETA_SISTEMA.match(p):
+        return "par"
+    if p.startswith(LOOKOUT_TECLEA):
+        return "lookout"
+    import deliver
+    # Adversary round 2: Claude Code wraps a long or multi-line pasted prompt in <pasted_content …>; a lookout delivery
+    # may arrive that way. Compare its inner text; a paste the user made is still the user's.
+    m = PEGADO.match(p)
+    texto = m.group(1) if m else prompt
+    for rec in (deliver.load_ledger(project_id) or {}).values():
+        # Adversary round 3: only a delivery still waiting for its confirmation (this very hook confirms it); once
+        # confirmed, the same text typed or pasted again is the user's.
+        if (rec.get("session_id") == session_id and rec.get("estado") != "confirmada"
+                and deliver.norm(rec.get("texto")) in (deliver.norm(texto), deliver.norm(prompt))):
+            return "lookout"
+    return "usuario"
+
+
 def build(data, marker):
     """Return (event_dict or None, label or None, other_projects) for one hook payload."""
     name = data.get("hook_event_name", "")
@@ -95,7 +213,9 @@ def build(data, marker):
     if pid.isdigit() and name in ("UserPromptSubmit", "SessionStart"):
         ev["claude_pid"] = int(pid)  # Fase 6: the process the no-progress check asks `ps` about
     if name == "UserPromptSubmit":
-        ev.update(event="working", prompt=(data.get("prompt") or "")[:120])
+        prompt = data.get("prompt") or ""
+        ev.update(event="working", prompt=prompt[:120], origen=origen_prompt(marker.get("project_id", ""),
+                                                                            ev["session_id"], prompt))
         return ev, "trabajando", []
     if name == "PostToolUseFailure":
         if data.get("is_interrupt"):
@@ -118,8 +238,15 @@ def build(data, marker):
     if name == "Stop":
         msg = data.get("last_assistant_message") or ""
         tasks = bg_summary(data.get("background_tasks"))
-        running = [t for t in tasks if t.get("status") in (None, "running", "pending")]
-        ev.update(ultima=last_line(msg), marcadores=goal_markers(msg))
+        # Fase 9 E6: a `monitor` (e.g. the live updates of a published artifact) never ends and is not work: alone, it
+        # kept an agent "trabajando" the whole claude-vzert session.
+        running = [t for t in tasks if t.get("status") in (None, "running", "pending") and t.get("type") != "monitor"]
+        marcas = goal_markers(msg)
+        marcas += [m for m in markers_this_turn(data.get("transcript_path")) if m not in marcas]
+        ev.update(ultima=last_line(msg), marcadores=marcas)
+        bloqueos = hook_blocks(turn_rows(data.get("transcript_path")))
+        if bloqueos:
+            ev["bloqueos_hook"] = bloqueos
         if running:
             ev.update(event="bg_wait", tareas=running)
             return ev, "fondo", []
@@ -197,6 +324,11 @@ def main():
         if label:
             herdr_cli.report_metadata(ev["pane"], label, marker.get("display"))
         heuristicas.transicion(own, rep or ev)  # grouped view; one notification on entering "te necesita" / "listo"
+        if ev.get("origen") == "usuario":
+            import supervisor_md  # a decision the user took in the agent's pane goes on the supervisor's record
+            supervisor_md.log(own, {"tipo": "directa", "session_id": ev["session_id"], "nombre": ev.get("nombre", ""),
+                                    "texto": supervisor_md.one_line(data.get("prompt"), 300)})
+            supervisor_md.write(own)
     except Exception:  # a state hook must never disturb the agent
         return 0
     return 0

@@ -212,8 +212,9 @@ def decide_push(st):
     if same:
         return False, "MISMO-MODELO", (
             "NO: el hold vino de un adversario del mismo modelo que el agente o sin modelo confirmado "
-            "(adversario: %r → %s; agente: %r → %s). Para algo terminal exige una ronda con modelo distinto "
-            "(backend externo de goalspec, adversary.backend: external) y que cite su [ADVERSARY-MODEL] y su hold."
+            "(adversario: %r → %s; agente: %r → %s). Para algo terminal exige la ronda del subagente "
+            "goalspec:goal-adversary con otro model más el backend externo (backends=both), y que cite su "
+            "[ADVERSARY-MODEL] y su hold."
             % (last.get("modelo") or "sin línea [ADVERSARY-MODEL]", fa or "?", st["modelo_ejecutor"], fe or "?"))
     return True, "OK", "OK: último veredicto hold de un modelo distinto (%s vs %s). Sigue con `lookout publica`." % (fa, fe)
 

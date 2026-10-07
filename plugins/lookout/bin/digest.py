@@ -44,7 +44,14 @@ def get_cursor(project_id):
     return int((lookout_state.read_json(cursor_path(project_id)) or {}).get("offset", 0))
 
 
-def set_cursor(project_id, offset, desde=None):
+RECORTADOS_MAX = 200
+
+
+def ev_key(ev):
+    return (ev.get("session_id"), ev.get("ts"), ev.get("event"), ev.get("hook"))
+
+
+def set_cursor(project_id, offset, desde=None, recortados=None):
     """`desde`: where the events the waiter printed (and marked) start. The waiter prints the digest into its output
     file; a supervisor that answers its notification with `lookout resumen` instead of reading that file would get
     "ninguno" and lose what woke it. So the next `resumen` shows them once more, from `desde`; the waiter itself
@@ -52,6 +59,9 @@ def set_cursor(project_id, offset, desde=None):
     data = {"offset": offset, "ts": time.time()}
     if desde is not None:
         data["desde"] = desde
+    if recortados:
+        # Fase 9 E10: events a `resumen` cut for room are not "attended": they come back in the next one
+        data["recortados"] = recortados[-RECORTADOS_MAX:]
     lookout_state.write_json(cursor_path(project_id), data)
 
 
@@ -83,7 +93,9 @@ def waiter_alive(project_id):
 
 
 def hhmmss(ts):
-    return time.strftime("%H:%M:%S", time.localtime(ts or 0))
+    """Fase 9 E2: with the date when it is not today ("terminó 20:56:23" was from the day before)."""
+    t = time.localtime(ts or 0)
+    return time.strftime("%H:%M:%S" if t[:3] == time.localtime()[:3] else "%d-%m %H:%M:%S", t)
 
 
 def describe(ev, quien=None):
@@ -109,6 +121,8 @@ def describe(ev, quien=None):
         extra = ("(ya te reportó) " if ev.get("reporto") else "") + ev.get("ultima", "")
         if ev.get("marcadores"):
             extra += " " + " ".join(ev["marcadores"])
+        for b in ev.get("bloqueos_hook") or []:  # Fase 9 E8: a plugin's hook, not the user
+            extra += " [bloqueo de un hook en %s, no del usuario: %s]" % (b.get("tool"), b.get("motivo"))
         return head + (": " + extra if extra else "")
     if kind == "crossrepo":
         return head + ": %s %s (proyecto %s → %s)" % (
@@ -273,11 +287,15 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
     elif desde is not None:
         offset = min(int(desde), offset)                            # what the waiter showed, once more
     new, end = lookout_state.read_events(project_id, offset)
+    vistos = {ev_key(ev) for ev in new}
+    new = [ev for ev in cur.get("recortados") or [] if ev_key(ev) not in vistos] + new
     import heuristicas
-    vivos = {s: e for s, e in agents.items() if e.get("tarea_estado") != "relevada" and (last.get(s) or {}).get("event") != "end"}
+    vivos = {s: e for s, e in agents.items() if e.get("tarea_estado") != "relevada" and not e.get("retirado")
+             and (last.get(s) or {}).get("event") != "end"}
     head = ["Agentes (%d%s), por grupo: pestaña (nombre) | rama | tarea | último evento" % (
         len(vivos), ", +%d terminados" % (len(agents) - len(vivos)) if len(agents) > len(vivos) else "")]
     now = time.time()
+    revisiones = heuristicas.ultimas_revisiones(project_id)
     by_group = {}
     for sid, e in vivos.items():
         by_group.setdefault(heuristicas.grupo(all_events, sid, e), []).append((sid, e))
@@ -290,8 +308,16 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
             estado = ("%s %s" % (ESTADO.get(ev.get("event"), ev.get("event")), hhmmss(ev.get("ts")))) if ev else "sin eventos"
             beat = heuristicas.ultimo_real(all_events, sid)
             if beat and beat.get("event") in heuristicas.EN_TURNO:
-                estado += " (sin eventos hace %ds)" % int(now - float(beat.get("ts") or now))
-            head.append(clip("  %s | %s | %s | %s" % (registry.quien(e), e.get("branch") or "-", e.get("tarea") or "-", estado)))
+                rv = revisiones.get(sid) or {}
+                if (float(rv.get("ts") or 0) > float(beat.get("ts") or 0)
+                        and str(rv.get("decision", "")).startswith(("vivo", "progreso"))):
+                    # Fase 9 E5: the check saw it alive after its last hook; "no events" alone invited screen reads
+                    estado += " (el revisor lo vio %s hace %ds)" % (rv["decision"], int(now - float(rv["ts"])))
+                else:
+                    estado += " (sin eventos hace %ds)" % int(now - float(beat.get("ts") or now))
+            # Fase 9 E1: the indent goes on after clip(), which collapses spaces; the hidden-agents count relies on it
+            head.append("  " + clip("%s | %s | %s | %s" % (registry.quien(e), e.get("branch") or "-", e.get("tarea") or "-",
+                                                          estado), MAX_COLS - 2))
     import decisiones
     import publica
     tail = []
@@ -301,6 +327,8 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
         if not todo and len(dl) > 6:
             dl = dl[:6] + ["(+%d decisiones más: `lookout decision %s`)" % (len(dl) - 6, project_id)]
         tail += [clip(x) for x in dl]
+    if mark and any(p["estado"] in ("esperando", "turno", "lista") for p in publica.load(project_id)["cola"]):
+        tail += [clip(x) for x in publica.concilia(project_id)]  # Fase 9 E3
     if any(p["estado"] in ("esperando", "turno", "lista") for p in publica.load(project_id)["cola"]):
         tail += [clip(x) for x in publica.render_cola(project_id).splitlines()]
     pid = waiter_alive(project_id)
@@ -321,6 +349,7 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
         head = head[:1 + keep] + ["(+%d agentes más: `lookout resumen %s --todo`)" % (hidden, project_id)]
         room = maxl - len(head) - len(tail) - 2
     body = []
+    recortados = []
     if new:
         items = [(ev, 0) for ev in new] if todo else collapse(new)
         cap = max(1, room - 2)  # its header line and the "+N más" line
@@ -331,11 +360,13 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
         for ev, n in shown:
             body.append(clip("- " + describe(ev, quien) + (" (+%d antes)" % n if n else "")))
         if len(items) > len(shown):
-            body.append("(+%d eventos más antiguos sin mostrar: `lookout resumen %s --todo`)" % (len(items) - len(shown), project_id))
+            recortados = [ev for ev, _n in items[:len(items) - len(shown)]]
+            body.append("(+%d eventos más antiguos sin mostrar: vuelven en el siguiente resumen; ya: `lookout resumen %s "
+                        "--todo`)" % (len(items) - len(shown), project_id))
     else:
         body.append("Eventos nuevos: ninguno (ya atendidos).")
     if mark:
-        set_cursor(project_id, end, desde if por_waiter else None)
+        set_cursor(project_id, end, desde if por_waiter else None, recortados)
         try:
             import supervisor_md
             supervisor_md.write(project_id)
