@@ -33,14 +33,13 @@ import registry
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLUGIN_ROOT = os.path.realpath(os.path.join(HERE, ".."))
 TEMPLATE = os.path.join(PLUGIN_ROOT, "skills", "supervisa", "references", "prompt-tarea.md")
-# Fase 9 F4 (user's decision 2026-10-06, text from the goalspec session for goalspec 0.47.0): every task gets the
-# subagent round with another model; the external backend only adds up for something terminal.
+# Fase 9 F4 and the user's decision of 2026-10-07: the adversary rules (how many rounds, which model, which backends)
+# are goalspec's, so the task points at goalspec instead of restating them (two copies drift). lookout only needs the
+# markers quoted in the agent's own text, because it reads the transcript to know whether to pass a push on.
 GOBERNANZA_GOALSPEC = (
-    "- Antes de cerrar, corre el adversario de goalspec y cita en tu propio texto, cada una en su línea, su "
-    "`[ADVERSARY-MODEL: …]` y su `[ADVERSARY-VERDICT: …]`. El supervisor lee tu transcript: un veredicto que no citaste "
-    "no cuenta.\n- Toda tarea lleva la ronda del subagente `goalspec:goal-adversary` con un `model` distinto al tuyo, "
-    "aunque solo midas o investigues.\n- Si la tarea termina en algo terminal (push, merge, deploy, envío fuera de la "
-    "máquina), corre además el backend externo de goalspec en el mismo árbol y cierra con `backends=both`.")
+    "- Las rondas del adversario (cuántas, con qué modelo, con qué backends) las fija goalspec: sigue su skill.\n"
+    "- Cita en tu propio texto, cada una en su línea, el `[ADVERSARY-MODEL: …]` y el `[ADVERSARY-VERDICT: …]` de cada "
+    "ronda. El supervisor lee tu transcript para saber si hay hold: un veredicto que no citaste no cuenta.")
 GOBERNANZA_SIN = (
     "- goalspec no está instalado en este proyecto: no hay ronda del adversario. Antes de pedir push, corre los checks "
     "y pon su salida en tu reporte; el usuario sabrá que el push no tuvo revisión independiente.")
@@ -167,8 +166,22 @@ def retryable(e, live_sessions):
     return bool(e.get("sin_worktree")) or not os.path.exists(e.get("worktree") or "")
 
 
-def live_sessions():
-    return {(a.get("agent_session") or {}).get("value") for a in herdr_cli.agent_list()} - {None, ""}
+def live_sessions(agents=None):
+    agents = herdr_cli.agent_list() if agents is None else agents
+    return {(a.get("agent_session") or {}).get("value") for a in agents} - {None, ""}
+
+
+def otras_sesiones(project_id, common_dir, reg, agents):
+    """F5 (user's decision 2026-10-06): the cap counts every live session of the project, not only lookout's
+    (claude-vzert: 10 sessions with a cap of 3). Those without a lookout task: the user's own agents on the project.
+    The supervisor is not one (its session is in the lock); a lookout task's session holds its slot by its state."""
+    import discover
+    import lock
+    de_tareas = {e["session_id"] for e in tasks(reg)}
+    sup = ((lock.read(project_id) or {}).get("supervisor") or {}).get("session_id")
+    vivos = discover.discover(common_dir, agents=agents, tab_of=lambda _t: {})
+    return sorted({a["session_id"] or a["pane_id"] for a in vivos
+                   if a["session_id"] not in de_tareas and a["session_id"] != sup})
 
 
 def activos(project_id, reg, items_by_id):
@@ -314,8 +327,11 @@ def propone(project_id, common_dir, tope=None, rehacer=False):
     by_id = {it["id"]: it for it in items}
     reg = registry.load(project_id)
     act = activos(project_id, reg, by_id)
-    live = live_sessions()
-    prop = pendientes.propose(items, tope, act, [e["tarea"] for e in tasks(reg) if not retryable(e, live)])
+    agents = herdr_cli.agent_list()
+    live = live_sessions(agents)
+    otras = otras_sesiones(project_id, common_dir, reg, agents)
+    prop = pendientes.propose(items, tope, act, [e["tarea"] for e in tasks(reg) if not retryable(e, live)],
+                              otras=len(otras))
     base = base_ref(root)
     os.makedirs(tareas_dir(project_id), exist_ok=True)
     for it in prop["lote"]:
@@ -359,6 +375,9 @@ def que_hara(path, n=240):
 def render_propuesta(prop):
     out = ["Pendientes: %s (%d abiertos). Tope %d; huecos libres %d." % (
         prop["archivo"], prop["total"], prop["tope"], prop["libres"])]
+    if prop.get("otras"):
+        out.append("Ocupan hueco %d sesiones vivas del proyecto sin tarea de lookout (el tope cuenta todas)."
+                   % prop["otras"])
     if prop["activos"]:
         out.append("Con agente: " + "; ".join("%s → %s (%s)" % (a["nombre"], a["tarea"], a["estado"] or "-")
                                               for a in prop["activos"]))
@@ -475,6 +494,27 @@ def unique_name(base, agents=None):
     return name
 
 
+TITULO_MAX = 28
+
+
+def titulo_pestana(item, n=TITULO_MAX):
+    """Fase 9 F7: the tab of a launched agent carries a short readable title from the pendiente's text («Rotar o
+    confirmar el token»), not the truncated slug («rotar-o-confirmar-9f399b»). Cut at a word, with «…» when cut. The
+    agent's `nombre` (the slug) stays its id for lookout and herdr."""
+    texto = re.sub(r"`([^`]*)`", lambda m: os.path.basename(m.group(1).rstrip("/")), item.get("texto") or "")
+    out, cortado = "", False
+    for w in pendientes.plano(texto).split():
+        w = w.strip(":;,.")
+        if not w:
+            continue
+        if len(out) + len(w) + (1 if out else 0) > n - 1:
+            out, cortado = out or w[:n - 1], True
+            break
+        out = (out + " " + w).strip()
+    out = out[:1].upper() + out[1:]
+    return out + "…" if cortado else out
+
+
 def lanza_uno(project_id, common_dir, item, plan, draft, modelo, confirmar, log, nota):
     root = repo_root(common_dir)
     wt = plan["worktree"]
@@ -501,8 +541,9 @@ def lanza_uno(project_id, common_dir, item, plan, draft, modelo, confirmar, log,
     # user looks for, so it carries the agent's name too.
     tab_id = ((res or {}).get("tab") or {}).get("tab_id") or ((res or {}).get("root_pane") or {}).get("tab_id") or ""
     pestana = ""
-    if tab_id and herdr_cli.run(["tab", "rename", tab_id, plan["nombre"]])[0] == 0:
-        pestana = plan["nombre"]
+    titulo = titulo_pestana(item) or plan["nombre"]
+    if tab_id and herdr_cli.run(["tab", "rename", tab_id, titulo])[0] == 0:
+        pestana = titulo
     sid = str(uuid.uuid4())
     lk = lookout_state.read_json(os.path.join(lookout_state.project_dir(project_id), "lock.json")) or {}
     sup = lk.get("supervisor") or {}

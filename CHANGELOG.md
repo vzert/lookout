@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.10.0
+
+The rest of the first real session's lessons (docs/plan.md, Fase 9 F), and lookout no longer judging the adversary.
+
+- **Behavior change:** `lookout gobierno` (push) no longer judges the adversary. It needs only the agent's last quoted
+  verdict to be `hold`; the `MISMO-MODELO` refusal (a hold from the agent's own model) is gone. Which model and which
+  backends a round needs is goalspec's policy, and goalspec applies it in the agent's own session (decision of the
+  user, 2026-10-07: lookout coordinates and supervises, goalspec owns the adversary rules, so they are kept in one
+  place). **Accepted risk until goalspec enforces it:** a hold from the agent's own model passes to `lookout publica`.
+  The gap and the rules lookout dropped were proposed to goalspec, for it to measure and decide. What lookout keeps is coordination: the
+  round count per task with the user's yes at the cap, the publication queue, and the user's yes before any push.
+  The task prompt now points at goalspec for the rounds instead of restating them.
+- The batch cap counts every live session of the project, also the user's own agents that were already running (on
+  claude-vzert there were 10 sessions with a cap of 3). The supervisor is not counted; the proposal says how many slots
+  they hold.
+- The supervisor asks the user in the chat, not with a modal `AskUserQuestion`, while agents are alive (the modal left
+  it blocked, and an agent finished unseen): `lookout decision --abre`, the question in the chat, and the turn ends with
+  the waiter alive. The user's answer, typed as the next prompt of the supervisor's session, is written on the most
+  recent open decision by the hook (a peer's message, a waiter's notification or a `/rename` lookout typed are not
+  answers). It authorizes nothing by itself: only `decision --cierra … --si` does.
+- `lookout entrega` types the report note only after the agent's `/rename` landed. If it did not and the input box is
+  not empty, the note is not typed (exit 4) instead of arriving glued to the `/rename` as pasted text. The note's own
+  hook confirmation no longer accepts the `/rename`'s event.
+- `lookout libera` prints the exact cleanup of the agent's worktree and branch for the user to run once the pendiente
+  is closed (`git worktree remove`, `git branch -d`, never `-D`). lookout itself still removes nothing.
+- A launched agent's herdr tab gets a short readable title from the pendiente («Rotar o confirmar el token…»), not the
+  truncated slug. The slug stays the agent's name: `lookout` commands still find it by that name, and messages name
+  it as «<tab> (<name>)».
+- The task asks the agent to send each decision it needs to the supervisor as soon as it exists, not only in the final
+  report (two decisions waited 13 minutes inside a report).
+- The supervisor skill: it does not read other plugins' reports or code on its own (goalspec's payloads, its
+  adversary's transcripts, the plugin cache); it asks the agent for the datum. The round cap, the stuck-agent stop and
+  the close also send the supervisor to ask in the chat, not to the modal.
+- Tests: the stuck-agent tests (`test_lookout_f6.py`) defined their own `fail()`, which hid unittest's: no assertion in
+  them could fail. Renamed; it uncovered that a correction or a `repite` kept in memory had no hour (`ultimo: 0` in the
+  live counters; the file had it), now fixed, and a test that stopped a process with signal 19, which is SIGCONT on
+  macOS.
+
 ## 0.9.0
 
 What the first real session taught (claude-vzert, 2026-10-06; docs/plan.md, Fase 9).

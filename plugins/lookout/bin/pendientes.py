@@ -160,11 +160,12 @@ def parse(path):
     return items
 
 
-def propose(items, tope, activos=(), asignados=(), hoy=None):
+def propose(items, tope, activos=(), asignados=(), hoy=None, otras=0):
     """Batch for the free slots. Returns {lote, cola, excluidos, libres}.
 
     activos: [(pendiente_id, [archivos])] of tasks now running (they hold slots and files).
     asignados: ids already given to an agent (running or finished, not yet closed by journal).
+    otras: live sessions of the project without a lookout task (F5: they hold slots too, not files).
     """
     hoy = hoy or time.strftime("%Y-%m-%d")
     asignados = set(asignados)
@@ -184,7 +185,7 @@ def propose(items, tope, activos=(), asignados=(), hoy=None):
     candidatos.sort(key=lambda it: it["linea"])
     candidatos.sort(key=lambda it: it["creado"] or "", reverse=True)
     candidatos.sort(key=lambda it: PRIORIDADES[it["prioridad"]])
-    libres = max(0, tope - len(activos))
+    libres = max(0, tope - len(activos) - otras)
     tomados = [(pid, set(especificos(fs))) for pid, fs in activos]
     lote, cola = [], []
     en_lote = set()
@@ -211,7 +212,7 @@ def propose(items, tope, activos=(), asignados=(), hoy=None):
             lote.append(it)
             en_lote.add(it["id"])
             tomados.append((it["id"], mine))
-    return {"lote": lote, "cola": cola, "excluidos": excluidos, "libres": libres, "tope": tope}
+    return {"lote": lote, "cola": cola, "excluidos": excluidos, "libres": libres, "tope": tope, "otras": otras}
 
 
 def mas_viejo(a, b):

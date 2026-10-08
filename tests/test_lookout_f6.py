@@ -7,6 +7,7 @@ Every test points LOOKOUT_STATE_DIR at a temp folder and replaces herdr with a s
 import json
 import os
 import socket
+import signal
 import subprocess
 import sys
 import tempfile
@@ -102,7 +103,9 @@ class F6Case(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(out.stdout, "")
 
-    def fail(self, msg="falta el archivo config.ini en /tmp/a/123", cmd="python3 check.py"):
+    def falla(self, msg="falta el archivo config.ini en /tmp/a/123", cmd="python3 check.py"):
+        # Not `fail`: that name shadowed unittest's TestCase.fail, which every assert* calls on failure, so no
+        # assertion in an F6Case test could fail (found 2026-10-07 checking a 0.10.0 test against 0.9.0).
         self.hook({"hook_event_name": "PostToolUseFailure", "tool_name": "Bash", "tool_input": {"command": cmd},
                    "error": "Exit code 1\n" + msg, "is_interrupt": False})
 
@@ -132,15 +135,15 @@ class FirmaTest(unittest.TestCase):
 
 class RepiteTest(F6Case):
     def test_third_same_error_adds_one_repite(self):
-        self.fail()
-        self.fail(msg="falta el archivo config.ini en /otra/ruta/9")
+        self.falla()
+        self.falla(msg="falta el archivo config.ini en /otra/ruta/9")
         self.assertEqual(self.events("repite"), [])
-        self.fail()
+        self.falla()
         rep = self.events("repite")
         self.assertEqual(len(rep), 1)
         self.assertEqual((rep[0]["veces"], rep[0]["correcciones"], rep[0]["replantea"]), (3, 0, False))
         self.assertEqual(len(rep[0]["intentos"]), 3)
-        self.fail()  # a 4th of the same streak does not wake again
+        self.falla()  # a 4th of the same streak does not wake again
         self.assertEqual(len(self.events("repite")), 1)
         cnt = lookout_state.read_json(heuristicas.counters_path(PID))
         e = list(cnt["agentes"]["s1"]["errores"].values())[0]
@@ -149,9 +152,9 @@ class RepiteTest(F6Case):
     def test_interrupt_and_other_errors_do_not_count(self):
         self.hook({"hook_event_name": "PostToolUseFailure", "tool_name": "Bash", "tool_input": {"command": "x"},
                    "error": "Exit code 1\nfalta el archivo config.ini", "is_interrupt": True})
-        self.fail()
-        self.fail(msg="otra cosa distinta")
-        self.fail()
+        self.falla()
+        self.falla(msg="otra cosa distinta")
+        self.falla()
         self.assertEqual(self.events("repite"), [])
         self.assertEqual(len(self.events("fallo")), 3)
 
@@ -160,7 +163,7 @@ class RepiteTest(F6Case):
         code, txt = heuristicas.corrige(PID, e, "resumen suficientemente largo para pasar")
         self.assertEqual(code, 5)  # nothing repeated yet
         for _ in range(3):
-            self.fail()
+            self.falla()
         code, txt = heuristicas.corrige(PID, e, "corto")
         self.assertEqual(code, 5)
         code, txt = heuristicas.corrige(PID, e, "check.py busca config.ini; créalo copiando config.example.ini")
@@ -169,20 +172,22 @@ class RepiteTest(F6Case):
         self.assertIn("corre UNA vez el mismo comando", txt)
         code, _ = heuristicas.corrige(PID, e, "otra corrección sin que el error haya vuelto")
         self.assertEqual(code, 5)  # the correction has not failed yet
-        self.fail()  # the agent checked once: same error -> the correction failed
+        self.falla()  # the agent checked once: same error -> the correction failed
         rep = self.events("repite")
         self.assertEqual((len(rep), rep[-1]["correcciones"], rep[-1]["replantea"]), (2, 1, False))
-        self.fail()  # more of the same before the next correction: no new wake
+        self.falla()  # more of the same before the next correction: no new wake
         self.assertEqual(len(self.events("repite")), 2)
         code, txt = heuristicas.corrige(PID, e, "segunda corrección con otro enfoque concreto")
         self.assertEqual(code, 0)
         self.assertIn("Corrección 2 de 2", txt)
-        self.fail()
+        self.falla()
         rep = self.events("repite")
         self.assertEqual((len(rep), rep[-1]["correcciones"], rep[-1]["replantea"]), (3, 2, True))
         code, txt = heuristicas.corrige(PID, e, "una tercera corrección que no debe salir")
         self.assertEqual(code, 5)
         self.assertTrue(txt.startswith("PARA"))
+        self.assertIn("la pregunta en el chat", txt)  # 0.10.0 (F2): never the modal while agents are alive
+        self.assertNotIn("AskUserQuestion", txt)
         self.assertEqual(len(self.events("correccion")), 2)
         self.assertIn("PARA Y REPLANTEA", digest.describe(rep[-1]))
 
@@ -201,7 +206,7 @@ class RepiteTest(F6Case):
         P = os.path.join(self.t, "projects")
         e = registry.find(registry.load(PID), "e1")
         for _ in range(3):
-            self.fail()
+            self.falla()
         self.assertEqual(heuristicas.corrige(PID, e, "check.py busca config.ini; créalo copiando config.example.ini",
                                              projects_dir=P)[0], 0)
         code, txt = heuristicas.corrige(PID, e, "segunda corrección concreta y aplicable", projects_dir=P)
@@ -239,7 +244,7 @@ class RepiteTest(F6Case):
 
     def test_counters_rebuild_from_events_after_relief(self):
         for _ in range(3):
-            self.fail()
+            self.falla()
         e = registry.find(registry.load(PID), "e1")
         heuristicas.corrige(PID, e, "check.py busca config.ini; créalo copiando config.example.ini")
         before = lookout_state.read_json(heuristicas.counters_path(PID))["agentes"]
@@ -248,15 +253,15 @@ class RepiteTest(F6Case):
         self.assertEqual(lookout_state.read_json(heuristicas.counters_path(PID))["agentes"], before)
 
     def test_new_session_start_resets_the_streak(self):
-        self.fail()
-        self.fail()
+        self.falla()
+        self.falla()
         self.hook({"hook_event_name": "SessionStart", "source": "startup"})
-        self.fail()
+        self.falla()
         self.assertEqual(self.events("repite"), [])
 
     def test_repite_notifies_the_user_once(self):
         for _ in range(4):
-            self.fail()
+            self.falla()
         self.assertEqual(self.calls().count("notification show"), 1)
         self.assertIn("te necesita", self.calls())
 
@@ -352,7 +357,7 @@ class RevisaTest(F6Case):
         self.assertEqual(heuristicas.estado_proceso(os.getpid()), "vivo")
         p = subprocess.Popen(["python3", "-c", "import time; time.sleep(30)"])
         try:
-            os.kill(p.pid, 19)  # SIGSTOP
+            os.kill(p.pid, signal.SIGSTOP)  # not 19: that is SIGSTOP on Linux but SIGCONT on macOS
             time.sleep(0.3)
             self.assertEqual(heuristicas.estado_proceso(p.pid), "detenido")
         finally:

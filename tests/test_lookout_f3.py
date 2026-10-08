@@ -108,13 +108,6 @@ class Base(unittest.TestCase):
 
 
 class GobiernoTest(Base):
-    def test_family(self):
-        self.assertEqual(gobierno.family(HAIKU), "haiku")
-        self.assertEqual(gobierno.family("Claude Sonnet 5.5 / claude-sonnet-5-5"), "sonnet")
-        self.assertEqual(gobierno.family("gpt-5.6-luna / gpt-5.6-luna"), "gpt")
-        self.assertEqual(gobierno.family("Claude / UNKNOWN"), "")
-        self.assertEqual(gobierno.family(""), "")
-
     def test_stuck_counters_never_wipe_the_tasks(self):
         # 0.7.3, claude-vzert: heuristicas.py rewrote counters.json whole and `lookout gobierno` crashed (KeyError
         # 'tareas'); a limit the user raised was lost with it.
@@ -151,14 +144,15 @@ class GobiernoTest(Base):
     def test_a_verdict_quoted_in_its_own_sendmessage_counts(self):
         e = self.agent("s1")
         self.transcript("s1", [EXT, a_tool("SendMessage", {"to": "uds:x", "message": "Listo.\n" + M_SAME + "\n" + HOLD})])
-        self.assertEqual(gobierno.decide_push(gobierno.estado(self.pid, e, self.projects))[1], "MISMO-MODELO")
+        st = gobierno.estado(self.pid, e, self.projects)
+        self.assertEqual(st["ultimo"]["veredicto"], "hold")
+        self.assertEqual(st["ultimo"]["modelo"], "Claude Haiku 4.5 / claude-haiku-4-5-20251001")
 
     def test_a_model_line_from_an_older_text_does_not_vouch_for_a_later_verdict(self):
         e = self.agent("s1")
         self.transcript("s1", [EXT, a_text(M_EXT + "\n" + BREAK), EXT, a_text("Ronda 2:\n" + HOLD)])
         st = gobierno.estado(self.pid, e, self.projects)
-        self.assertEqual(st["ultimo"]["modelo"], "")
-        self.assertEqual(gobierno.decide_push(st)[1], "MISMO-MODELO")
+        self.assertEqual(st["ultimo"]["modelo"], "")  # the model line of the earlier break is not this hold's
 
     def test_last_break_blocks_push(self):
         e = self.agent("s1")
@@ -167,17 +161,14 @@ class GobiernoTest(Base):
         self.assertEqual((ok, code), (False, "BREAK"))
         self.assertIn("unsafe=1", text)
 
-    def test_same_model_or_unknown_hold_needs_another_model(self):
+    def test_lookout_does_not_judge_the_adversary_model(self):
+        # 0.10.0, user's decision 2026-10-07: which model or backends a round needs is goalspec's policy. Until 0.9.0
+        # lookout refused a hold from the agent's own model (MISMO-MODELO); now any last hold passes to `publica`.
         e = self.agent("s1")
-        self.transcript("s1", [SPAWN, a_text(M_SAME + "\n" + HOLD)])
-        self.assertEqual(gobierno.decide_push(gobierno.estado(self.pid, e, self.projects))[1], "MISMO-MODELO")
-        self.transcript("s1", [SPAWN, a_text(M_UNK + "\n" + HOLD)])
-        self.assertEqual(gobierno.decide_push(gobierno.estado(self.pid, e, self.projects))[1], "MISMO-MODELO")
-        self.transcript("s1", [EXT, a_text(M_EXT + "\n" + HOLD)])
-        st = gobierno.estado(self.pid, e, self.projects)
-        self.assertEqual(gobierno.decide_push(st)[1], "OK")
-        self.assertEqual(st["rondas"], 3)
-
+        for marca in (M_SAME, M_UNK, M_EXT):
+            self.transcript("s1", [SPAWN, a_text(marca + "\n" + HOLD)])
+            self.assertEqual(gobierno.decide_push(gobierno.estado(self.pid, e, self.projects))[:2], (True, "OK"))
+        self.assertEqual(gobierno.estado(self.pid, e, self.projects)["rondas"], 3)
     def test_round_cap_asks_the_user_then_allows_after_extension(self):
         e = self.agent("s1")
         self.transcript("s1", [EXT, a_text(M_EXT + "\n" + BREAK_SAFE)] * 5)

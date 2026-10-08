@@ -137,7 +137,7 @@ def render(project_id, now=None):
                                       one_line(d.get("respuesta"), 120))
           for d in tomadas] or ([] if respuestas else ["- ninguna"])
     if respuestas:
-        L.append("Respuestas del usuario en tus AskUserQuestion (registradas por hook):")
+        L.append("Respuestas del usuario a tus preguntas, en AskUserQuestion o en el chat (registradas por hook):")
         L += ["- %s %s → %s" % (hhmm(x["ts"]), one_line(q, 100), one_line(a, 80))
               for x in respuestas[-8:] for q, a in (x.get("answers") or {}).items()]
     directas = [x for x in slog if x.get("tipo") == "directa"]

@@ -68,7 +68,8 @@ def cierra(project_id, common_dir, entry, st, estado, nota, usuario_confirmo, si
         return False, ["NO: %s no tiene un pendiente asignado." % entry.get("nombre")]
     if not usuario_confirmo:
         return False, ["NO: cerrar un pendiente lo confirma el usuario. Abre la decisión (`lookout decision … --abre`), "
-                       "pregúntale (AskUserQuestion), ciérrala con su respuesta y repite con --usuario-confirmo <id>."]
+                       "pregúntale (en el chat si hay agentes vivos), ciérrala con su respuesta y repite con "
+                       "--usuario-confirmo <id>."]
     last = st["ultimo"]
     # Fase 9 C2: abandoning (or superseding) claims no result: no hold and no push needed, only the user's yes.
     sin_resultado = estado != "resolved"
@@ -79,8 +80,6 @@ def cierra(project_id, common_dir, entry, st, estado, nota, usuario_confirmo, si
         return False, ["NO: los commits de %s no están en origin. Publica primero (lookout publica), o di por qué esta "
                        "tarea no necesita push con --sin-push \"<razón>\"." % entry.get("nombre")]
     nota_full = nota + (" — sin push: " + sin_push if sin_push else "")
-    if not sin_resultado and gobierno.misma_familia(st)[0]:
-        nota_full += " — ojo: el hold fue del mismo modelo que el agente"
     ok, lines = emite(common_dir, tarea, estado, nota_full, entry["session_id"], run)
     if lines and lines[0].startswith("NO:"):
         return False, lines
@@ -126,7 +125,8 @@ def descarta(project_id, common_dir, tarea, estado, nota, usuario_confirmo, sesi
                        "con el agente que lo hizo."]
     if not usuario_confirmo:
         return False, ["NO: descartar un pendiente lo confirma el usuario. Abre la decisión (`lookout decision … "
-                       "--abre`), pregúntale, ciérrala con su respuesta y repite con --usuario-confirmo <id>."]
+                       "--abre`), pregúntale (en el chat si hay agentes vivos), ciérrala con su respuesta y repite con "
+                       "--usuario-confirmo <id>."]
     for e in lote.tasks(registry.load(project_id)):
         if e.get("tarea") == tarea and e.get("tarea_estado") not in ("terminada", "fallida"):
             return False, ["NO: %s tiene un agente (%s, %s). Ciérralo con `lookout cierra … --estado %s`." % (

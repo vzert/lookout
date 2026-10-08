@@ -13,7 +13,8 @@ The supervisor coordinates. It never does the agents' work. It:
 - with `/lookout:pendientes`, launches up to 3 open pendientes of a
   [3-tier memory](https://github.com/vzert/3-tier-memory) project, one agent per item, each in its own worktree;
 - before a push, reads the [goalspec](https://github.com/vzert/goal-forge) adversary verdict in the agent's own
-  transcript, then publishes in order, one agent at a time;
+  transcript (which rounds a push needs is goalspec's rule, not lookout's), then publishes in order, one agent at a
+  time;
 - spots a stuck agent (the same error again and again, no progress, a usage-limit pause) by checking more than one
   signal, and stops correcting after 2 tries.
 
@@ -87,7 +88,8 @@ that were already running get `/reload-plugins` from the supervisor, so their ho
   an agent that repeats an error, at most twice). It asks you about what cannot be undone (push, merge to main,
   deletes, closing a pendiente), with the exact command for you to run with `!`.
 - With `/lookout:pendientes .` it proposes a batch of at most 3 pendientes (blocked ones and those with a future
-  review date are left out; items that touch the same files go one after the other). You approve the batch once.
+  review date are left out; items that touch the same files go one after the other). The cap of 3 counts every live
+  session of the project, also your own agents that were already running. You approve the batch once.
   Each agent works in its own branch and worktree.
 - When you want to stop, tell the supervisor. It releases the project and tells the agents to ask you again.
 

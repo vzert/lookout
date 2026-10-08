@@ -48,6 +48,9 @@ def handle(data, via_async=False):
         decisiones.registra_respuesta(pid, data.get("tool_use_id", ""), "; ".join(
             "%s = %s" % (supervisor_md.one_line(q, 80), supervisor_md.one_line(a, 200)) for q, a in answers.items())
             if isinstance(answers, dict) else supervisor_md.one_line(str(answers), 300))
+    elif ev == "UserPromptSubmit":
+        if not respuesta_en_chat(pid, sid, data.get("prompt") or ""):
+            return ""
     elif ev == "Stop":
         return "" if via_async else stop_check(data, pid, sid)
     elif ev == "PreCompact":
@@ -60,6 +63,25 @@ def handle(data, via_async=False):
         return ""
     supervisor_md.write(pid)
     return ""
+
+
+def respuesta_en_chat(pid, sid, prompt):
+    """Fase 9 F2: the supervisor asks in the chat (a modal AskUserQuestion left it blocked while an agent finished
+    unseen), so the user's answer arrives as a prompt of its own session. The user's own text (not a peer's message,
+    a waiter's notification or a /rename lookout typed) is the answer to the most recent open decision; it is written
+    down as given and never counts as a yes (only `decision --cierra … --si` authorizes)."""
+    import on_state
+    p = prompt.lstrip()
+    if not p or on_state.ETIQUETA_SISTEMA.match(p) or p.startswith(on_state.LOOKOUT_TECLEA):
+        return False
+    m = on_state.PEGADO.match(p)
+    if m and on_state.ETIQUETA_SISTEMA.match(m.group(1).lstrip()):
+        return False
+    it = decisiones.registra_respuesta_chat(pid, supervisor_md.one_line(prompt, 300))
+    supervisor_md.log(pid, {"tipo": "usuario", "session_id": sid, "decision": (it or {}).get("id", ""),
+                            "answers": {"(en el chat%s)" % ((", " + it["id"]) if it else ""):
+                                        supervisor_md.one_line(prompt, 300)}})
+    return True
 
 
 def stop_check(data, pid, sid, grace=1.5):

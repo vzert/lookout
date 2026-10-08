@@ -190,15 +190,17 @@ class LanzaTabTest(Case):
         old = lote.arranca
         lote.arranca = lambda *a, **k: (True, "ok")
         try:
-            ok, _ = lote.lanza_uno("pA", os.path.join(self.tmp.name, "repo", ".git"), {"id": "p-1", "texto": "x"},
+            ok, _ = lote.lanza_uno("pA", os.path.join(self.tmp.name, "repo", ".git"),
+                                   {"id": "p-1", "texto": "Arreglar el login"},
                                    {"nombre": "arreglar", "worktree": wt, "rama": "lookout/arreglar", "base": "main"},
                                    draft, None, False, lambda m: None, "nota")
         finally:
             lote.arranca = old
         self.assertTrue(ok)
-        self.assertIn(["tab", "rename", "w1P:t1", "arreglar"], self.calls())
+        # 0.10.0 (Fase 9 F7): the tab carries a readable title from the pendiente, not the slug; the slug stays the name
+        self.assertIn(["tab", "rename", "w1P:t1", "Arreglar el login"], self.calls())
         e = next(iter(registry.load("pA")["agents"].values()))
-        self.assertEqual((e["tab_id"], registry.quien(e)), ("w1P:t1", "arreglar"))
+        self.assertEqual((e["tab_id"], registry.quien(e)), ("w1P:t1", "Arreglar el login (arreglar)"))
 
 
 class SupervisorTabTest(Case):

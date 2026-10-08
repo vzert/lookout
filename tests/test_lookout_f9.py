@@ -487,13 +487,12 @@ class DecisionDirectaTest(unittest.TestCase):
 
 
 class GobernanzaTest(unittest.TestCase):
-    def test_every_task_gets_the_subagent_round_and_terminal_ones_add_the_external(self):
+    def test_the_task_points_at_goalspec_and_asks_the_markers_quoted(self):
+        # 0.10.0 (user's decision 2026-10-07): the adversary rules are goalspec's; the task no longer restates them
         g = lote.gobernanza_campos(True)["gobernanza"]
-        self.assertIn("Toda tarea lleva la ronda del subagente `goalspec:goal-adversary`", g)
-        self.assertIn("`backends=both`", g)
-        self.assertIn("Antes de cerrar", g)
-        self.assertNotIn("(backend externo de goalspec).", g)  # 0.8.1 equated "another model" with the external one
-
+        self.assertIn("las fija goalspec: sigue su skill", g)
+        self.assertIn("`[ADVERSARY-VERDICT: …]`", g)
+        self.assertNotIn("backends=both", g)
 
 
 class RegistroViejoTest(unittest.TestCase):

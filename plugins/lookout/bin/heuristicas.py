@@ -179,6 +179,7 @@ def registra_fallo(project_id, ev):
             rep = {k: ev.get(k) for k in ("session_id", "nombre", "pane", "tool_name", "firma")}
             rep.update(event="repite", veces=n, correcciones=corr, intentos=intentos(events, ev["session_id"], ev["firma"]),
                        replantea=corr >= MAX_CORRECCIONES)
+            rep.setdefault("ts", time.time())  # the copy in memory keeps the hour the file gets
             lookout_state.append_event(project_id, rep)
             events.append(rep)
         guarda_contadores(project_id, events)
@@ -257,12 +258,14 @@ def corrige(project_id, entry, resumen, sig=None, reporte=None, projects_dir=Non
             # the last correction failed by the agent's own report (no new repite): record it before stopping
             fe = {"session_id": sid, "nombre": entry["nombre"], "event": "correccion_fallida", "firma": sig,
                   "numero": corr, "reporte": reporte[:300]}
+            fe.setdefault("ts", time.time())  # the copy in memory keeps the hour the file gets
             lookout_state.append_event(project_id, fe)
             events.append(fe)
             guarda_contadores(project_id, events)
         if corr >= MAX_CORRECCIONES:
             return 5, ("PARA: ya van %d correcciones para «%s» y el error volvió. No mandes otra corrección (sin "
-                       "ping-pong). Replantea: escala al usuario con `lookout decision %s --abre …` y AskUserQuestion, "
+                       "ping-pong). Replantea: escala al usuario con `lookout decision %s --abre …` y la pregunta en el chat "
+                       "(no el modal: hay agentes vivos), "
                        "con los intentos y tu propuesta (otro enfoque, otra tarea, o parar a %s); al agente dile que "
                        "espere tu mensaje." % (corr, sig, project_id, entry["nombre"]))
         por_reporte = corr >= 1 and n < umbral_repite(corr) and verificado
@@ -282,6 +285,7 @@ def corrige(project_id, entry, resumen, sig=None, reporte=None, projects_dir=Non
               "resumen": resumen[:600]}
         if por_reporte:
             ev["fallo_por_reporte"] = reporte[:300]
+        ev.setdefault("ts", time.time())  # the copy in memory keeps the hour the file gets
         lookout_state.append_event(project_id, ev)
         events.append(ev)
         guarda_contadores(project_id, events)
@@ -448,6 +452,7 @@ def revisa(project_id, now=None, agents=None, proceso=estado_proceso, reciente=w
                 continue
             out.append(dict(base, event="sin_progreso", nivel=nivel, fuentes=fuentes))
         for ev in out:
+            ev.setdefault("ts", time.time())  # the copy in memory keeps the hour the file gets
             lookout_state.append_event(project_id, ev)
             events.append(ev)
         if out:

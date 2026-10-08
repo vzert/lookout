@@ -51,7 +51,7 @@ Te toca si tu primer mensaje es un «Como retomar» de lookout, o si `lookout in
    - «Decisiones del usuario — tomadas» y «Respuestas del supervisor»: **ya están decididas**. No se las vuelves a
      preguntar al usuario ni a los agentes, y no las contradices. Si un agente pide algo que ya se decidió, contesta con
      esa decisión (cítala: `d1`, o la hora de tu respuesta).
-   - «Decisiones del usuario — pendientes»: vuelve a preguntárselas al usuario **con su mismo id** (AskUserQuestion),
+   - «Decisiones del usuario — pendientes»: vuelve a preguntárselas al usuario **con su mismo id** (en el chat, o con AskUserQuestion si no hay agentes vivos),
      sin `--abre` nuevo; ciérralas con `--cierra <id>` al contestar. Cada una con su bloque completo («Cómo pedirle una
      decisión al usuario»): tú tampoco sabes más que su texto, así que lee la fuente que cita antes de preguntar.
 3. Manda a cada agente de `Avisar a:` el texto exacto que imprimió `inicia` (su nota lleva tu dirección vieja).
@@ -119,8 +119,8 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
   - Si tras una corrección el agente te reporta que sigue igual **sin** haber vuelto a fallar (no llega `repite`), esa
     corrección también falló: `lookout corrige … --resumen "<la siguiente>" --reporte "<sus palabras>"`.
   - Con `PARA` (ya hubo 2 correcciones de ese error): **no mandes otra corrección** ni reformules la misma. Replantea:
-    `lookout decision … --abre` + AskUserQuestion con los intentos y tu propuesta (otro enfoque, otra tarea, parar al
-    agente). Al agente dile: "escalado al usuario; espera mi mensaje".
+    `lookout decision … --abre` + la pregunta en el chat con los intentos y tu propuesta (otro enfoque, otra tarea,
+    parar al agente). Al agente dile: "escalado al usuario; espera mi mensaje".
 - **`sin progreso`** (lo decide el waiter cruzando fuentes; nunca con una sola): `mirar` → una lectura de su pantalla
   (`herdr agent read <pane> --source visible`) y decide. `escalar` → avisa al usuario (agente, desde cuándo, fuentes).
   Nunca lo relances ni lo mates por tu cuenta.
@@ -138,7 +138,10 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
 
 ## Regla de decisión
 
-1. Lee la fuente primaria que cita el agente (plan, ficha, archivo, comando).
+1. Lee la fuente primaria que cita el agente (plan, ficha, archivo, comando) **del proyecto**. Los informes y el
+   código de otros plugins (el registro o los payloads de goalspec, los transcripts de su adversario, la caché de
+   plugins en `~/.claude/plugins`) no los leas por tu cuenta: pídele el dato al agente, que es quien los produjo.
+   Leerlos tú gasta tu contexto y te hace decidir sobre un formato que no es tuyo.
 2. Decide.
 3. Pon condiciones comprobables (qué debe mostrar, qué comando correr).
 4. Pide la evidencia de vuelta y verifícala.
@@ -148,7 +151,7 @@ desviación reversible ya investigada. Responde sin molestar al usuario.
 
 **Escalas al usuario lo irreversible**: push, merge a main, borrar ramas/worktrees/archivos fuera de lo
 que el agente creó, ratificar un spec de goalspec con acción terminal, todo lo que sale de la máquina.
-Escalar = una pregunta en **tu** sesión (`AskUserQuestion`; tú no estás supervisado) armada como dice
+Escalar = una pregunta en **tu** sesión (en el chat con agentes vivos; tú no estás supervisado) armada como dice
 «Cómo pedirle una decisión al usuario» (abajo) y, si aplica, el **comando exacto** para que el usuario lo corra en el
 pane del agente (`! git push origin <rama>`). Al agente dile: "escalado al usuario; espera mi mensaje".
 - No ejecutes tú lo irreversible ni le pidas al agente que reformule un comando que le negaron.
@@ -183,8 +186,14 @@ Con varias decisiones: numéralas, un bloque cada una, y cierra con cómo contes
   explicaste antes; el usuario no tiene el hilo.
 - **Un tema por pregunta.** No mezcles en el mismo `AskUserQuestion` la decisión de un agente con la propuesta de un
   lote nuevo ni con otro tema.
-- Si el bloque es largo, escríbelo en el chat y deja en el `AskUserQuestion` solo la pregunta y las opciones cortas.
-  Si no usas `AskUserQuestion`, el bloque va igual en el chat y la decisión igual se abre con `lookout decision --abre`.
+- **Con agentes vivos, pregunta en el chat, no con `AskUserQuestion`.** El modal te deja bloqueado hasta que el
+  usuario conteste, y mientras tanto no ves a nadie (claude-vzert, 2026-10-06: un agente terminó mientras esperabas
+  y nadie lo vio). Orden: `lookout decision … --abre`, luego el bloque en el chat, y termina el turno con el waiter
+  vivo (`lookout espera` en segundo plano). La respuesta del usuario llega como su siguiente mensaje y queda anotada
+  sola en la decisión abierta más reciente; igual la cierras tú con `--si`/`--no`. Sin el `--abre` previo no hay
+  decisión a la que anotarla. `AskUserQuestion` solo cuando no hay ningún agente vivo (p. ej. el primer lote).
+- Si el bloque es largo y usas `AskUserQuestion`, escribe el bloque en el chat y deja en el modal solo la pregunta y
+  las opciones cortas.
 - El texto de `lookout decision … --abre` también se entiende solo: el problema en palabras simples y la pregunta,
   en una o dos oraciones. Es lo que lee un relevo y lo que muestra el aviso de herdr.
 
@@ -196,14 +205,13 @@ NO, no lo rodees ni lo reformules: pásale al agente el texto del NO.
 **Un agente pide push (o publicar):**
 1. `lookout gobierno <project_id> <agente>`, **siempre como primer paso**, aunque ya sepas que vas a negarlo:
    su salida es la evidencia de por qué se negó o se pasó. Lee su propio transcript: último `[ADVERSARY-VERDICT]` y el
-   `[ADVERSARY-MODEL]` que lo acompaña, ambos citados en SU texto.
+   `[ADVERSARY-MODEL]` que lo acompaña, ambos citados en SU texto. lookout solo mira si hay hold: es coordinación.
    - `BREAK`: no se lo pases al usuario. Respóndele: arregla y pide otra ronda (revisión limitada a lo que
      cambió), o dame una razón. Criterio de corte: lo que falla hacia el lado inseguro (`unsafe` > 0) se
      arregla sí o sí; lo seguro y caro puede quedar como pendiente propuesto.
-   - `MISMO-MODELO`: el hold vino de su mismo modelo (o sin modelo confirmado). Para algo terminal exige
-     la ronda del subagente `goalspec:goal-adversary` con otro `model` más el backend externo (`backends=both`)
-     antes de aceptar el hold.
    - `SIN-VEREDICTO`: pídele la ronda. Si da una razón para no hacerla, pásala al usuario como razón, no como hold.
+   - `OK`: el último veredicto es hold. **Qué rondas hacían falta (con qué modelo, con qué backends) es regla de
+     goalspec, no tuya ni de lookout**: no la juzgues ni la repitas. goalspec la aplica en la sesión del agente.
    - `SIN-GOALSPEC`: goalspec no está instalado; no hay ronda que pedir. Sigue con el paso 2, y en la pregunta al
      usuario di que este push **no tuvo revisión independiente**.
 2. Con `OK`: `lookout publica <project_id> <agente>`. Pone a los agentes en una sola cola (H14) y verifica
@@ -213,8 +221,9 @@ NO, no lo rodees ni lo reformules: pásale al agente el texto del NO.
    - `BASE-MOVIDA` / `VERSION-…`: dile exactamente lo que dice el NO (fetch + rebase + renumerar + suites) y
      que vuelva a pedirlo.
    - `LISTA`: pásaselo al usuario (paso 3).
-3. `lookout decision <project_id> --abre "<qué decide>" --agentes <agente>` y luego **AskUserQuestion** con el
-   resumen de `publica` (rama, commits, versión) y la orden exacta. Cuando conteste:
+3. `lookout decision <project_id> --abre "<qué decide>" --agentes <agente>` y luego la pregunta (en el chat si hay
+   agentes vivos; ver «Cómo pedirle una decisión al usuario») con el resumen de `publica` (rama, commits, versión)
+   y la orden exacta. Cuando conteste:
    `lookout decision <project_id> --cierra <id> --respuesta "<lo que dijo>" --si` (o `--no` si no lo aprueba;
    solo una decisión cerrada con `--si` autoriza algo después).
 4. **Si el usuario aprueba el push, NO se lo digas al agente todavía** (H15: un mensaje tuyo no es su
@@ -232,7 +241,7 @@ queda como pendientes propuestos y cerrar / parar. Si dice abrir otra:
 `lookout gobierno <project_id> <agente> --usuario-amplia <n> --decision <id>` (el id de la decisión respondida con `--si`).
 
 **Cerrar el pendiente de un agente** (terminado, publicado o sin necesidad de push, con hold):
-abre la decisión (`lookout decision … --abre`) y pregunta al usuario (AskUserQuestion). Con su sí, cierra la decisión con su
+abre la decisión (`lookout decision … --abre`) y pregunta al usuario (en el chat con agentes vivos). Con su sí, cierra la decisión con su
 respuesta y `--si`, y: `lookout cierra <project_id> <agente> --nota "<qué quedó hecho y cómo se verificó>" --usuario-confirmo <id>` (añade `--sin-push "<razón>"` si la tarea no necesitaba push).
 Escribe solo un evento `pendiente.resolve` en el journal; `_pendientes.md` cambia al compactar. Nunca edites
 `_pendientes.md` ni otro índice.
@@ -259,7 +268,7 @@ el «Como retomar», pídeselo al agente antes.
 
 Tu estado vive en `supervisor.md` (estado de lookout, no en la memoria 3-tier del proyecto). lookout lo reescribe en
 cada `resumen`, en cada `decision` y antes de compactar tu contexto; tus `SendMessage` y las respuestas del usuario a
-tus `AskUserQuestion` se registran solos. No tienes que anotarlos.
+tus `AskUserQuestion` o a tus preguntas en el chat se registran solos. No tienes que anotarlos.
 
 El presupuesto cuenta desde lo que tu sesión ya ocupaba al correr `lookout inicia` (la línea dice
 `Contexto: Nk de Lk (arranque Bk + 300k)`). **Solo** te relevas cuando `resumen` diga `PRESUPUESTO SUPERADO`, o cuando el

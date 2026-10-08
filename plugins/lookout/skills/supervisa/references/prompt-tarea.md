@@ -42,4 +42,8 @@ Prioridad: {prioridad}. Tipo: {tipo}. Riesgo: {riesgo}.
 - Si tu contexto se llena o te piden relevo: deja un bloque `## Como retomar` con un bloque de código (Retomamos / Lee / Proximo paso / No repitas / Terminas cuando).
 
 ## Reporte
-Formato fijo, por SendMessage al supervisor, máximo 6 líneas: qué hiciste / estado / HEAD, BASE, CHECKS / Next / Remember.
+- **Cada decisión que necesites del usuario va al supervisor en cuanto exista**, por SendMessage, y terminas el turno
+  esperando su respuesta. No la guardes para el informe final: una decisión que solo está en el informe espera hasta
+  que alguien lo lea.
+- Al terminar: formato fijo, por SendMessage al supervisor, máximo 6 líneas: qué hiciste / estado / HEAD, BASE,
+  CHECKS / Next / Remember.

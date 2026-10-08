@@ -247,6 +247,10 @@ def cmd_entrega(a):
         code, _o, _e = herdr_cli.run(["pane", "wait-output", pane, "--match", "Reloaded:", "--timeout", "15000"], timeout=20)
         print("reload: %s" % ("ok" if code == 0 else "sin confirmar en pantalla"))
     if "rename" in pasos:
+        try:
+            r_offset = os.path.getsize(lookout_state.events_path(pid))
+        except OSError:
+            r_offset = 0
         herdr_cli.run(["agent", "prompt", pane, "/rename " + entry["nombre"]])
         herdr_cli.run(["agent", "rename", pane, entry["nombre"]])
         herdr_cli.run(["pane", "rename", pane, "lookout: " + entry["nombre"]])
@@ -258,13 +262,31 @@ def cmd_entrega(a):
             if herdr_cli.run(["tab", "rename", live.get("tab_id") or entry["tab_id"], entry["nombre"]])[0] == 0:
                 entry["pestana"] = entry["nombre"]
         print("rename: %s (sesión, agente de herdr y pane; pestaña «%s»)" % (entry["nombre"], entry.get("pestana") or "-"))
+    if "nota" in pasos and "rename" in pasos:
+        # Fase 9 F3: the note is typed only once the /rename reached the agent (its UserPromptSubmit). Typed while the
+        # /rename was still in the box, the note arrived glued to it as <pasted_content> (claude-vzert, 2026-10-06).
+        if not deliver.wait_prompt_event(pid, entry["session_id"], r_offset, a.timeout, "/rename " + entry["nombre"]):
+            box = box_state(pane)
+            if box not in ("vacia", "sugerencia"):
+                reg["agents"][entry["session_id"]] = entry
+                registry.save(pid, reg)
+                print("NO ENTREGADO (nota): el /rename no se confirmó en %ds y la caja de %s tiene %s. No escribo la "
+                      "nota encima; mira su pantalla y repite con `--pasos nota`." % (a.timeout, entry["nombre"], box))
+                return 4
+            print("rename: sin confirmar por hook en %ds; la caja está vacía, sigo con la nota" % a.timeout)
     if "nota" in pasos:
         try:
             offset = os.path.getsize(lookout_state.events_path(pid))
         except OSError:
             offset = 0
-        herdr_cli.run(["agent", "prompt", pane, render_nota(pid, entry)])
-        ok = deliver.wait_prompt_event(pid, entry["session_id"], offset, a.timeout)
+        nota = render_nota(pid, entry)
+        herdr_cli.run(["agent", "prompt", pane, nota])
+        # a late /rename event must not confirm the hooks for the note. Not matched by text: a multi-line note may
+        # reach the hook wrapped in <pasted_content>.
+        sid = entry["session_id"]
+        ok = deliver.wait_event(pid, offset, a.timeout, lambda ev: (
+            ev.get("session_id") == sid and ev.get("event") == "working"
+            and not (ev.get("prompt") or "").lstrip().startswith("/rename")))
         entry["hooks"] = "ok" if ok else "sin-hooks"
         print("nota: entregada; hooks %s" % ("confirmados (UserPromptSubmit)" if ok else
                                             "SIN CONFIRMAR: no llegó su UserPromptSubmit en %ds" % a.timeout))
@@ -385,9 +407,32 @@ def cmd_libera(a):
     print("Para cerrar el pendiente (con el sí del usuario en una decisión): `lookout cierra %s %s --nota \"<qué quedó "
           "hecho y cómo se verificó>\" --usuario-confirmo <id>`%s." % (
               pid, e["nombre"], " (si no hizo falta push: `--sin-push \"<razón>\"`; si se abandona: `--estado abandoned`)"))
+    limpieza = plan_limpieza(e)
+    if limpieza:
+        print(limpieza)
     print("")
     print(lote.render_propuesta(lote.propone(pid, common)))
     return 0
+
+
+def plan_limpieza(e):
+    """Fase 9 F6: after `libera`, the exact cleanup of the agent's worktree and branch, for the USER to run when the
+    pendiente is closed (claude-vzert: a batch left 3 `-wt-` folders and 3 `lookout/*` branches nobody knew how to
+    remove). lookout never removes them itself: deleting is the user's (3.12)."""
+    wt = e.get("worktree") or ""
+    if e.get("sin_worktree") or not wt or not os.path.isdir(wt):
+        return ""
+    root = wt.rsplit("-wt-", 1)[0]
+    rama = e.get("branch") or ""
+    out = ["Limpieza, para el usuario cuando el pendiente esté cerrado y la sesión de %s terminada (no la corras tú; "
+           "pásasela en un bloque de código):" % e["nombre"],
+           "  ! git -C %s worktree remove %s" % (root, wt)]
+    if rama:
+        out.append("  ! git -C %s branch -d %s" % (root, rama))
+        out.append("  (`-d`, no `-D`: git se niega a borrar una rama sin integrar; si se niega, la rama tiene trabajo "
+                   "que no está en main ni en origin: pregúntale al usuario antes de nada)")
+    out.append("  `worktree remove` se niega si quedan cambios sin commit: entonces no lo fuerces, avisa.")
+    return "\n".join(out)
 
 
 def cmd_envia(a):
@@ -465,7 +510,9 @@ def cmd_publica(a):
         root = lote.repo_root(common)
         est, _ = publica.regla_estado(root)
         print("")
-        print("Siguiente: pásale al usuario este push para que lo apruebe (AskUserQuestion con el resumen de arriba).")
+        print("Siguiente: `lookout decision %s --abre \"<qué decide>\" --agentes %s` y pásale al usuario este push "
+              "para que lo apruebe, con el resumen de arriba (en el chat si hay agentes vivos; AskUserQuestion solo "
+              "sin agentes vivos)." % (pid, e["nombre"]))
         if est == "aplicada":
             print("Regla temporal de push: APLICADA. Con el sí del usuario, dile al agente que corra la orden exacta, sola.")
         else:

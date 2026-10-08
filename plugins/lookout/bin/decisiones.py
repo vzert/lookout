@@ -90,6 +90,22 @@ def registra_respuesta(project_id, tool_use_id, respuesta, now=None):
     return None
 
 
+def registra_respuesta_chat(project_id, respuesta, now=None):
+    """Fase 9 F2: the user's chat answer goes to the most recent open decision, as `registra_respuesta` does for a
+    modal one. None when nothing is open (the prompt is still on the supervisor's log)."""
+    d = load(project_id)
+    abiertas_ = [it for it in d["items"] if it["estado"] == "abierta"]
+    if not abiertas_:
+        return None
+    it = max(abiertas_, key=lambda x: x["desde"])
+    it["respuesta_usuario"] = respuesta
+    it["via"] = "chat"
+    if it.get("origen") == "hook":
+        it.update(estado="respondida", respuesta=respuesta, aprueba=None, hasta=now or time.time())
+    lookout_state.write_json(path(project_id), d)
+    return it
+
+
 def tomadas_de(project_id, agentes):
     """Answered decisions that concern any of these agents (Fase 4: what a relief must not ask again)."""
     want = set(agentes or ())

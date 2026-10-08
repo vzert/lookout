@@ -1,8 +1,10 @@
 """goalspec governance for one agent's task (docs/plan.md 3.9, F3).
 
 The supervisor asks this script, never its own memory, whether an agent may take a step:
-  - push: the LAST adversary verdict the agent quoted must be `hold`, and the adversary that gave it must
-    report a model other than the agent's own (a `model=same` hold is not enough for a terminal action);
+  - push: the LAST adversary verdict the agent quoted must be `hold`. Nothing more: which model and which backends
+    a round needs is goalspec's policy, not lookout's (user's decision 2026-10-07: lookout coordinates and
+    supervises; the adversary rules live in goalspec, so they are kept in one place). Before 0.10.0 lookout also
+    refused a hold from the agent's own model (MISMO-MODELO); goalspec's own gates are the place for that;
   - otra ronda: rounds are capped (5 by default); the 6th needs the user's yes, recorded here.
 
 Source of truth: the agent's own transcript (V8), read the way goalspec's own gate reads it —
@@ -28,20 +30,6 @@ VERDICT_RE = re.compile(r"^\s*\[ADVERSARY-VERDICT:\s*(break|hold)\s+ungrounded=(
                         r"incomplete=(\d+)\s+autonomy-violations=(\d+)\s+unsafe=(\d+)\s*\]\s*$", re.M | re.I)
 MODEL_RE = re.compile(r"^\s*\[ADVERSARY-MODEL:\s*(.*?)\]\s*$", re.M | re.I)
 CR_RE = re.compile(r"^\s*\[COMPLETION-REVIEW:\s*(adversary|none)\b([^\]]*)\]\s*$", re.M | re.I)
-FAMILIES = ("haiku", "sonnet", "opus", "fable", "gpt", "codex", "gemini", "grok", "llama", "mistral", "deepseek", "qwen")
-
-
-def family(model):
-    """Model family token ('haiku', 'gpt', ...) or '' when the text names none (UNKNOWN, empty)."""
-    low = (model or "").lower()
-    if not low or "unknown" in low:
-        return ""
-    for f in FAMILIES:
-        if re.search(r"(^|[^a-z])%s" % f, low):
-            return f
-    if re.search(r"(^|[^a-z0-9])o\d", low):
-        return "gpt"  # OpenAI o-series
-    return ""
 
 
 # ---------- reading one transcript ----------
@@ -184,14 +172,8 @@ def goalspec_de(entry):
     return requisitos.goalspec_instalado(roots[0] if roots else wt)
 
 
-def misma_familia(st):
-    last = st["ultimo"] or {}
-    fa, fe = family(last.get("modelo")), family(st["modelo_ejecutor"])
-    return (not fa) or (not fe) or fa == fe, fa, fe
-
-
 def decide_push(st):
-    """(ok, code, text). code: OK | SIN-GOALSPEC | SIN-VEREDICTO | BREAK | MISMO-MODELO."""
+    """(ok, code, text). code: OK | SIN-GOALSPEC | SIN-VEREDICTO | BREAK."""
     last = st["ultimo"]
     if not last and st.get("goalspec") is False:
         return True, "SIN-GOALSPEC", ("SIN-GOALSPEC: goalspec no está instalado para este proyecto, así que no hay "
@@ -208,15 +190,9 @@ def decide_push(st):
         return False, "BREAK", ("NO: su último veredicto es break (%s). No le pases el push al usuario. Pide otra "
                                 "ronda tras arreglar (revisión limitada a lo que cambió) o una razón. %s"
                                 % (last["linea"], corte))
-    same, fa, fe = misma_familia(st)
-    if same:
-        return False, "MISMO-MODELO", (
-            "NO: el hold vino de un adversario del mismo modelo que el agente o sin modelo confirmado "
-            "(adversario: %r → %s; agente: %r → %s). Para algo terminal exige la ronda del subagente "
-            "goalspec:goal-adversary con otro model más el backend externo (backends=both), y que cite su "
-            "[ADVERSARY-MODEL] y su hold."
-            % (last.get("modelo") or "sin línea [ADVERSARY-MODEL]", fa or "?", st["modelo_ejecutor"], fe or "?"))
-    return True, "OK", "OK: último veredicto hold de un modelo distinto (%s vs %s). Sigue con `lookout publica`." % (fa, fe)
+    return True, "OK", ("OK: último veredicto hold (%s). Sigue con `lookout publica`. Qué rondas hacían falta "
+                        "(modelo, backends) lo decide goalspec, no lookout." % (
+                            last.get("modelo") or "sin [ADVERSARY-MODEL] citado"))
 
 
 def decide_ronda(st):
@@ -224,8 +200,9 @@ def decide_ronda(st):
     nxt = st["rondas"] + 1
     if nxt > st["limite"]:
         return False, "PREGUNTA-USUARIO", (
-            "PARA: ya van %d rondas (límite %d). Antes de abrir la %d pregúntale al usuario (AskUserQuestion: "
-            "abrir otra ronda / registrar lo que queda como pendientes propuestos y cerrar / parar). Si dice que "
+            "PARA: ya van %d rondas (límite %d). Antes de abrir la %d abre la decisión (`lookout decision … "
+            "--abre`) y pregúntale al usuario en el chat (hay agentes vivos; el modal te bloquearía): "
+            "abrir otra ronda / registrar lo que queda como pendientes propuestos y cerrar / parar. Si dice que "
             "sí: `lookout gobierno <proyecto> <agente> --usuario-amplia %d`." % (st["rondas"], st["limite"], nxt, nxt))
     return True, "OK", "OK: puede abrir la ronda %d de %d." % (nxt, st["limite"])
 
