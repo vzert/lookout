@@ -8,7 +8,7 @@ El supervisor no lleva cuentas ni consulta en bucle. Regla de oro: **nunca decla
 | Señal | Fuentes | Umbral | Evento | Acción del supervisor |
 |---|---|---|---|---|
 | Mismo error repetido | `PostToolUseFailure` del ejecutor: herramienta + línea `Exit code N` + primera línea de salida, con rutas y números en blanco (firma) | 3 fallos con la misma firma desde que arrancó la sesión; tras una corrección, 1 (el texto de la corrección pide aplicarla y correr una vez el mismo comando: si el error vuelve, la corrección falló). También falla si el agente reporta que sigue igual sin volver a correrlo: el supervisor lo cita con `corrige --reporte` | `repite` (despierta; "te necesita") | `lookout corrige … --resumen` y mandar su texto tal cual. Máximo 2 correcciones por firma: cuando falla la 2.ª, `corrige` dice `PARA` → escalar al usuario, sin ping-pong |
-| Sin progreso | hooks (último evento en turno y viejo) + proceso de Claude (`ps`: detenido o muerto) + herdr (no `working`, o ya no lo lista) + worktree (archivos o HEAD sin cambios) | `mirar` ≥ 5 min; `escalar` ≥ 20 min; hacen falta los hooks viejos **y** otra fuente que diga "no trabaja", y el worktree quieto | `sin_progreso` (despierta; `escalar` = "te necesita") | `mirar`: una lectura de pantalla. `escalar`: avisar al usuario. Nunca relanzar ni matar por cuenta propia |
+| Sin progreso | hooks (último evento en turno y viejo) + proceso de Claude (`ps`: detenido o muerto) + herdr (no `working`, o ya no lo lista) + worktree (archivos o HEAD sin cambios; no cuenta para un agente lanzado en el checkout principal, cuyo árbol es compartido: Fase 9 G) | `mirar` ≥ 5 min; `escalar` ≥ 20 min; hacen falta los hooks viejos **y** otra fuente que diga "no trabaja", y el worktree quieto (salvo en el checkout principal) | `sin_progreso` (despierta; `escalar` = "te necesita") | `mirar`: una lectura de pantalla. `escalar`: avisar al usuario. Nunca relanzar ni matar por cuenta propia |
 | Vivo pero callado | herdr `working` **y** proceso vivo, sin eventos de hook (un build o una suite larga) | ≥ 60 min | `largo` (una vez) | Una lectura de pantalla. No es atasco |
 | Límite del proveedor | `StopFailure` con `error` = `rate_limit` u `overloaded` | inmediato | `pausa` (no despierta) | Nada: no es falla de la tarea. No relanzar ni marcar fallido |
 | Otro error de API | `StopFailure` con otro `error` (credenciales, facturación, modelo…) | inmediato | `unknown` ("te necesita") | Avisar al usuario |
@@ -42,10 +42,11 @@ permisos de la Fase 5).
 
 ## Puertos y bases de datos
 
-`bin/ports.py` da a cada worktree un puerto propio de `LOOKOUT_PORT_BASE` (4100) en adelante: el que ya tiene, o el
+`bin/ports.py` da a cada agente de código un puerto propio (clave: su worktree, o `<repo>-tab-<slug>` si trabaja en
+una pestaña sobre el checkout principal; Fase 9 G) de `LOOKOUT_PORT_BASE` (4100) en adelante: el que ya tiene, o el
 más bajo que nadie tiene asignado y que se puede abrir en 127.0.0.1 en ese momento. Se guarda en `<estado>/ports.json`
 (toda la máquina) y se libera con `lookout libera`. El agente lanzado lo recibe como `$PORT` en su entorno y escrito en
-su tarea, con un sufijo (`<carpeta del worktree>`) para nombres de bases de datos o cachés propias.
+su tarea, con un sufijo (el nombre de esa clave) para nombres de bases de datos o cachés propias.
 
 ## Límites conocidos
 

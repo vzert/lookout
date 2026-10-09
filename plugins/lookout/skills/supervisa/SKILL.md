@@ -133,7 +133,7 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
 **En pausa** e **Idle**. El usuario recibe un aviso de herdr solo cuando un agente entra en "Te necesita" o en "Listo"
 (no por cada evento). Detalle de las señales y umbrales: `references/heuristicas.md`.
 
-**Puertos.** Cada worktree tiene su puerto de servidor de desarrollo: un agente lanzado por lookout ya lo tiene en
+**Puertos.** Cada agente de código tiene su puerto de servidor de desarrollo (también dos en el mismo checkout): un agente lanzado por lookout ya lo tiene en
 `$PORT` y en su tarea. Para un agente que ya corría: `lookout puerto <project_id> <agente>` y mándale lo que imprime.
 
 ## Regla de decisión

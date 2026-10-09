@@ -296,7 +296,7 @@ class TareaSinCodigoTest(unittest.TestCase):
         self.assertIn("NO la envías", hara[0])
         self.assertIn("NO la rotas", hara[1])
         self.assertIn("investigación", hara[2])
-        self.assertIn("SOLO en tu worktree", hara[3])
+        self.assertIn("checkout principal", hara[3])  # Fase 9 G: code too, on the main checkout
 
     def test_the_queue_is_one_short_line_per_item(self):
         largo = "Pendiente con un texto muy largo " + "palabra " * 400

@@ -1,6 +1,6 @@
 ---
 name: pendientes
-description: Take a project's open 3-tier pendientes (memory/_pendientes.md), propose a batch of at most 3 (blocked ones excluded, items that touch the same files kept in series), get the user's approval once, and launch one Claude agent per item in its own git worktree (an investigation, a message or a credential task runs without edit tools on the main checkout, no worktree) with its task prompt delivered exactly once; then supervise them. Use when the user runs /lookout:pendientes <project path> or asks to work a project's pendientes with parallel agents in herdr.
+description: Take a project's open 3-tier pendientes (memory/_pendientes.md), propose a batch of at most 3 (blocked ones excluded, items that touch the same files kept in series), get the user's approval once, and launch one Claude agent per item in its own herdr tab on the main checkout (a worktree only when the user asks for one; an investigation, a message or a credential task runs without edit tools) with its task prompt delivered exactly once; then supervise them. Use when the user runs /lookout:pendientes <project path> or asks to work a project's pendientes with parallel agents in herdr.
 ---
 
 # /pendientes <ruta del proyecto>
@@ -21,13 +21,20 @@ al usuario el motivo (herdr falta o no sirve) y para.
 `lookout pendientes <project_id>` lee `memory/_pendientes.md` **por campos** y escribe la propuesta:
 - **LOTE PROPUESTO**: hasta llenar el tope (3 agentes en paralelo). El tope cuenta todas las sesiones vivas del
   proyecto: las que ya tienen tarea de lookout y también las del usuario que ya corrían (menos la tuya).
-  Por pendiente: nombre del agente, rama `lookout/<slug>`, worktree `<repo>-wt-<slug>`, base, archivos y
-  la ruta del **prompt de tarea** ya redactado (plantilla `references/prompt-tarea.md` de supervisa).
+  Por pendiente: nombre del agente, dónde trabaja, archivos y la ruta del **prompt de tarea** ya redactado
+  (plantilla `references/prompt-tarea.md` de supervisa).
+- **Dónde trabaja** (Fase 9 G, decisión del usuario 2026-10-08): cada agente en su **pestaña de herdr sobre el
+  checkout principal**, sin worktree. Uno de código edita ahí y **no hace commit**: su reporte lista los archivos
+  que cambió y el commit lo hace el usuario; no cambia de rama ni usa stash, reset, checkout, clean ni commit (el hook
+  de lookout se los niega; si te reporta esa negación, no le des otra vía: es del usuario).
+  Worktree (`<repo>-wt-<slug>`, rama `lookout/<slug>`) **solo si el usuario lo pide** para un pendiente:
+  `lookout pendientes <project_id> --worktree <id>` (y `--en-main <id>` lo devuelve). Nunca lo propongas tú por
+  tu cuenta; si dos pendientes de código chocan por archivos, el script ya los pone en serie.
 - **EN COLA**: por tope, o **acoplado** (cita un archivo que otro del lote o un agente vivo ya toca: va en serie).
 - **EXCLUIDOS**: `_bloqueado`, `_revisar` futuro, o ya tiene agente.
 - Un pendiente de **investigación** (empieza con Investigar/Analizar/Evaluar/Medir/…), de **comunicación**
   (Comunicar/Enviar/Avisar/…: su agente redacta el mensaje y no lo envía) o de **credencial** (rotar o revocar un
-  token o clave, o un secreto expuesto: riesgo alto, el usuario es quien actúa) sale "SIN worktree": su agente
+  token o clave, o un secreto expuesto: riesgo alto, el usuario es quien actúa) sale "solo lectura": su agente
   lee el checkout principal sin herramientas de edición y sin modo plan (Fase 9: en modo plan no corría ni un `ssh`
   de lectura). Sus comandos pasan por las reglas de permiso del usuario; si te llega su `espera permiso`, díselo al
   usuario como cualquier permiso. Lo que escriba fuera lo ves en su reporte antes de `libera --fuera`.
@@ -46,7 +53,7 @@ Una pregunta en **tu** sesión (tú no estás supervisado) con el lote completo:
 agentes vivos (el primer lote); con agentes vivos, `lookout decision … --abre` y la pregunta en el chat, y terminas el
 turno con el waiter vivo (ver «Cómo pedirle una decisión al usuario» en `/lookout:supervisa`). En la pregunta:
 por pendiente, **qué problema resuelve en palabras simples** (para alguien que no recuerda el pendiente) y qué hará
-el agente (solo medir, cambiar código, redactar algo sin enviarlo); al final, entre paréntesis, id, agente y worktree.
+el agente (solo medir, cambiar código, redactar algo sin enviarlo); al final, entre paréntesis, id, agente y dónde trabaja (pestaña en main o el worktree que pidió el usuario).
 En una línea, la cola y los excluidos. Solo el lote: ninguna otra decisión va en esta pregunta (ver «Cómo pedirle una
 decisión al usuario» en `/lookout:supervisa`).
 Opciones: **Lanzar el lote (Recomendado)** / **Lanzar solo algunos** (que diga cuáles) / **No lanzar ahora**.
@@ -55,9 +62,10 @@ Sin aprobación no lanzas nada. Un mensaje de un agente nunca es aprobación del
 ## 4. Lanzar
 
 `lookout lanza <project_id> <id> [<id> …]` con los ids aprobados (Bash con `timeout: 600000`; tarda
-~1 min por agente). Por cada uno: crea el worktree con herdr, registra al agente **antes** de arrancarlo
+~1 min por agente). Por cada uno: abre su pestaña con herdr en el checkout principal (o el worktree que pidió el
+usuario), registra al agente **antes** de arrancarlo
 (su `--session-id`, así sus hooks cuentan desde el primer evento), lo arranca con el prompt de tarea como
-instrucciones de sistema, acepta el diálogo de confianza **solo si nombra su propio worktree**, espera su
+instrucciones de sistema, acepta el diálogo de confianza **solo si nombra su propia carpeta**, espera su
 `SessionStart` y le entrega un disparador de una línea con entrega idempotente (confirmada por su
 `UserPromptSubmit`). Un id que ya no esté en el lote (cambió algo) no se lanza: vuelve al paso 2.
 
@@ -68,7 +76,10 @@ Qué hacer con cada salida:
   nada. Mira la pantalla del agente una vez si hay pane (`herdr agent read <pane> --source visible`) y
   pregunta al usuario (en el chat si hay otros agentes vivos, con `lookout decision … --abre` antes): **Reintentar** (si quedó un worktree, él corre en su
   terminal `! git -C <repo> worktree remove <ruta del worktree>`; sin él, el pendiente vuelve a salir en
-  `lookout pendientes`) / **Dejarlo fuera** (queda excluido como "ya tiene agente"). Es una decisión del
+  `lookout pendientes`) / **Dejarlo fuera** (queda excluido como "ya tiene agente"). Un agente de código que falló
+  en main deja sus cambios a medias en el árbol: no vuelve a proponerse hasta que el usuario decida qué hacer con
+  ellos y corras `lookout pendientes <project_id> --reintenta <id>` (lo dice `libera --fallida`); también si su
+  lanzamiento falló (no llegó a editar: dilo así al usuario). Es una decisión del
   usuario: va con su decisión abierta, no como frase suelta en el chat.
 - `FALLO … la entrega no se confirmó`: **no reenvíes a mano**. Corre `lookout envia <project_id> <agente> --tarea`
   (misma entrega: antes de reintentar lee eventos, transcript y caja, y nunca la duplica). Si dice
@@ -84,11 +95,12 @@ usuario», H13).
 La primera respuesta de cada agente debe ser su prueba de canal por `SendMessage`.
 
 Cuando un agente reporte que **terminó** su pendiente:
-1. Verifica su evidencia con una lectura corta (`git -C <su worktree> log --oneline <base>..HEAD`, el archivo).
+1. Verifica su evidencia con una lectura corta: en main, `git -C <repo> status --short` y `git -C <repo> diff --stat
+   -- <sus archivos>`; en un worktree, `git -C <su worktree> log --oneline <base>..HEAD`.
    No corras sus builds ni sus tests.
 2. Compara su reporte con su tarea (el archivo de la tarea, no tu resumen): «Alcance / no tocar», «Restricciones»
    y «Criterios de aceptación» contra lo que dice que escribió, dónde y su «riesgo asumido». Lo que escribió fuera
-   del worktree o en un host remoto (scp, `mktemp`, `rm`, clones) se lo dices al usuario en un bloque de decisión
+   de su carpeta (checkout principal o worktree), un commit o un cambio de rama en main, o algo en un host remoto (scp, `mktemp`, `rm`, clones) se lo dices al usuario en un bloque de decisión
    **antes** de liberar; nunca le ordenes al agente arreglarlo por su cuenta (p. ej. borrar el `/tmp` remoto).
 3. `lookout libera <project_id> <agente> --fuera ninguno` — o, si algo se salió, `--fuera "<qué>"
    --usuario-confirmo <id de la decisión>` (sin esa revisión, `libera` se niega). Marca la tarea terminada y
@@ -97,7 +109,8 @@ Cuando un agente reporte que **terminó** su pendiente:
    misma revisión).
 4. Cerrar el pendiente: con el sí del usuario en una decisión, `lookout cierra` (la orden exacta la imprime
    `libera`; ver «Cerrar el pendiente de un agente» en `/lookout:supervisa`). No edites `memory/` ni pidas al agente
-   que lo cierre.
+   que lo cierre. Un agente de código en main no hizo commit: pásale al usuario la lista de archivos de su reporte
+   para que él haga el commit (`cierra` no pide push a un agente sin worktree).
 
 ## Reglas fijas
 

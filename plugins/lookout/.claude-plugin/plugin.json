@@ -1,7 +1,7 @@
 {
   "name": "lookout",
-  "version": "0.10.0",
-  "description": "Supervise the coding agents of one project running in herdr panes: discover them, route their questions to a supervisor session, answer what is reversible and escalate what is not; launch a batch of 3-tier pendientes in worktrees, one agent each, with idempotent prompt delivery; enforce goalspec governance before a push, publish in order, close pendientes by journal and relieve agents; approve trivial tool permissions of the executors once, by rules the user activated (manual mode only), and send the rest to the user.",
+  "version": "0.11.0",
+  "description": "Supervise the coding agents of one project running in herdr panes: discover them, route their questions to a supervisor session, answer what is reversible and escalate what is not; launch a batch of 3-tier pendientes, one agent each in its own herdr tab on the main checkout (a worktree only if the user asks), with idempotent prompt delivery; enforce goalspec governance before a push, publish in order, close pendientes by journal and relieve agents; approve trivial tool permissions of the executors once, by rules the user activated (manual mode only), and send the rest to the user.",
   "author": {
     "name": "vzert"
   },

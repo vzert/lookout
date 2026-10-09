@@ -266,7 +266,7 @@ class LoteTest(StubCase):
     def test_task_prompt_has_every_section_and_no_placeholder(self):
         items = pendientes.parse(PEND)
         it = {i["id"]: i for i in items}[GUIA_INST]
-        plan = lote.plan_for(it, "/private/tmp/repo-x", "origin/main")
+        plan = lote.plan_for(it, "/private/tmp/repo-x", "origin/main", con_worktree=True)  # Fase 9 G: on request
         self.assertEqual(plan["worktree"], "/private/tmp/repo-x-wt-" + plan["nombre"])
         self.assertEqual(plan["nombre"], "crear-guia-con-una-9dae44")
         self.assertTrue(plan["rama"].startswith("lookout/"))
@@ -280,6 +280,7 @@ class LoteTest(StubCase):
         with open(lote.system_prompt(self.pid, it, draft, "NOTA-DE-PRUEBA")) as fh:
             self.assertTrue(fh.read().endswith("## Nota del supervisor\nNOTA-DE-PRUEBA\n"))
         self.assertIn(GUIA_USO, text)  # the coupled open item is cited as related memory
+        self.assertIn("renumera la versión", text)  # the publish rule stays in a worktree (Fase 9 G)
         self.assertNotIn("{", text.replace("{nombre}", ""))
 
     def test_investigation_gets_no_worktree_and_read_only_scope(self):
@@ -305,7 +306,8 @@ class LoteTest(StubCase):
             self.assertIn("`ssh host 'bash -s' < script`", restricciones, tipo)
             for verbo in ("`scp`", "`mktemp`", "`rm`"):
                 self.assertIn(verbo, restricciones, tipo)
-            self.assertIn("en ninguna parte" if tipo == "investigacion" else "fuera de tu worktree", restricciones)
+            self.assertIn("en ninguna parte" if tipo == "investigacion" else "fuera del checkout principal",
+                          restricciones)
 
     def test_related_memory_is_capped_and_ignores_generic_files(self):
         # Fase 9 A2 (claude-vzert): matching on `memory/_pendientes.md` put ~17 unrelated items (18 KB) in one task.
@@ -335,17 +337,17 @@ class LoteTest(StubCase):
             it = dict(base, tipo=tipo)
             plan = lote.plan_for(it, os.path.join(self.tmp.name, "repo-" + tipo), "origin/main")
             text = lote.render_tarea(self.pid, it, plan, items)
-            recursos = text.split("## Recursos de tu worktree", 1)[1].split("\n## ", 1)[0]
+            recursos = text.split("## Recursos", 1)[1].split("\n## ", 1)[0]
             self.assertEqual("Puerto para tu servidor" in recursos, con_puerto, tipo)
             self.assertEqual("Base de datos" in recursos, con_puerto, tipo)
-            self.assertEqual(bool(ports.de(plan["worktree"])), con_puerto, tipo)
+            self.assertEqual(bool(ports.de(lote.clave_puerto(plan))), con_puerto, tipo)
             if not con_puerto:
                 self.assertIn("no levantes servidores ni bases de datos", recursos)
 
     def test_draft_from_an_older_plan_is_rewritten(self):
         items = pendientes.parse(PEND)
         it = {i["id"]: i for i in items}[FAQ]
-        plan = lote.plan_for(it, "/private/tmp/repo-x", "origin/main")
+        plan = lote.plan_for(it, "/private/tmp/repo-x", "origin/main", con_worktree=True)
         path = os.path.join(self.tmp.name, "d.md")
         with open(path, "w") as fh:
             fh.write(lote.render_tarea(self.pid, it, plan, items))

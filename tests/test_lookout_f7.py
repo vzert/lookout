@@ -245,7 +245,7 @@ class SinGoalspecTest(unittest.TestCase):
         self.assertIn("goalspec no está instalado", sin)
         for text in (con, sin):  # what does not depend on goalspec stays
             self.assertIn("## Como retomar", text)
-            self.assertIn("renumera la versión", text)
+            self.assertIn("<publicar>", text)  # Fase 9 G: the publish rule depends on where the agent works (lote.py)
 
 
 if __name__ == "__main__":

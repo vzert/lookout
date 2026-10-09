@@ -1,6 +1,8 @@
-"""One dev-server port per worktree (docs/plan.md, Fase 6): two worktrees never start a server on the same port.
+"""One dev-server port per agent key (docs/plan.md, Fase 6 and Fase 9 G): two agents never start a server on the same
+port. The key is the agent's worktree, or `<repo>-tab-<slug>` for a code agent lookout launched in a tab on the main checkout (G4), or
+`<repo>-tab-<nombre>` for a session `lookout puerto` found on the main checkout.
 
-The assignment lives in <state>/ports.json, machine-wide (two projects can run at once), under a flock. A worktree
+The assignment lives in <state>/ports.json, machine-wide (two projects can run at once), under a flock. A key
 keeps its port for its whole life (a relieved agent gets the same one); a port is given only if nothing else is
 assigned to it and it can be bound on 127.0.0.1 right now. The agent gets it twice: as $PORT in its environment
 (the --settings env of its Claude session) and written in its task prompt.

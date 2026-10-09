@@ -1,11 +1,11 @@
-"""Batches of pendientes launched in worktrees (docs/plan.md 3.8 steps 1-6, F2).
+"""Batches of pendientes launched in herdr tabs (docs/plan.md 3.8 steps 1-6, F2; Fase 9 G: on the main checkout,
+a worktree only when the user asks for one).
 
 propone: read memory/_pendientes.md by fields, take the slots left under the cap (S2, default 3),
          keep coupled items in series, and write one task prompt per batch item (section 6.3)
          under <state>/projects/<pid>/tareas/<id>.md — never inside the repo.
-lanza:   for each approved id still in the batch: herdr worktree under the common prefix
-         <repo>-wt-<slug> (S1, H16) — an investigation instead gets a workspace on the main checkout,
-         no worktree, started without edit tools (3.8.3; no plan mode since Fase 9) → register the agent BEFORE it starts (its own --session-id, so
+lanza:   for each approved id still in the batch: a herdr workspace on the main checkout (Fase 9 G), or the
+         worktree <repo>-wt-<slug> the user asked for (S1, H16); a read-only task is started without edit tools (3.8.3; no plan mode since Fase 9) → register the agent BEFORE it starts (its own --session-id, so
          the hooks see the marker from the first event) → `herdr agent start` with the task as an
          appended system prompt (a trusted source, H17; a long prompt typed into the box arrives as
          pasted text, learning 10) → accept the trust dialog only for its own worktree → wait for
@@ -116,17 +116,51 @@ def slug_for(item):
     return (registry.slug(words, 18) or "tarea") + "-" + item["id"][2:8]
 
 
-SIN_CODIGO = ("investigacion", "comunicacion", "credencial")  # Fase 9 B2: no worktree, no commit, read-only
+SIN_CODIGO = ("investigacion", "comunicacion", "credencial")  # Fase 9 B2: read-only, no commit
 
 
-def plan_for(item, root, base):
+def solo_lectura(item_or_entry):
+    """Fase 9 B2: a measurement, a message or a credential task runs without edit tools. A registry entry from 0.10.0
+    has no `solo_lectura`: there, only read-only tasks ran without a worktree."""
+    if "solo_lectura" in item_or_entry:
+        return bool(item_or_entry["solo_lectura"])
+    if "tipo" in item_or_entry:
+        return item_or_entry.get("tipo") in SIN_CODIGO
+    return bool(item_or_entry.get("sin_worktree"))
+
+
+def plan_for(item, root, base, con_worktree=False):
+    """Fase 9 G (user's decision 2026-10-08): every agent runs in its own herdr tab on the main checkout; a worktree
+    only when the user asks for one (`lookout pendientes --worktree <id>`). claude-vzert: the 3 agents of the first
+    batch ran in worktrees and left 3 `-wt-` folders and 3 `lookout/*` branches holding only a report."""
     s = slug_for(item)
-    if item.get("tipo") in SIN_CODIGO:
-        # 3.8.3: an investigation gets no worktree; the agent reads the main checkout (edit tools off, see exec_args).
-        return {"nombre": s, "rama": git(root, "branch", "--show-current") or "HEAD", "worktree": root,
-                "base": base, "sin_worktree": True, "root": root}
-    return {"nombre": s, "rama": "lookout/" + s, "worktree": root.rstrip("/") + "-wt-" + s, "base": base,
-            "sin_worktree": False, "root": root}
+    lectura = solo_lectura(item)
+    if lectura or not con_worktree:
+        plan = {"nombre": s, "rama": git(root, "branch", "--show-current") or "HEAD", "worktree": root,
+                "base": base, "sin_worktree": True, "solo_lectura": lectura, "root": root}
+        if not lectura:
+            # two code agents on the same checkout: each one its own port key, never the checkout's path
+            plan["clave_puerto"] = root.rstrip("/") + "-tab-" + s
+        return plan
+    wt = root.rstrip("/") + "-wt-" + s
+    return {"nombre": s, "rama": "lookout/" + s, "worktree": wt, "base": base, "sin_worktree": False,
+            "solo_lectura": False, "root": root, "clave_puerto": wt}
+
+
+def con_worktree_path(project_id):
+    return os.path.join(lookout_state.project_dir(project_id), "con_worktree.json")
+
+
+def con_worktree(project_id):
+    """Ids the user asked to run in a worktree (Fase 9 G)."""
+    return set((lookout_state.read_json(con_worktree_path(project_id)) or {}).get("ids") or [])
+
+
+def pide_worktree(project_id, ids, quita=()):
+    cur = (con_worktree(project_id) | set(ids)) - set(quita)
+    os.makedirs(lookout_state.project_dir(project_id), exist_ok=True)
+    lookout_state.write_json(con_worktree_path(project_id), {"ids": sorted(cur)})
+    return cur
 
 
 @contextlib.contextmanager
@@ -163,6 +197,10 @@ def retryable(e, live_sessions):
     worktree, the user removed it."""
     if e.get("tarea_estado") != "fallida" or e["session_id"] in live_sessions:
         return False
+    if e.get("sin_worktree") and not solo_lectura(e):
+        # Fase 9 G: a failed code agent on the main checkout may have left edits in the shared tree; it comes back
+        # only after the user decided about them (`lookout pendientes <proyecto> --reintenta <id>`).
+        return bool(e.get("reintentar"))
     return bool(e.get("sin_worktree")) or not os.path.exists(e.get("worktree") or "")
 
 
@@ -236,9 +274,22 @@ def recorta(texto, n=MAX_TEXTO_RELACIONADO):
 
 
 def usa_recursos(item, plan):
-    """Fase 9 A3: only a code task in its own worktree gets a port and a database; a measurement, a message or a
-    credential task has nothing to serve."""
-    return not plan.get("sin_worktree") and item.get("tipo", "codigo") == "codigo"
+    """Fase 9 A3: only a code task gets a port and a database (in its worktree or its tab on the main checkout); a
+    measurement, a message or a credential task has nothing to serve."""
+    return not plan.get("solo_lectura") and item.get("tipo", "codigo") == "codigo"
+
+
+def clave_puerto(plan):
+    return plan.get("clave_puerto") or plan["worktree"]
+
+
+def puerto_de(entry):
+    """The port key of a registered agent: its own key (Fase 9 G), else its worktree (0.10.0); None if it has none."""
+    if entry.get("clave_puerto"):
+        return entry["clave_puerto"]
+    if entry.get("worktree") and not entry.get("sin_worktree"):
+        return entry["worktree"]
+    return None
 
 
 def render_tarea(project_id, item, plan, items):
@@ -250,8 +301,10 @@ def render_tarea(project_id, item, plan, items):
     archivos = ", ".join("`%s`" % f for f in item["archivos"]) or "(ninguno citado)"
     wt = plan["worktree"]
     if usa_recursos(item, plan) and not plan.get("puerto"):
-        plan["puerto"] = ports.asigna(wt)  # Fase 6: idempotent per worktree path; the launch passes the same as $PORT
-    if plan.get("sin_worktree"):
+        plan["puerto"] = ports.asigna(clave_puerto(plan))  # Fase 6: idempotent per key; the launch passes the same
+    quedate = "Quédate en tu worktree."
+    if plan.get("solo_lectura"):
+        quedate = "Quédate en el checkout principal."
         lectura = ("trabajas en modo lectura en el checkout principal `%s`. No edites, crees ni borres archivos del "
                    "repo y no hagas commits: tu entrega es el reporte." % wt)
         if item.get("tipo") == "comunicacion":
@@ -272,6 +325,21 @@ def render_tarea(project_id, item, plan, items):
             criterios = ("- Respondes lo que pide el pendiente con evidencia citada (archivo:línea, o comando y su "
                          "salida).\n- El checkout queda igual que al empezar.")
         checks = "- `git -C %s status --short` (igual al empezar y al terminar)" % wt
+    elif plan.get("sin_worktree"):
+        # Fase 9 G: a code task on the main checkout, in its own tab. The tree is shared with the user and other
+        # agents, so nothing that moves the whole tree, and no commit: the user commits (decision 2026-10-08).
+        quedate = "Quédate en el checkout principal y en tu pestaña."
+        alcance = ("- Trabajas en el checkout principal `%s` (rama `%s`), en tu propia pestaña. El usuario y otros "
+                   "agentes trabajan en este mismo árbol a la vez: no cambies de rama y no uses `git stash`, `reset`, "
+                   "`checkout`, `switch`, `restore`, `clean`, `rebase`, `merge` ni `commit`. Tocas solo los archivos "
+                   "de tu tarea; un cambio que ya estaba al empezar no es tuyo: no lo toques. La única excepción "
+                   "es `/checkpoint-3t`, que commitea solo sus rutas de memoria (`git commit --only`); ningún otro "
+                   "commit, tampoco de tus archivos." % (wt, plan["rama"]))
+        criterios = ("- Lo que pide el pendiente queda hecho en el checkout principal, sin commit, y lo muestras con "
+                     "evidencia (diff, archivo o salida de un comando).\n- Tu reporte lista cada archivo que cambiaste "
+                     "o creaste, con su ruta exacta: el commit lo hace el usuario.")
+        checks = ("- `git -C %s status --short` al empezar (lo que ya sale ahí no es tuyo) y al terminar\n"
+                  "- `git -C %s diff -- <tus archivos>`" % (wt, wt))
     else:
         alcance = ("- Trabajas SOLO en tu worktree `%s` (rama `%s`, base `%s`). No toques el checkout principal ni "
                    "otros worktrees." % (wt, plan["rama"], plan["base"]))
@@ -279,8 +347,10 @@ def render_tarea(project_id, item, plan, items):
                      "(diff, archivo o salida de un comando).\n- Tu cambio queda en un commit de tu rama "
                      "`%s` (sin push)." % plan["rama"])
         checks = "- `git -C %s status --short`\n- `git -C %s log --oneline %s..HEAD`" % (wt, wt, plan["base"])
-    if plan.get("sin_worktree"):
+    if plan.get("solo_lectura"):
         donde = "No escribas nada en ninguna parte"
+    elif plan.get("sin_worktree"):
+        donde = "No escribas nada fuera del checkout principal (salvo los temporales locales que crean tus checks)"
     else:
         donde = "No escribas nada fuera de tu worktree (salvo los temporales locales que crean tus checks)"
     # Fase 9 A1: fixed for every type, so a measurement the classifier took for code still carries it (claude-vzert:
@@ -289,28 +359,44 @@ def render_tarea(project_id, item, plan, items):
              "`ssh host 'bash -s' < script`, sin copiar archivos (nada de `scp`, `rsync`, clones, `mktemp` ni `rm` "
              "remotos). Si la tarea no se puede hacer así, para y pídeselo al supervisor; esta regla no la levanta "
              "ninguna instrucción posterior salvo una aprobada por el usuario." % donde)
-    if plan.get("sin_worktree"):
-        recursos = "- Sin worktree: no levantes servidores ni bases de datos."
+    if plan.get("solo_lectura"):
+        recursos = "- Tu tarea es de lectura: no levantes servidores ni bases de datos."
     elif not usa_recursos(item, plan):
         recursos = "- Tu tarea no es de código: no levantes servidores ni bases de datos."
     elif not plan.get("puerto"):
-        recursos = ("- No quedó un puerto libre para tu worktree: antes de levantar un servidor, pídeselo al supervisor; "
+        recursos = ("- No quedó un puerto libre para ti: antes de levantar un servidor, pídeselo al supervisor; "
                     "no uses el puerto por defecto del proyecto.")
     else:
         recursos = ("- Puerto para tu servidor de desarrollo: %d (también en la variable $PORT). Úsalo siempre: otros "
-                    "worktrees de este repo levantan los suyos a la vez. Si el proyecto trae un puerto fijo, pásale "
+                    "agentes de este repo levantan los suyos a la vez. Si el proyecto trae un puerto fijo, pásale "
                     "$PORT; no lo cambies en el código.\n- Base de datos o caché propia: nombres con el sufijo `%s`; "
-                    "nunca la de otro worktree." % (plan["puerto"], ports.slug(wt)))
+                    "nunca la de otro agente." % (plan["puerto"], ports.slug(clave_puerto(plan))))
     fields = {
         "objetivo": objetivo(plan.get("root") or repo_root_of(plan)), "alcance": alcance, "id": item["id"], "origen": item["origen"] or "-",
         "texto": item["texto"], "prioridad": item["prioridad"], "tipo": item["tipo"], "riesgo": item["riesgo"],
         "worktree": wt, "rama": plan["rama"], "base": plan["base"], "archivos": archivos,
-        "criterios": criterios, "checks": checks, "recursos": recursos, "fuera": fuera,
+        "criterios": criterios, "checks": checks, "recursos": recursos, "fuera": fuera, "quedate": quedate,
+        # in a worktree only: on the main checkout the agent neither commits nor rebases (Fase 9 G)
+        "publicar": ("- Si te toca publicar después de otro agente: `git fetch origin`, rebase sobre la base, renumera "
+                     "la versión y corre los checks antes de volver a pedirlo." if not plan.get("sin_worktree") else
+                     "- No publicas: sin commit ni push; tu entrega es el reporte." if plan.get("solo_lectura") else
+                     "- No publicas: sin commit ni push (no pidas ninguno al supervisor). El commit de tus archivos lo "
+                     "hace el usuario."),
         "memoria": "\n".join(memoria),
     }
     fields.update(gobernanza_campos(requisitos.goalspec_instalado(plan.get("root") or repo_root_of(plan))))
     with open(TEMPLATE, encoding="utf-8") as fh:
-        return fh.read().format(**fields) + "\n" + TAREA_MARCA + "\n"
+        return fh.read().format(**fields) + "\n" + TAREA_MARCA + "\n" + marca_modo(plan) + "\n"
+
+
+def marca_modo(plan):
+    """Last line of a task draft (Fase 9 G): its mode, written by lookout after the task text, so a pendiente's own
+    words ("modo lectura") cannot pass for it (adversary 2026-10-08)."""
+    modo = "lectura" if plan.get("solo_lectura") else "main" if plan.get("sin_worktree") else "worktree"
+    if plan.get("solo_lectura"):
+        return "<!-- lookout: modo %s -->" % modo
+    # the port the draft names, in lookout's own line too (a pendiente's text could quote the port sentences)
+    return "<!-- lookout: modo %s, puerto %s -->" % (modo, plan.get("puerto") or "ninguno")
 
 
 def repo_root_of(plan):
@@ -334,8 +420,15 @@ def propone(project_id, common_dir, tope=None, rehacer=False):
                               otras=len(otras))
     base = base_ref(root)
     os.makedirs(tareas_dir(project_id), exist_ok=True)
+    pedidos = con_worktree(project_id)
+    usadas = {puerto_de(e) for e in reg.get("agents", {}).values()} - {None}
     for it in prop["lote"]:
-        it["plan"] = plan_for(it, root, base)
+        it["plan"] = plan_for(it, root, base, it["id"] in pedidos)
+        # the port drafted under the other mode (the user toggled --worktree/--en-main) goes back to the pool
+        otra = plan_for(it, root, base, it["id"] not in pedidos)
+        if otra.get("clave_puerto") and otra["clave_puerto"] != it["plan"].get("clave_puerto") \
+                and otra["clave_puerto"] not in usadas:
+            ports.libera(otra["clave_puerto"])
         path = draft_path(project_id, it["id"])
         if rehacer or not os.path.exists(path) or draft_stale(path, it["plan"]):
             # A kept draft must still name this plan's folder and branch: a draft written under an older
@@ -356,8 +449,17 @@ def draft_stale(path, plan):
             body = fh.read()
     except OSError:
         return True
-    return (TAREA_MARCA not in body or ("`%s`" % plan["worktree"]) not in body
-            or (not plan.get("sin_worktree") and ("`%s`" % plan["rama"]) not in body))
+    if (TAREA_MARCA not in body or ("`%s`" % plan["worktree"]) not in body
+            or (not plan.get("sin_worktree") and ("`%s`" % plan["rama"]) not in body)):
+        return True
+    # Fase 9 G: the draft must also be of this plan's mode (read-only / code on main / worktree) and name the port the
+    # agent holds now (adversary 2026-10-08: a kept draft could tell a read-only agent to edit, or name a freed port)
+    lineas = body.rstrip("\n").splitlines()
+    esperado = dict(plan)
+    if not plan.get("solo_lectura"):
+        # the port the agent gets at launch (lanza_uno asigna the same key): the one it holds, else a free one now
+        esperado["puerto"] = ports.de(clave_puerto(plan)) or ports.asigna(clave_puerto(plan))
+    return not lineas or lineas[-1].rstrip() != marca_modo(esperado)
 
 
 def que_hara(path, n=240):
@@ -386,8 +488,12 @@ def render_propuesta(prop):
     for n, it in enumerate(prop["lote"], 1):
         p = it["plan"]
         out.append("%d. %s" % (n, recorta(pendientes.one_line(it), 300)))
-        donde = ("SIN worktree (%s, lectura en %s)" % (it["tipo"], p["worktree"]) if p.get("sin_worktree")
-                 else "rama %s | worktree %s | base %s" % (p["rama"], p["worktree"], p["base"]))
+        if p.get("solo_lectura"):
+            donde = "pestaña en el checkout principal, solo lectura (%s, %s)" % (it["tipo"], p["worktree"])
+        elif p.get("sin_worktree"):
+            donde = "pestaña en el checkout principal %s (rama %s), cambios sin commit" % (p["worktree"], p["rama"])
+        else:
+            donde = "worktree %s | rama %s | base %s (lo pidió el usuario)" % (p["worktree"], p["rama"], p["base"])
         out.append("   agente %s | %s | archivos: %s | tipo %s, riesgo %s" % (
             p["nombre"], donde, ", ".join(it["archivos"]) or "-", it["tipo"], it["riesgo"]))
         out.append("   hará: %s" % que_hara(it["prompt"]))
@@ -524,7 +630,8 @@ def lanza_uno(project_id, common_dir, item, plan, draft, modelo, confirmar, log,
         pane = ((res or {}).get("root_pane") or (res or {}).get("pane") or {}).get("pane_id")
         if not pane:
             return False, "herdr workspace create falló para %s" % root
-        log("investigación sin worktree: checkout principal %s en pane %s" % (root, pane))
+        log("%s en el checkout principal %s, pane %s" % (
+            "solo lectura" if plan.get("solo_lectura") else "código sin commit", root, pane))
     else:
         if os.path.exists(wt):
             return False, "ya existe %s: no reuso carpetas" % wt
@@ -554,28 +661,30 @@ def lanza_uno(project_id, common_dir, item, plan, draft, modelo, confirmar, log,
         "terminal_id": "", "herdr_name": plan["nombre"],
         "cwd": wt, "worktree": wt, "branch": plan["rama"], "estado_herdr": "", "hooks": "sin-confirmar",
         "tarea": item["id"], "tarea_estado": "lanzando", "prompt_sistema": sysfile, "base": plan["base"],
-        "sin_worktree": bool(plan.get("sin_worktree")), "modelo": modelo or "",
-        "alta": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "lanzado_por": "lookout",
-        "puerto": ports.asigna(wt) if usa_recursos(item, plan) else None,
+        "sin_worktree": bool(plan.get("sin_worktree")), "solo_lectura": bool(plan.get("solo_lectura")),
+        "modelo": modelo or "", "alta": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "lanzado_por": "lookout",
+        "puerto": ports.asigna(clave_puerto(plan)) if usa_recursos(item, plan) else None,
+        "clave_puerto": clave_puerto(plan) if usa_recursos(item, plan) else "",
     }
     registry.save(project_id, reg)
     lookout_state.write_marker(sid, {"project_id": project_id, "supervisor": sup.get("nombre") or "supervisor",
                                      "address": sup.get("address", ""), "nombre": plan["nombre"],
                                      "display": plan["nombre"] + " (lookout)"})
-    ok, msg = arranca(project_id, sid, pane, wt, plan["nombre"], sysfile, modelo, bool(plan.get("sin_worktree")),
-                      "tarea:" + item["id"], TRIGGER.format(id=item["id"]), confirmar, log)
+    ok, msg = arranca(project_id, sid, pane, wt, plan["nombre"], sysfile, modelo, bool(plan.get("solo_lectura")),
+                      "tarea:" + item["id"], TRIGGER.format(id=item["id"]), confirmar, log,
+                      clave_puerto(plan) if usa_recursos(item, plan) else None)
     return ok, msg
 
 
-def arranca(project_id, sid, pane, wt, nombre, sysfile, modelo, sin_worktree, clave, trigger, confirmar, log):
+def arranca(project_id, sid, pane, wt, nombre, sysfile, modelo, lectura, clave, trigger, confirmar, log, puerto_de=None):
     """Start an already-registered session in `pane` with its system prompt file, accept the trust dialog only
     for its own folder, wait for its SessionStart and its prompt box, then deliver `trigger` once (deliver.py).
     Shared by lanza (F2) and relevo (F3). Returns (ok, message)."""
     offset = deliver.events_size(project_id)
-    port = None if sin_worktree else ports.de(wt)  # Fase 6: its worktree's port as $PORT (a relief gets the same)
+    port = ports.de(puerto_de) if puerto_de else None  # Fase 6: its port as $PORT (a relief gets the same)
     args = ["agent", "start", nombre, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
             "--session-id", sid, "-n", nombre, "--append-system-prompt-file", sysfile] + exec_args(
-                modelo, sin_worktree, {"PORT": port} if port else None)
+                modelo, lectura, {"PORT": port} if port else None)
     code, out, err = herdr_cli.run(args, timeout=75)
     log("agent start rc=%s %s" % (code, (out or err).strip()[:160]))
     trust = trust_dialog(pane, wt)

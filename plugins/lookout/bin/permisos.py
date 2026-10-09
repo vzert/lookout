@@ -162,6 +162,164 @@ def worktree_of(session_id, marker):
     return os.path.realpath(entry["worktree"])
 
 
+# ---------- the shared tree (Fase 9 G) ----------
+
+# A lookout agent on the main checkout shares the working tree, the index and the branch with the user and other
+# agents. Its task forbids moving them; this denies the git forms that do (user's decision 2026-10-08, after the
+# external adversary's round 6). A rail for slips read from the command text, not a full barrier: a text rule never
+# sees every form (learning: regex over commands). The one commit allowed is /checkpoint-3t's: `--only` of memory/.
+ARBOL = ("checkout", "switch", "stash", "reset", "restore", "clean", "rebase", "merge", "commit", "cherry-pick",
+         "revert", "pull", "am", "add", "rm", "mv", "update-ref", "checkout-index", "read-tree", "branch", "update-index",
+         "sparse-checkout", "symbolic-ref", "bisect", "worktree")
+GIT_OPT_VALOR = ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env")
+BRANCH_LEE = ("-l", "--list", "-v", "-vv", "--verbose", "-a", "--all", "-r", "--remotes", "--show-current",
+              "--color", "--no-color", "--column", "--no-column", "--abbrev", "--no-abbrev", "--ignore-case", "--omit-empty")
+BRANCH_VALOR = ("--contains", "--no-contains", "--merged", "--no-merged", "--points-at", "--sort", "--format")
+DIN = "__lookout_dinamico__"  # where the shell would substitute or expand: what comes out cannot be read from the text
+
+
+def _solo_memoria(rest):
+    """`git commit --only [opts] -- memory/…`: every path under memory/, no --all/--amend."""
+    if "--" not in rest or not ({"--only", "-o"} & set(rest)) or {"-a", "--all", "--amend"} & set(rest):
+        return False
+    paths = rest[rest.index("--") + 1:]
+    return bool(paths) and all(_en_memoria(p) for p in paths)
+
+
+def _add_memoria(rest):
+    """`git add [-- ] memory/…` (the /checkpoint-3t fallback stages its own memory paths): no -A/--all/-u, every path
+    under memory/."""
+    if {"-A", "--all", "-u", "--update", "."} & set(rest):
+        return False
+    paths = rest[rest.index("--") + 1:] if "--" in rest else [t for t in rest if not t.startswith("-")]
+    return bool(paths) and all(_en_memoria(p) for p in paths)
+
+
+def _en_memoria(p):
+    return DIN not in p and os.path.normpath(p).startswith("memory/") and ".." not in p.split("/")
+
+
+def _branch_lee(rest):
+    """`git branch` that only lists: list flags (also combined, like -av), their values, and patterns after -l/--list."""
+    lista = bool({"-l", "--list"} & set(rest))
+    i = 0
+    while i < len(rest):
+        t = rest[i]
+        flag = t.split("=", 1)[0]
+        if flag in BRANCH_VALOR:
+            i += 1 if "=" in t else 2
+            continue
+        if flag in BRANCH_LEE:
+            i += 1
+            continue
+        if re.fullmatch(r"-[lavr]+", t):
+            lista = lista or "l" in t
+            i += 1
+            continue
+        if t.startswith("-") or not lista:
+            return False
+        i += 1
+    return True
+
+
+def _abre_subshells(cmd):
+    """One quote-aware pass (rounds 7-9). What runs a command inside another one becomes a separator (` ; `): outside
+    quotes ( ) { } ` and $( ; inside double quotes only $( … ) and `. Where the shell substitutes or expands ($( , `,
+    $VAR outside single quotes; {a,b} outside any quotes) it leaves DIN, so the git that carries it is known to be
+    unreadable. `#` starts a comment only outside quotes. Nothing inside single quotes is touched."""
+    out, q, i, prof, n = [], "", 0, 0, len(cmd)
+    while i < n:
+        c = cmd[i]
+        if q == "'":
+            out.append(c)
+            q = "" if c == "'" else q
+        elif c == "\\" and i + 1 < n:
+            out.append(cmd[i:i + 2])
+            i += 1
+        elif c == "#" and not q and (i == 0 or cmd[i - 1] in " \t\n;&|("):
+            j = cmd.find("\n", i)  # a comment: its words (an apostrophe, a $) are not shell
+            i = n if j < 0 else j
+            continue
+        elif cmd.startswith("$(", i):
+            out.append(" %s ; " % DIN)
+            prof += 1
+            i += 1
+        elif c == "`":
+            out.append(" %s ; " % DIN)
+        elif c == "$" and i + 1 < n and (cmd[i + 1].isalnum() or cmd[i + 1] in "_{@*#?!-'\""):
+            out.append(DIN)
+        elif c == ")" and (prof or not q):
+            out.append(" ; ")
+            prof = max(0, prof - 1)
+        elif q == '"':
+            out.append(c)
+            q = "" if c == '"' else q
+        elif c in "'\"":
+            out.append(c)
+            q = c
+        elif c == "{" and re.match(r"\{[^}\s]*,[^}\s]*\}", cmd[i:]):
+            k = cmd.index("}", i)
+            out.append(DIN)  # brace expansion: {a,b} becomes two words
+            i = k
+        elif c in "({}":
+            out.append(" ; ")
+        else:
+            out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def arbol_compartido(cmd):
+    """The git subcommand that would move the shared tree, or '' (Fase 9 G). A subshell, `$( … )` or backticks are
+    split into their own parts, so the git inside is read like any other (adversary round 7)."""
+    cmd = re.sub(r"\\\r?\n", " ", cmd or "")
+    cmd = _abre_subshells(cmd)
+    for part in SPLIT_OPS.split(cmd):
+        try:
+            toks = shlex.split(part)
+        except ValueError:
+            toks = part.split()
+        toks = _strip_prefix(toks)
+        for i, t in enumerate(toks):
+            name = os.path.basename(t)
+            if name.startswith("git-") and name[4:] in ARBOL:
+                return "git %s" % name[4:]
+            if name != "git":
+                continue
+            j = i + 1
+            while j < len(toks) and toks[j].startswith("-"):
+                j += 2 if toks[j] in GIT_OPT_VALOR else 1
+            if any(DIN in x for x in toks[i + 1:j + 1]) or (j < len(toks) and not toks[j].strip()):
+                return "git con $, ` o {a,b} antes de su subcomando (no lo leo)"
+            if j >= len(toks):
+                if any(DIN in x for x in toks[i + 1:]) or part.rstrip().endswith(DIN):
+                    return "git con $, ` o {a,b} antes de su subcomando (no lo leo)"
+                continue
+            sub, rest = toks[j], toks[j + 1:]
+            if sub == "apply" and {"--index", "--cached", "-3", "--3way"} & set(rest):
+                return "git apply --index"
+            if sub == "stash" and rest and rest[0] in ("list", "show"):
+                continue
+            if sub == "bisect" and rest and rest[0] in ("log", "view", "visualize"):
+                continue
+            if sub == "worktree" and rest and rest[0] == "list":
+                continue
+            if sub == "commit" and _solo_memoria(rest):
+                continue
+            if sub == "add" and _add_memoria(rest):
+                continue
+            if sub == "branch" and _branch_lee(rest):
+                continue
+            if sub in ARBOL:
+                return "git %s" % sub
+    return ""
+
+
+def agente_en_main(session_id, marker):
+    entry = (registry.load(marker.get("project_id", "")).get("agents") or {}).get(session_id) or {}
+    return bool(entry.get("sin_worktree")) and entry.get("lanzado_por") == "lookout"
+
+
 # ---------- approve (manual mode only) ----------
 
 def _short_flag_hit(token, flag):
@@ -462,6 +620,15 @@ def handle(data, marker, rules=None):
     who = quien(marker, sid)
 
     if name == "PreToolUse":
+        if tool == "Bash" and agente_en_main(sid, marker):
+            why = arbol_compartido(ti.get("command") or "")
+            if why:
+                emit(marker, dict(base, event="negado", motivo="árbol compartido: " + why))
+                return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                               "permissionDecisionReason": (
+                    "lookout: trabajas en el checkout principal, que compartes con el usuario y otros agentes; %s lo "
+                    "movería. No lo intentes por otra vía: díselo al supervisor por SendMessage. El único commit "
+                    "permitido es el de /checkpoint-3t (git commit --only -- memory/…)." % why)}}
         if mode != "auto" or tool != "Bash" or not rules.get("dialogo_forzado"):
             return None  # off by default (0.8.0): the user turns it on with `dialogo_forzado = true`
         why = reserved(ti.get("command") or "", worktree_of(sid, marker), cwd, rules)

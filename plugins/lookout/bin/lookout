@@ -15,11 +15,11 @@ Subcommands (PROYECTO = a path inside the repo, or its project_id):
   retomar PROYECTO              rewrite supervisor.md and print its «Como retomar» (relief of the supervisor, Fase 4)
   espera PROYECTO               the single waiter: run it with run_in_background, as the LAST step of a turn
   suelta PROYECTO               release the lock, remove the agents' markers, stop the waiter
-  pendientes PROYECTO [--tope N] [--rehacer]
+  pendientes PROYECTO [--tope N] [--rehacer] [--worktree ID..] [--en-main ID..]  (worktree solo si el usuario lo pide)
                                 propose a batch from memory/_pendientes.md (F2): batch, queue, excluded,
                                 and one task prompt per batch item in the state folder
   pendientes PROYECTO --match T [T...]  open pendientes that mention these terms (H13)
-  lanza PROYECTO ID [ID...] [--modelo M]  launch approved batch items: worktree + agent + its task, once
+  lanza PROYECTO ID [ID...] [--modelo M]  launch approved batch items: a tab on the main checkout (or the worktree the user asked for) + agent + its task, once
   libera PROYECTO AGENTE --fuera ninguno|TEXTO [--usuario-confirmo D] [--fallida]
                                         the agent's task is done (or failed): free its slot, propose again
   envia PROYECTO AGENTE (--tarea | --clave K --texto T)
@@ -42,7 +42,7 @@ Subcommands (PROYECTO = a path inside the repo, or its project_id):
   corrige PROYECTO AGENTE --resumen R [--firma F] [--reporte CITA]
                                 record a correction for the agent's repeated error (Fase 6) and print the message to
                                 send it; after 2 corrections of the same error: PARA (exit 5), escalate instead
-  puerto PROYECTO AGENTE        the dev-server port of the agent's worktree (Fase 6; launched agents already have $PORT)
+  puerto PROYECTO AGENTE        the agent's dev-server port (Fase 6; launched agents already have $PORT)
 """
 import argparse
 import json
@@ -361,6 +361,20 @@ def cmd_pendientes(a):
         if not found:
             print("(ningún pendiente abierto menciona: %s)" % ", ".join(a.match))
         return 0
+    if a.worktree or a.en_main:
+        # Fase 9 G: a worktree only when the user asks for it (and back to the main checkout on their word)
+        lote.pide_worktree(pid, a.worktree or (), a.en_main or ())
+        by_id = {it["id"]: it for it in pendientes.parse(lote.pendientes_file(common))}
+        for i in a.worktree or ():
+            if i in by_id and lote.solo_lectura(by_id[i]):
+                print("%s es de lectura (%s): corre en el checkout principal sin edición; el worktree no aplica."
+                      % (i, by_id[i]["tipo"]))
+    if a.reintenta:
+        reg = registry.load(pid)
+        for e in reg.get("agents", {}).values():
+            if e.get("tarea") in a.reintenta and e.get("tarea_estado") == "fallida":
+                e["reintentar"] = True
+        registry.save(pid, reg)
     prop = lote.propone(pid, common, a.tope, a.rehacer)
     print(lote.render_propuesta(prop))
     return 0
@@ -399,14 +413,18 @@ def cmd_libera(a):
     estado = "fallida" if a.fallida else "terminada"
     with lote.project_mutex(pid):
         lote.set_estado(pid, e["session_id"], estado)
-    if e.get("worktree") and not e.get("sin_worktree"):
+    if lote.puerto_de(e):
         import ports
-        ports.libera(e["worktree"])  # Fase 6: its dev-server port goes back to the pool
+        ports.libera(lote.puerto_de(e))  # Fase 6: its dev-server port goes back to the pool
     print("%s: tarea %s marcada %s; su hueco queda libre." % (e["nombre"], e["tarea"], estado))
     # Fase 9 E4: the exact close command, not "F3"
     print("Para cerrar el pendiente (con el sí del usuario en una decisión): `lookout cierra %s %s --nota \"<qué quedó "
           "hecho y cómo se verificó>\" --usuario-confirmo <id>`%s." % (
               pid, e["nombre"], " (si no hizo falta push: `--sin-push \"<razón>\"`; si se abandona: `--estado abandoned`)"))
+    if a.fallida and e.get("sin_worktree") and not lote.solo_lectura(e):
+        print("Sus cambios a medias siguen en el checkout principal: pásale al usuario `git -C %s status --short` y su "
+              "reporte. %s no vuelve a proponerse hasta que el usuario decida qué hacer con ellos y corras `lookout "
+              "pendientes %s --reintenta %s`." % (e.get("worktree"), e["tarea"], pid, e["tarea"]))
     limpieza = plan_limpieza(e)
     if limpieza:
         print(limpieza)
@@ -600,18 +618,31 @@ def cmd_corrige(a):
 
 def cmd_puerto(a):
     import ports
-    pid, _ = project(a.proyecto)
+    pid, common = project(a.proyecto)
     e = agent_entry(pid, a.agente)
-    if e.get("sin_worktree") or not (e.get("worktree") or e.get("cwd")):
-        print("%s no tiene worktree propio: no levanta servidores." % e["nombre"])
+    if lote.solo_lectura(e) and e.get("lanzado_por") == "lookout":
+        print("%s tiene una tarea de lectura: no levanta servidores." % e["nombre"])
         return 5
-    wt = e.get("worktree") or e.get("cwd")
+    wt = lote.puerto_de(e) or e.get("worktree") or e.get("cwd")
+    if not wt:
+        print("%s no tiene carpeta registrada." % e["nombre"])
+        return 5
+    root = lote.repo_root(common)
+    if not e.get("clave_puerto") and os.path.realpath(wt) == os.path.realpath(root):
+        # Fase 9 G: a session discovered on the main checkout shares the folder with others: its own key
+        wt = root.rstrip("/") + "-tab-" + e["nombre"]
+        reg = registry.load(pid)
+        reg["agents"][e["session_id"]]["clave_puerto"] = wt
+        registry.save(pid, reg)
+        if not any(not o.get("clave_puerto") and os.path.realpath(o.get("worktree") or o.get("cwd") or "") ==
+                   os.path.realpath(root) for o in reg["agents"].values()):
+            ports.libera(root)  # the port it had under the shared folder (before 0.11.0), once nobody else holds it
     port = ports.asigna(wt)
     if not port:
         print("No hay puerto libre en %d-%d." % (ports.base(), ports.base() + ports.span() - 1))
         return 4
     print("%s (%s): puerto %d. Si no lo lanzó lookout (no tiene $PORT), mándale por SendMessage: \"Para tu servidor "
-          "de desarrollo usa el puerto %d (PORT=%d); otros worktrees levantan los suyos a la vez.\"" % (
+          "de desarrollo usa el puerto %d (PORT=%d); otros agentes levantan los suyos a la vez.\"" % (
               e["nombre"], wt, port, port, port))
     return 0
 
@@ -676,6 +707,10 @@ def main():
     p = sub.add_parser("suelta"); p.add_argument("proyecto")
     p = sub.add_parser("pendientes"); p.add_argument("proyecto"); p.add_argument("--tope", type=int, default=None)
     p.add_argument("--rehacer", action="store_true"); p.add_argument("--match", nargs="+", default=None)
+    p.add_argument("--worktree", nargs="+", default=None, metavar="ID", help="el usuario pidió worktree para estos ids")
+    p.add_argument("--en-main", nargs="+", default=None, metavar="ID", help="vuelven al checkout principal")
+    p.add_argument("--reintenta", nargs="+", default=None, metavar="ID",
+                   help="el usuario ya decidió qué hacer con los cambios a medias en main de estas tareas fallidas")
     p = sub.add_parser("lanza"); p.add_argument("proyecto"); p.add_argument("ids", nargs="+")
     p.add_argument("--modelo", default=os.environ.get("LOOKOUT_MODELO")); p.add_argument("--confirmar", type=float, default=30)
     p.add_argument("--tope", type=int, default=None)

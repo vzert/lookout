@@ -11,7 +11,7 @@ The supervisor coordinates. It never does the agents' work. It:
   (push, merge, deletes, anything that leaves the machine);
 - reads its state from files and hook events, not from the screen, and wakes only when something happens;
 - with `/lookout:pendientes`, launches up to 3 open pendientes of a
-  [3-tier memory](https://github.com/vzert/3-tier-memory) project, one agent per item, each in its own worktree;
+  [3-tier memory](https://github.com/vzert/3-tier-memory) project, one agent per item, each in its own herdr tab on the main checkout (a worktree only if you ask for one);
 - before a push, reads the [goalspec](https://github.com/vzert/goal-forge) adversary verdict in the agent's own
   transcript (which rounds a push needs is goalspec's rule, not lookout's), then publishes in order, one agent at a
   time;
@@ -90,7 +90,9 @@ that were already running get `/reload-plugins` from the supervisor, so their ho
 - With `/lookout:pendientes .` it proposes a batch of at most 3 pendientes (blocked ones and those with a future
   review date are left out; items that touch the same files go one after the other). The cap of 3 counts every live
   session of the project, also your own agents that were already running. You approve the batch once.
-  Each agent works in its own branch and worktree.
+  Each agent works in its own herdr tab on the main checkout. A code agent edits there without committing and lists
+  the files it changed; you commit. If you want a worktree for one item, say so: the supervisor runs
+  `lookout pendientes <project> --worktree <id>`.
 - When you want to stop, tell the supervisor. It releases the project and tells the agents to ask you again.
 
 | Message | Meaning |
@@ -103,7 +105,8 @@ that were already running get `/reload-plugins` from the supervisor, so their ho
 ### Tool permissions of the agents
 
 By default every permission dialog of an agent stays with you. lookout can approve **one** call at a time for
-trivial actions inside an agent's own worktree. It does this only in manual mode, never with "always allow", and only
+trivial actions inside an agent's own worktree (an agent on the main checkout has none: its dialogs all stay with
+you). It does this only in manual mode, never with "always allow", and only
 after **you** turn the rules on. The supervisor shows the rules and where to turn them on with `lookout permisos`. The template is in
 `plugins/lookout/rules/permisos.toml`. You copy it to `~/.config/lookout/permisos.toml` and set `activo = true`. The
 supervisor never writes that file. lookout never approves a push, merge, publishing or delete outside the worktree.

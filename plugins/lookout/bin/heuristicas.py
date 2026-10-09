@@ -435,7 +435,9 @@ def revisa(project_id, now=None, agents=None, proceso=estado_proceso, reciente=w
                     out.append(dict(base, event="largo"))
                 revisa_log(project_id, dict(log, decision="vivo" + (" (largo)" if age >= largo else "")))
                 continue
-            if reciente(entry.get("worktree") or entry.get("cwd"), now - mirar):
+            # Fase 9 G: an agent launched on the main checkout shares the tree with the user and other agents: a recent
+            # change there is not its progress (adversary 2026-10-08)
+            if not entry.get("sin_worktree") and reciente(entry.get("worktree") or entry.get("cwd"), now - mirar):
                 revisa_log(project_id, dict(log, decision="progreso en el worktree"))
                 continue  # its files are changing: progress
             fuentes = ["hooks: sin eventos hace %ds (último: %s)" % (age, last.get("event"))]

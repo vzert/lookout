@@ -127,6 +127,10 @@ def private_hits(wt, base, limit=5):
 
 def pide(project_id, entry, st, log=None):
     """Ask to publish. Returns (ok, code, lines). Never pushes, never fetches into the agent's tree."""
+    if entry.get("sin_worktree"):
+        # Fase 9 G: an agent on the main checkout does not commit; a push from there would carry every commit on main
+        return False, "EN-MAIN", ["NO: %s trabaja en el checkout principal sin commit; el commit y el push son del "
+                                  "usuario." % entry.get("nombre", "?")]
     led = load(project_id)
     me = entry_of(led, entry["session_id"])
     if not me:

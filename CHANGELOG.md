@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.11.0
+
+Agents in tabs on the main checkout, not in worktrees (docs/plan.md, Fase 9 G; measured on claude-vzert and decided by
+the user, 2026-10-08).
+
+- **Behavior change:** every agent of `/lookout:pendientes` runs in its own herdr tab on the main checkout. A worktree
+  (`<repo>-wt-<slug>`, branch `lookout/<slug>`) only when the user asks for it: `lookout pendientes <project>
+  --worktree <id>`; `--en-main <id>` takes it back. On claude-vzert the first batch's agents left 3 `-wt-` folders
+  and 3 `lookout/*` branches holding only a report, in a repo with no code of its own.
+- A code task on the main checkout edits without commit and lists every file it changed in its report; the user
+  commits. It does not change branch or use stash, reset, checkout, switch, restore, clean, rebase, merge or commit:
+  the tree is shared with the user and other agents. A PreToolUse hook denies to agents lookout launched on the main
+  checkout the git forms that move the shared tree, index or branches (also add, rm, mv, update-ref, update-index,
+  sparse-checkout, symbolic-ref, apply --index, bisect, worktree, and branch unless it lists), also inside `( )`, `$( )` or backticks. It lets through `git add` and `git commit --only` whose
+  paths are all under `memory/` (the /checkpoint-3t form). It reads the command text: a rail for slips, not a full
+  barrier (it does not see `sh -c`, `eval`, git aliases, git called through a variable like `$GIT`, or git run from a
+  script). A git with `$`, a backtick or `{a,b}` before its subcommand is denied: the subcommand cannot be read.
+- A measurement, a message or a credential task stays read-only (no edit tools), also after a relief; read-only no
+  longer means "no worktree".
+- Two code agents on the main checkout get two dev-server ports: there the port belongs to the agent, not to the
+  folder. (Two of your own sessions on the same linked worktree still share its port, as before.)
+- A code agent that failed on the main checkout is not proposed again until the user decided about its half-done edits
+  (`lookout pendientes <project> --reintenta <id>`; `libera --fallida` says so).
+- The stall check no longer takes a change in the shared tree as progress of an agent on the main checkout.
+- `lookout publica` refuses an agent lookout launched on the main checkout (`EN-MAIN`): the commit and the push are the
+  user's. Your own sessions that lookout discovered on main go through `publica` as in 0.10.0.
+- `lookout puerto` gives each session discovered on the main checkout its own port (two of them no longer share one).
+
 ## 0.10.0
 
 The rest of the first real session's lessons (docs/plan.md, Fase 9 F), and lookout no longer judging the adversary.

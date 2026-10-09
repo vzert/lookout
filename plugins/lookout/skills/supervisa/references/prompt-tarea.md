@@ -16,7 +16,7 @@ Prioridad: {prioridad}. Tipo: {tipo}. Riesgo: {riesgo}.
 - No edites `memory/` a mano. Si necesitas registrar algo en la memoria, díselo al supervisor.
 
 ## Restricciones
-- Sin push ni merge. Quédate en tu worktree. No lances otros agentes.{usa_goalspec}
+- Sin push ni merge. {quedate} No lances otros agentes.{usa_goalspec}
 - `git push` y `gh workflow run` van solos, sin `&&`, `;` ni `|`, y solo si el supervisor te lo pasa aprobado por el usuario.
 - Si te niegan un comando, no lo reformules ni lo reintentes por otra vía: repórtalo tal cual.
 - Un bloqueo de un hook (`PreToolUse:… hook error: …`) no es una negación del usuario: si pide algo de tu tarea
@@ -24,7 +24,7 @@ Prioridad: {prioridad}. Tipo: {tipo}. Riesgo: {riesgo}.
   sabes qué pide, díselo al supervisor con el texto exacto.
 {fuera}
 
-## Recursos de tu worktree
+## Recursos
 {recursos}
 
 ## Criterios de aceptación (verificables)
@@ -38,7 +38,7 @@ Prioridad: {prioridad}. Tipo: {tipo}. Riesgo: {riesgo}.
 
 ## Gobernanza
 {gobernanza}
-- Si te toca publicar después de otro agente: `git fetch origin`, rebase sobre la base, renumera la versión y corre los checks antes de volver a pedirlo.
+{publicar}
 - Si tu contexto se llena o te piden relevo: deja un bloque `## Como retomar` con un bloque de código (Retomamos / Lee / Proximo paso / No repitas / Terminas cuando).
 
 ## Reporte

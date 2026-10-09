@@ -154,8 +154,8 @@ def _relevo(project_id, entry, nota_for, retomar, modelo, confirmar, fin_timeout
     marker = lookout_state.read_marker(entry["session_id"]) or {}
     lookout_state.write_marker(sid, dict(marker, nombre=new["nombre"], display=new["nombre"] + " (lookout)"))
     ok, msg = lote.arranca(project_id, sid, pane, new["worktree"] or new["cwd"], nombre_herdr, sysfile,
-                           new["modelo"], bool(new.get("sin_worktree")), "relevo:%s:%s" % (new["tarea"], sid[:8]),
-                           TRIGGER.format(id=new["tarea"]), confirmar, log)
+                           new["modelo"], lote.solo_lectura(new), "relevo:%s:%s" % (new["tarea"], sid[:8]),
+                           TRIGGER.format(id=new["tarea"]), confirmar, log, lote.puerto_de(new))
     reg = registry.load(project_id)
     old, new = reg["agents"][entry["session_id"]], reg["agents"][sid]
     if ok or new.get("tarea_estado") == "sin-confirmar":
