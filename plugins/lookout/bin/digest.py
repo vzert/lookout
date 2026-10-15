@@ -12,6 +12,8 @@ import lookout_state
 import registry
 
 # `pausa` (provider limit) does not wake: it is not something to answer (Fase 6). `fallo` neither: only its 3rd repeat.
+# 0.12.2: `bg_wait` wakes only when its turn asked something (`pregunta`, wait_event): 19 of 36 wakes in 3-tier-memory
+# (2026-10-15) were background waits with nothing to answer. One that waits too long wakes as `largo` (heuristicas.revisa).
 WAKE_TYPES = "ask,blocked,negado,idle,bg_wait,unknown,crossrepo,end,repite,sin_progreso,largo"
 ESTADO = {
     "working": "trabajando",
@@ -36,6 +38,62 @@ ESTADO = {
 }
 
 
+def ventana_s():
+    """Seconds the waiter waits after its first event so a burst wakes the supervisor once (0.12.2)."""
+    try:
+        return max(0.0, float(os.environ.get("LOOKOUT_VENTANA") or 3))
+    except ValueError:
+        return 3.0
+
+
+DESPERTAR_VIGENTE = 60  # s: how long a waiter's queued notification keeps the Stop reminder quiet (B1)
+
+
+def despertar_path(project_id):
+    return os.path.join(lookout_state.project_dir(project_id), "despertar.json")
+
+
+def marca_despertar(project_id, session_id):
+    lookout_state.write_json(despertar_path(project_id), {"ts": time.time(), "session_id": session_id})
+
+
+def despertar_en_cola(project_id, session_id, transcript_path, now=None):
+    """B1 (0.12.2): a waiter of this session woke less than DESPERTAR_VIGENTE s ago and the session has not seen it yet
+    (no task notification nor waiter output in its transcript after that moment): the notification is queued and will
+    open the next turn, where the supervisor relaunches the waiter. 5 of 5 Stop reminders in 3-tier-memory came then,
+    and 2 of them led to a second waiter that died with «waiter ya vivo». Unsure (no transcript, unreadable) -> False:
+    the reminder goes out as before."""
+    import json
+    now = time.time() if now is None else now
+    d = lookout_state.read_json(despertar_path(project_id)) or {}
+    ts = float(d.get("ts") or 0)
+    if not ts or d.get("session_id") != session_id or not 0 <= now - ts < DESPERTAR_VIGENTE or not transcript_path:
+        return False
+    try:
+        with open(transcript_path, "rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - 300000))
+            lines = fh.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return False
+    import calendar
+    for line in reversed(lines):
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        stamp = str(row.get("timestamp") or "")
+        try:
+            t = calendar.timegm(time.strptime(stamp[:19], "%Y-%m-%dT%H:%M:%S")) + float("0" + stamp[19:23].rstrip("Z"))
+        except ValueError:
+            continue
+        if t < ts - 1:
+            return True   # back past the wake with nothing that delivered it
+        if "<task-notification>" in line or "Resumen (ya marcado como atendido" in line:
+            return False  # it reached the session: the usual reminder applies
+    return False
+
+
 def cursor_path(project_id):
     return os.path.join(lookout_state.project_dir(project_id), "cursor.json")
 
@@ -51,7 +109,14 @@ def ev_key(ev):
     return (ev.get("session_id"), ev.get("ts"), ev.get("event"), ev.get("hook"))
 
 
-def set_cursor(project_id, offset, desde=None, recortados=None):
+def olvida_vistos(project_id):
+    """After a compaction the supervisor no longer holds the last table: the next wake prints everything again."""
+    cur = lookout_state.read_json(cursor_path(project_id))
+    if cur and cur.pop("vistos", None) is not None:
+        lookout_state.write_json(cursor_path(project_id), cur)
+
+
+def set_cursor(project_id, offset, desde=None, recortados=None, vistos=None):
     """`desde`: where the events the waiter printed (and marked) start. The waiter prints the digest into its output
     file; a supervisor that answers its notification with `lookout resumen` instead of reading that file would get
     "ninguno" and lose what woke it. So the next `resumen` shows them once more, from `desde`; the waiter itself
@@ -62,6 +127,8 @@ def set_cursor(project_id, offset, desde=None, recortados=None):
     if recortados:
         # Fase 9 E10: events a `resumen` cut for room are not "attended": they come back in the next one
         data["recortados"] = recortados[-RECORTADOS_MAX:]
+    if vistos:
+        data["vistos"] = vistos  # 0.12.2: what the last waiter wake printed, to print only what changed
     lookout_state.write_json(cursor_path(project_id), data)
 
 
@@ -115,7 +182,8 @@ def describe(ev, quien=None):
     if kind == "aprobado":
         return head + ": %s %s" % (ev.get("tool_name", ""), ev.get("detalle", ""))
     if kind == "bg_wait":
-        cmds = [t.get("command") or t.get("description") or t.get("type", "") for t in ev.get("tareas", [])]
+        # 0.12.2: the description first; a command is often a long scratchpad path
+        cmds = [t.get("description") or t.get("command") or t.get("type", "") for t in ev.get("tareas", [])]
         return head + ": " + "; ".join(c for c in cmds if c) + (" — " + ev.get("ultima", "") if ev.get("ultima") else "")
     if kind == "idle":
         extra = ("(ya te reportó) " if ev.get("reporto") else "") + ev.get("ultima", "")
@@ -148,6 +216,8 @@ def describe(ev, quien=None):
                   else "una lectura de su pantalla")
         return head + " hace %dm (%s): %s → %s" % (ev.get("hace_s", 0) // 60, ev.get("nivel", ""),
                                                   "; ".join(ev.get("fuentes") or []), accion)
+    if kind == "largo" and ev.get("fondo"):
+        return head + ": %dm esperando su tarea de fondo → una lectura de su pantalla" % (ev.get("hace_s", 0) // 60)
     if kind == "largo":
         return head + ": %dm sin eventos, pero vivo (herdr working, proceso vivo) → una lectura de su pantalla" % (
             ev.get("hace_s", 0) // 60)
@@ -250,6 +320,31 @@ def waiter_owner_dead(project_id):
     return wait_event.owner_stale(owner, os.path.join(lookout_state.project_dir(project_id), "lock.json"))
 
 
+def es_eco(ev):
+    """N4 (0.12.2): lines that are not news to the supervisor: the agent's turn opened by a message (the supervisor's
+    own SendMessage, a peer's) or by a task notification, and herdr's «idle_prompt» notice. 35 of 106 event lines in
+    3-tier-memory. The agent's real next event (its end of turn, its question) still shows."""
+    if ev.get("event") == "working":
+        return (ev.get("prompt") or "").lstrip().startswith(("<cross-session-message", "<task-notification"))
+    return ev.get("event") == "notification" and ev.get("tipo") == "idle_prompt"
+
+
+def clave(obj):
+    import hashlib
+    import json
+    return hashlib.sha1(json.dumps(obj, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16]
+
+
+CONTEXTO_DESDE = 0.6
+
+
+def contexto_alto(project_id, line):
+    """Is the session at or over CONTEXTO_DESDE of its budget? Read from the line itself («Contexto: Nk de Lk»)."""
+    import re
+    m = re.match(r"Contexto: (\d+)k de (\d+)k", line)
+    return not m or int(m.group(2)) <= 0 or int(m.group(1)) >= CONTEXTO_DESDE * int(m.group(2))
+
+
 def collapse(new):
     """Events grouped per agent: the ones that need an answer stay, each one; of the rest only the last per agent,
     with how many were folded into it."""
@@ -283,12 +378,16 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
     offset = int(cur.get("offset", 0))
     desde = cur.get("desde")
     if por_waiter:
-        desde = offset if desde is None else min(int(desde), offset)  # two waiter wakes with no `resumen` between
+        # B3 (0.12.2): only THIS wake is shown again by the next `resumen`. With min(desde, offset) the mark never moved
+        # between wakes, and the first `resumen` after 36 of them repeated 158 events the waiters had already shown.
+        desde = offset
     elif desde is not None:
         offset = min(int(desde), offset)                            # what the waiter showed, once more
     new, end = lookout_state.read_events(project_id, offset)
     vistos = {ev_key(ev) for ev in new}
     new = [ev for ev in cur.get("recortados") or [] if ev_key(ev) not in vistos] + new
+    ecos = [ev for ev in new if es_eco(ev)]
+    new = [ev for ev in new if not es_eco(ev)]
     import heuristicas
     vivos = {s: e for s, e in agents.items() if e.get("tarea_estado") != "relevada" and not e.get("retirado")
              and (last.get(s) or {}).get("event") != "end"}
@@ -297,6 +396,7 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
     now = time.time()
     revisiones = heuristicas.ultimas_revisiones(project_id)
     by_group = {}
+    tabla_clave = []
     for sid, e in vivos.items():
         by_group.setdefault(heuristicas.grupo(all_events, sid, e), []).append((sid, e))
     for g in heuristicas.GRUPOS:
@@ -306,6 +406,7 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
         for sid, e in by_group[g]:
             ev = last.get(sid)
             estado = ("%s %s" % (ESTADO.get(ev.get("event"), ev.get("event")), hhmmss(ev.get("ts")))) if ev else "sin eventos"
+            tabla_clave.append([g, registry.quien(e), e.get("branch") or "", e.get("tarea") or "", estado])
             beat = heuristicas.ultimo_real(all_events, sid)
             if beat and beat.get("event") in heuristicas.EN_TURNO:
                 rv = revisiones.get(sid) or {}
@@ -320,26 +421,51 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
                                                           estado), MAX_COLS - 2))
     import decisiones
     import publica
+    # what the previous wake printed counts only for the same supervisor session, and never after a compaction
+    # (olvida_vistos): a relief or a summarized context has not seen it
+    sesion = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    antes = (cur.get("vistos") or {}) if por_waiter else {}
+    if antes.get("sesion") != sesion:
+        antes = {}
+    vistos_ahora = {"tabla": clave(tabla_clave), "sesion": sesion}
+    if por_waiter and antes.get("tabla") == vistos_ahora["tabla"]:
+        # N3 (0.12.2): a waiter wake prints only what changed since the previous wake; `resumen` always prints it all
+        head = ["Agentes (%d): sin cambios desde el despertar anterior (tabla: `lookout resumen %s --no-marcar`)." % (
+            len(vivos), project_id)]
     tail = []
     dec = decisiones.render(project_id)
     if dec:
         dl = dec.splitlines()
-        if not todo and len(dl) > 6:
+        vistos_ahora["decisiones"] = clave([decisiones.clave_render(project_id)])
+        if por_waiter and antes.get("decisiones") == vistos_ahora["decisiones"]:
+            dl = ["Decisiones del usuario pendientes: %d, sin cambios (`lookout decision %s`)." % (len(dl) - 1, project_id)]
+        elif not todo and len(dl) > 6:
             dl = dl[:6] + ["(+%d decisiones más: `lookout decision %s`)" % (len(dl) - 6, project_id)]
         tail += [clip(x) for x in dl]
     if mark and any(p["estado"] in ("esperando", "turno", "lista") for p in publica.load(project_id)["cola"]):
         tail += [clip(x) for x in publica.concilia(project_id)]  # Fase 9 E3
     if any(p["estado"] in ("esperando", "turno", "lista") for p in publica.load(project_id)["cola"]):
-        tail += [clip(x) for x in publica.render_cola(project_id).splitlines()]
+        cola = publica.render_cola(project_id)
+        vistos_ahora["publicaciones"] = clave([cola])
+        if por_waiter and antes.get("publicaciones") == vistos_ahora["publicaciones"]:
+            tail.append("Publicaciones: sin cambios (`lookout resumen %s --no-marcar`)." % project_id)
+        else:
+            tail += [clip(x) for x in cola.splitlines()]
     pid = waiter_alive(project_id)
     if pid and waiter_owner_dead(project_id):
         tail.append("Waiter: el que hay es de una sesión que ya no supervisa; se cierra solo en ≤10 s. Al terminar este "
                     "turno lanza `lookout espera %s` con run_in_background: espera a que se cierre y toma su lugar." % project_id)
     elif pid:
         tail.append("Waiter: vivo (pid %d). No lances otro." % pid)
+    elif por_waiter:
+        # B1 (0.12.2): true when printed (this waiter just left) but read later; a waiter launched since then holds
+        tail.append("Waiter: el que te despertó ya salió. Al terminar este turno lanza `lookout espera %s` con "
+                    "run_in_background, salvo que ya hayas lanzado otro después de este despertar." % project_id)
     else:
         tail.append("Waiter: no hay. Al terminar este turno lanza `lookout espera %s` con run_in_background." % project_id)
     pres = presupuesto_line(project_id)
+    if pres and not contexto_alto(project_id, pres):
+        pres = ""  # N3 (0.12.2): the budget line only from 60 % of the limit
     if pres:
         tail.append(clip(pres, 400))
     room = maxl - len(head) - len(tail) - 2
@@ -356,7 +482,10 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
         if limit:
             cap = min(cap, limit)
         shown = items[-cap:]
-        body.append("Eventos nuevos (%d%s):" % (len(new), "; agrupados por agente, %d líneas" % len(shown) if len(shown) < len(new) else ""))
+        notas = ["agrupados por agente, %d líneas" % len(shown)] if len(shown) < len(new) else []
+        if ecos:
+            notas.append("%d ecos de tus mensajes y avisos sin mostrar" % len(ecos))
+        body.append("Eventos nuevos (%d%s):" % (len(new), "".join("; " + n for n in notas)))
         for ev, n in shown:
             body.append(clip("- " + describe(ev, quien) + (" (+%d antes)" % n if n else "")))
         if len(items) > len(shown):
@@ -364,9 +493,10 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
             body.append("(+%d eventos más antiguos sin mostrar: vuelven en el siguiente resumen; ya: `lookout resumen %s "
                         "--todo`)" % (len(items) - len(shown), project_id))
     else:
-        body.append("Eventos nuevos: ninguno (ya atendidos).")
+        body.append("Eventos nuevos: ninguno (ya atendidos)." if not ecos else
+                    "Eventos nuevos: ninguno (%d ecos de tus mensajes y avisos, sin mostrar)." % len(ecos))
     if mark:
-        set_cursor(project_id, end, desde if por_waiter else None, recortados)
+        set_cursor(project_id, end, desde if por_waiter else None, recortados, vistos_ahora if por_waiter else None)
         try:
             import supervisor_md
             supervisor_md.write(project_id)

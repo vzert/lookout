@@ -157,6 +157,10 @@ def pide(project_id, entry, st, log=None):
     ok, code, lines = verifica(project_id, entry, st, led, me)
     if ok:
         me["estado"] = "lista"
+    else:
+        # B4 (0.12.2): a refused check frees the turn. It stayed "turno" for 6.6 h in 3-tier-memory (2026-10-15) and held
+        # the queue; `pide` again re-checks from the start
+        me.update(estado="rechazada", motivo=code)
     save(project_id, led)
     return ok, code, lines
 
@@ -172,7 +176,11 @@ def verifica(project_id, entry, st, led, me):
     if rc != 0:
         return False, "SIN-REPO", lines + ["NO: no puedo leer el worktree %s." % wt]
     if dirty.strip():
-        return False, "SUCIO", lines + ["NO: el worktree tiene cambios sin commit:\n" + dirty.rstrip()]
+        propios, ajenos = reparte_sucios(project_id, entry, wt, dirty)
+        if propios:
+            return False, "SUCIO", lines + ["NO: el worktree tiene cambios sin commit:\n" + "\n".join(propios)]
+        lines.append("Aviso: el checkout es compartido; estos cambios sin commit los editó otro agente y %s no "
+                     "(no van en el push, que solo lleva commits):\n%s" % (entry.get("nombre"), "\n".join(ajenos)))
     branch = remote_branch(entry)
     tip = remote_tip(wt, branch)
     if not tip:
@@ -215,6 +223,97 @@ def verifica(project_id, entry, st, led, me):
               "Rutas privadas en el diff: ninguna",
               "LISTA para pasar al usuario. Orden exacta para el agente, sola: git push origin HEAD:%s" % branch]
     return True, "LISTA", lines
+
+
+def companeros(project_id, entry, wt):
+    """Session ids of the other live registered agents that work in the same tree (3-tier-memory, 2026-10-15: agents
+    on the main checkout)."""
+    import registry
+    import lote
+    real = os.path.realpath(wt or "")
+    out = []
+    terminadas = lote.ended_sessions(project_id)
+    for sid, e in registry.load(project_id).get("agents", {}).items():
+        # adversary round 2: an agent whose task or session ended no longer shares the tree as a live writer
+        if (sid == entry.get("session_id") or e.get("retirado") or sid in terminadas
+                or e.get("tarea_estado") in ("relevada", "terminada", "fallida", "relevo-fallido")):
+            continue
+        if os.path.realpath(e.get("worktree") or e.get("cwd") or "") == real:
+            out.append(sid)
+    return out
+
+
+EDITORES = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+
+
+def editados(session_id, wt, ajeno=False):
+    """Real paths an agent wrote, from its transcript. For the agent itself: its Edit/Write calls and the paths its Bash
+    commands seem to write (heuristicas.escrituras_bash, which over-reports: the safe side for its own files). For
+    another agent (`ajeno`): only its exact Edit/Write paths whose call succeeded, because an over-report there would
+    hand this agent's own file to the other (adversary rounds 2 and 3). None if the transcript cannot be read."""
+    import json
+    import deliver
+    import heuristicas
+    path = deliver.transcript_path(session_id) if session_id else ""
+    if not path:
+        return None
+    out = set()
+    try:
+        fh = open(path, encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    with fh:
+        rows = []
+        for line in fh:
+            if '"tool_use"' not in line and '"tool_result"' not in line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except ValueError:
+                continue
+    bien = {b.get("tool_use_id") for d in rows for b in ((d.get("message") or {}).get("content") or [])
+            if isinstance(b, dict) and b.get("type") == "tool_result" and not b.get("is_error")}
+    for d in rows:
+        for b in (d.get("message") or {}).get("content") or []:
+            if not isinstance(b, dict) or b.get("type") != "tool_use" or (ajeno and b.get("id") not in bien):
+                continue
+            ti = b.get("input") or {}
+            if b.get("name") in EDITORES and (ti.get("file_path") or ti.get("notebook_path")):
+                p = ti.get("file_path") or ti.get("notebook_path")
+                out.add(os.path.realpath(p if os.path.isabs(p) else os.path.join(d.get("cwd") or wt, p)))
+            elif b.get("name") == "Bash" and not ajeno:
+                for p in heuristicas.escrituras_bash(ti.get("command") or "", d.get("cwd") or wt):
+                    out.add(os.path.realpath(p))
+    return out
+
+
+def reparte_sucios(project_id, entry, wt, dirty):
+    """B4 (0.12.2): (lines the agent must commit first, lines of other sessions). In 3-tier-memory 2 of 2 checks said
+    SUCIO over 6 files another agent on the same main checkout had edited. A file counts as another's only when another
+    live agent of the same tree wrote it (its transcript) and this one did not: a write lookout cannot see (a generator
+    script, `git stash pop`, a subagent; adversary round 1) stays the agent's own, as before. In its own tree, or when a
+    transcript cannot be read, every uncommitted file counts."""
+    filas = [l for l in dirty.splitlines() if l.strip()]
+    otros = companeros(project_id, entry, wt)
+    if not otros:
+        return filas, []
+    mios = editados(entry.get("session_id"), wt)
+    suyos = set()
+    for sid in otros:
+        # only its exact Edit/Write paths: what its Bash text seems to write over-reports (adversary round 2), and an
+        # over-report here would hand this agent's own file to another
+        e = editados(sid, wt, ajeno=True)
+        if e is None:
+            return filas, []
+        suyos |= e
+    if mios is None:
+        return filas, []
+    top = git(wt, "rev-parse", "--show-toplevel")[1].strip() or wt
+    propios, ajenos = [], []
+    for l in filas:
+        real = os.path.realpath(os.path.join(top, l[3:].split(" -> ")[-1].strip().strip('"')))
+        (ajenos if real in suyos and real not in mios else propios).append(l)
+    return propios, ajenos
 
 
 def caducada(project_id, p):

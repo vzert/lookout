@@ -155,7 +155,11 @@ def end_of_pass(timeout=120.0):
         _REVISANDO.release()
 
 
-def wait(path, offset=0, types="", timeout=0, pidfile="", cursor="", owner=None, wait_stale=25.0, revisa=None, hint=True):
+def wait(path, offset=0, types="", timeout=0, pidfile="", cursor="", owner=None, wait_stale=25.0, revisa=None, hint=True,
+         ventana=0.0, linea=True):
+    """`ventana`: seconds to wait after the first matching event before exiting, so a burst of events wakes the
+    supervisor once (0.12.2: 11 of 36 wakes came less than 5 s after the waiter started). `linea`: print the one-line
+    "evento:" summary; `lookout espera` prints the digest instead, whose first event is that same line (0.12.2)."""
     wanted = {t for t in types.split(",") if t}
     if not claim_pidfile(pidfile, wait_stale if owner else 0.0):
         print("waiter ya vivo (pidfile %s): no lances otro" % pidfile)
@@ -208,11 +212,18 @@ def wait(path, offset=0, types="", timeout=0, pidfile="", cursor="", owner=None,
                 continue
             if event.get("event") == "idle" and event.get("reporto"):
                 continue  # its report already woke the supervisor by SendMessage (Fase 4)
+            if event.get("event") == "bg_wait" and not event.get("pregunta"):
+                continue  # 0.12.2: waiting for its own task, nothing asked; it stays in the next digest
             if pos <= handled_offset(cursor):
                 continue
             end_of_pass(pass_budget(revisa) if revisa else 0)
-            sys.stdout.write(short(event, hint))
-            sys.stdout.flush()
+            if ventana > 0:
+                if timeout:
+                    signal.setitimer(signal.ITIMER_REAL, 0)  # the event is in: the timeout must not cut the window
+                time.sleep(ventana)  # the digest reads events.jsonl itself: whatever lands meanwhile goes in this wake
+            if linea:
+                sys.stdout.write(short(event, hint))
+                sys.stdout.flush()
             return 0
     finally:
         if timeout:

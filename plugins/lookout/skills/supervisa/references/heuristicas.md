@@ -12,7 +12,8 @@ El supervisor no lleva cuentas ni consulta en bucle. Regla de oro: **nunca decla
 | Vivo pero callado | herdr `working` **y** proceso vivo, sin eventos de hook (un build o una suite larga) | ≥ 60 min | `largo` (una vez) | Una lectura de pantalla. No es atasco |
 | Límite del proveedor | `StopFailure` con `error` = `rate_limit` u `overloaded` | inmediato | `pausa` (no despierta) | Nada: no es falla de la tarea. No relanzar ni marcar fallido |
 | Otro error de API | `StopFailure` con otro `error` (credenciales, facturación, modelo…) | inmediato | `unknown` ("te necesita") | Avisar al usuario |
-| Espera su adversario o un shell de fondo | `Stop` con `background_tasks` | inmediato | `bg_wait` | No es atasco (H12) |
+| Espera su adversario o un shell de fondo | `Stop` con `background_tasks` | inmediato | `bg_wait` (desde 0.12.2 solo despierta si el último mensaje del turno tiene un «?», «¿» o «？») | No es atasco (H12) |
+| Espera de fondo larga | último evento `bg_wait` y viejo | ≥ 60 min (`LOOKOUT_LARGO_S`) | `largo` con `fondo` (una vez; despierta) | Una lectura de pantalla |
 | Escritura en otro proyecto por Bash | rutas que el texto del comando escribe (`>`, `>>`, `tee`, destino de `cp`/`mv`, `rm`, `mkdir`, `touch`, `sed -i`, `git -C`, `--work-tree`, `--git-dir` o `cd` + subcomando que escribe, y la carpeta nueva de `git worktree add/move`) cruzadas con los candados vivos | inmediato | `crossrepo` con `via=bash` (en los dos proyectos) | Preguntar al agente si era intencional (puede ser un falso positivo) |
 
 Umbrales por variable de entorno (segundos): `LOOKOUT_MIRAR_S` (300), `LOOKOUT_ESCALAR_S` (1200), `LOOKOUT_LARGO_S`

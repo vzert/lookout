@@ -67,10 +67,15 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
    - Te despertó el waiter: su salida (el archivo `output-file` de la notificación, con `Read`) **ya es el resumen**
      y ya marcó los eventos. No hace falta `lookout resumen` (si lo corres, te muestra esos mismos eventos una vez más).
    - Te despertó un mensaje o el usuario: `lookout resumen <project_id>`.
+   - La salida del waiter muestra solo lo que cambió desde el despertar anterior: si la tabla de agentes, las
+     decisiones o las publicaciones no cambiaron, dice `sin cambios` en una línea (todo: `lookout resumen <project_id>
+     --no-marcar`). No muestra los ecos de tus propios mensajes ni los avisos `idle_prompt` de herdr; los cuenta.
 2. Atiende cada evento nuevo y cada mensaje (abajo).
-   Su última línea `Contexto: Nk de Uk` es tu presupuesto (lo mide de tu transcript). Si dice `PRESUPUESTO SUPERADO`,
+   La línea `Contexto: Nk de Uk` es tu presupuesto (lo mide de tu transcript); sale desde el 60 % del límite. Si dice
+   `PRESUPUESTO SUPERADO`,
    termina lo que tengas abierto en este turno y haz el relevo (abajo, «Relevo del supervisor»).
-3. **Última acción del turno:** si el resumen dijo `Waiter: no hay`, lanza otra vez
+3. **Última acción del turno:** si el resumen dijo `Waiter: no hay` (o, en la salida del waiter, `el que te despertó ya
+   salió` y no lanzaste otro después), lanza otra vez
    `lookout espera <project_id>` en segundo plano (`run_in_background: true`, `timeout: 7200000`).
    Si dijo `Waiter: vivo`, no lances otro. Si el waiter terminó con `ya vivo` o `timeout`, solo relánzalo
    si el resumen dice `no hay`.
@@ -91,7 +96,9 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
 - **`terminó su turno`**: si te debe un reporte y no llegó, una lectura corta de pantalla
   (`herdr agent read <pane> --source visible`) para verificar. Si no, nada.
 - **`espera tarea de fondo`**: el agente espera un proceso suyo (p. ej. su adversario o un CI).
-  **No está terminado ni atascado.** No lo empujes; dile al usuario que espera esa tarea si pregunta.
+  **No está terminado ni atascado.** No te despierta, salvo que su turno haya preguntado algo: lo ves en el siguiente
+  resumen. No lo empujes; dile al usuario que espera esa tarea si pregunta. Si la espera pasa de 60 min, te despierta una vez como `trabaja hace mucho …
+  esperando su tarea de fondo`: una lectura de su pantalla.
 - **`espera permiso`**: un diálogo de permiso en su pane que las reglas del usuario no cubren (el motivo va
   entre paréntesis). El usuario ya recibió el aviso de herdr. Dile en una línea qué agente espera (por su pestaña), la
   herramienta, el comando y el motivo. **Tú nunca apruebas permisos**: ni por `SendMessage`, ni con teclas

@@ -179,6 +179,12 @@ def edad(ts, now=None):
     return "%d min" % m if m < 120 else "%d h %d min" % (m // 60, m % 60)
 
 
+def clave_render(project_id):
+    """What render() shows, without the ages that change every minute: digest prints the block again only when this
+    changes (0.12.2)."""
+    return [{k: v for k, v in it.items() if k != "desde"} for it in abiertas(project_id)]
+
+
 def render(project_id, now=None):
     items = abiertas(project_id)
     if not items:

@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.12.2
+
+Fewer wakes of the supervisor, a shorter waiter digest and four output bugs, measured on a real supervision of
+3-tier-memory (2026-10-15: 36 waiter wakes in 7.6 h, 61 % with nothing to do, ~1.9 KB each; scope ratified by the user).
+Replayed over that session's events, the new wake rules give 16 wakes instead of 33 (an approximation: it does not
+model the supervisor's own pace).
+
+- **Behavior change:** «espera tarea de fondo» (`bg_wait`) no longer wakes the supervisor (19 of the 36 wakes), unless
+  the turn that ended asked something (any «?», «¿» or «？» in its last message). It stays in the next digest. An agent whose background
+  wait passes `LOOKOUT_LARGO_S` (60 min) wakes it once as `largo`; the no-progress check did not look at a background
+  wait before.
+- The waiter waits 3 s (`LOOKOUT_VENTANA`) after its first event, so a burst wakes the supervisor once (11 of 36 wakes
+  came less than 5 s after the waiter started); its timeout no longer runs during that wait. `lookout espera` no longer prints the «evento:» line; the digest
+  under it starts with that same event.
+- The waiter's digest prints the agents table, the open decisions and the publication queue only when they changed
+  since the previous wake (`sin cambios` in one line otherwise); `lookout resumen` still prints everything. The
+  `Contexto:` line shows from 60 % of the budget. The echoes of the supervisor's own messages, task notifications and
+  herdr's `idle_prompt` notices are no longer listed as events (they are counted).
+- An end of turn shows the last line of its message that asks something («?», «¿», «？»), or the line that opens a list,
+  instead of only its last line; a background wait shows the task's description before its command.
+- The first `lookout resumen` after several waiter wakes shows again only the last wake, not every event since the
+  first one (it repeated 158 events in 3-tier-memory).
+- The Stop hook of the supervisor no longer asks it to relaunch the waiter while that waiter's wake notification is
+  still queued (5 of 5 reminders came then; 2 of them led to a second waiter that died with «waiter ya vivo»).
+- `lookout entrega` confirms the `/rename` by the input box going empty, not by a UserPromptSubmit that the built-in
+  `/rename` never fires: it saved 30 s per agent (6 of 6 deliveries).
+- `lookout publica`: a refused check no longer leaves the agent «turno» in the queue (it stayed 6.6 h and held the
+  queue); asking again re-checks from the start. In a checkout shared with other registered agents, only the
+  uncommitted files that another live agent of that tree wrote with an Edit/Write that succeeded, and this one did not
+  (from their transcripts), are listed as
+  a warning instead of making it `SUCIO`, since a push carries commits only. Any other uncommitted file still counts,
+  also one written in a way lookout cannot see (a script, `git stash pop`, a subagent), and so does every file in the
+  agent's own tree. The waiter's own digest says the waiter that woke it left, not a flat «Waiter: no hay».
+
 ## 0.12.1
 
 - The `tail -F` that the waiter (`lookout espera`) and a delivery use to follow `events.jsonl` now dies with the

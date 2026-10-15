@@ -416,6 +416,15 @@ def revisa(project_id, now=None, agents=None, proceso=estado_proceso, reciente=w
             if entry.get("tarea_estado") == "relevada" or entry.get("retirado"):
                 continue
             last = ultimo_real(events, sid)
+            if last and last.get("event") == "bg_wait":
+                # 0.12.2: bg_wait no longer wakes the supervisor; a wait past the "largo" threshold does, once
+                age = now - float(last.get("ts") or now)
+                if age >= largo and not ya_avisado(events, sid, "largo", "", last.get("ts")):
+                    out.append({"session_id": sid, "nombre": entry.get("nombre", ""), "pane": entry.get("pane_id", ""),
+                                "desde": last.get("ts"), "hace_s": int(age), "event": "largo", "fondo": True})
+                    revisa_log(project_id, {"session_id": sid, "nombre": entry.get("nombre", ""), "hace_s": int(age),
+                                            "decision": "largo (espera tarea de fondo)"})
+                continue
             if not last or last.get("event") not in EN_TURNO:
                 continue
             age = now - float(last.get("ts") or now)
@@ -472,7 +481,9 @@ def alguien_callado(project_id, now=None):
     for ev in events:
         if ev.get("event") not in SINTETICOS + ("notification",):
             last[ev.get("session_id")] = ev
-    return any(ev.get("event") in EN_TURNO and now - float(ev.get("ts") or now) >= mirar_s() for ev in last.values())
+    return any((ev.get("event") in EN_TURNO and now - float(ev.get("ts") or now) >= mirar_s())
+               or (ev.get("event") == "bg_wait" and now - float(ev.get("ts") or now) >= largo_s())
+               for ev in last.values())
 
 
 # ---------- grouped view ----------

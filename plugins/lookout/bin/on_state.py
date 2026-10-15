@@ -18,17 +18,35 @@ import lookout_state  # noqa: E402
 MARKERS = ("[ADVERSARY-VERDICT", "[ADVERSARY-MODEL", "[COMPLETION-REVIEW")
 
 
+
+
 def last_line(text, limit=200):
-    """The last line that says something. Fase 9 E7: a code fence or a rule is skipped (claude-vzert: «```» twice),
-    and a very short one («Sí.») carries the line before it."""
+    """The line that says something. Fase 9 E7: a code fence or a rule is skipped (claude-vzert: «```» twice),
+    and a very short one («Sí.») carries the line before it. B5 (0.12.2): the last line that asks something («?», «¿», «？»)
+    wins (3-tier-memory: «3. Paras tú la otra corrida…» made the supervisor read the screen to find the question);
+    a last line that is one item of a list carries the line that opens the list."""
     lines = [l.strip() for l in (text or "").splitlines()]
     lines = [l for l in lines if l and not l.startswith("```") and l.strip("-*_=~ ")]
     if not lines:
         return ""
+    for l in reversed(lines):
+        if pregunta(l):  # 0.12.2 round 5: the same marks that wake the supervisor, anywhere in the message
+            return l[:limit]
     line = lines[-1]
-    if len(line) < 12 and len(lines) > 1:
+    if re.match(r"^(\d+[.)]|[-*•])\s", line) and len(lines) > 1:
+        intro = next((l for l in reversed(lines[:-1]) if not re.match(r"^(\d+[.)]|[-*•])\s", l)), "")
+        if intro:
+            line = intro + " … " + line
+    elif len(line) < 12 and len(lines) > 1:
         line = lines[-2] + " … " + line
     return line[:limit]
+
+
+def pregunta(text):
+    """0.12.2: any «?», «¿» or full-width «？» in the message counts as a question, also one inside a command. A
+    narrower reading lost real questions («push now?!», «Should I push? Reply yes or no.»; adversary round 3; «¿Lo
+    subo» with no closing mark, round 4) and a false wake is the safe side (decided by the user, 2026-10-15)."""
+    return any(c in (text or "") for c in "?¿？")
 
 
 def goal_markers(text):
@@ -45,16 +63,21 @@ HOOK_BLOQUEO = re.compile(r"^(?:Error: )?PreToolUse:(\w+) hook error: (.*)", re.
 
 def turn_rows(transcript_path, max_bytes=300000):
     """The transcript rows of the turn that just ended, oldest first (back to the last real user prompt)."""
+    return turn(transcript_path, max_bytes)[1]
+
+
+def turn(transcript_path, max_bytes=300000):
+    """(text of the prompt that opened the turn that just ended, or "" if not found; its rows, oldest first)."""
     import json
     if not transcript_path:
-        return []
+        return "", []
     try:
         with open(transcript_path, "rb") as fh:
             fh.seek(0, 2)
             fh.seek(max(0, fh.tell() - max_bytes))
             lines = fh.read().decode("utf-8", "replace").splitlines()
     except OSError:
-        return []
+        return "", []
     rows = []
     for line in reversed(lines):
         try:
@@ -64,9 +87,11 @@ def turn_rows(transcript_path, max_bytes=300000):
         content = (d.get("message") or {}).get("content")
         if d.get("type") == "user" and (isinstance(content, str) or any(
                 isinstance(b, dict) and b.get("type") == "text" for b in content or [])):
-            break
+            opener = content if isinstance(content, str) else "\n".join(
+                b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
+            return opener, rows[::-1]
         rows.append(d)
-    return rows[::-1]
+    return "", rows[::-1]
 
 
 def hook_blocks(rows):
@@ -249,6 +274,8 @@ def build(data, marker):
             ev["bloqueos_hook"] = bloqueos
         if running:
             ev.update(event="bg_wait", tareas=running)
+            if pregunta(msg):
+                ev.update(pregunta=True)  # 0.12.2: a question wakes the supervisor even while a task of its own runs
             return ev, "fondo", []
         ev.update(event="idle")
         if reported_this_turn(data.get("transcript_path"), marker.get("address")):

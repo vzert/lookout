@@ -58,6 +58,8 @@ def handle(data, via_async=False):
         return "" if via_async else stop_check(data, pid, sid)
     elif ev == "PreCompact":
         supervisor_md.log(pid, {"tipo": "precompact", "session_id": sid, "trigger": data.get("trigger", "")})
+        import digest
+        digest.olvida_vistos(pid)  # 0.12.2: the summarized context lost the table the next wake would call unchanged
     elif ev == "SessionStart":
         supervisor_md.write(pid)
         return ("lookout: tu contexto se acaba de compactar. Eres el supervisor del proyecto %s; tu estado está en %s.\n%s\n"
@@ -110,6 +112,8 @@ def stop_check(data, pid, sid, grace=1.5):
     if sin_waiter:
         time.sleep(grace)  # a waiter launched as the turn's last action may not hold its lock yet
         sin_waiter = not own_waiter()
+    if sin_waiter and digest.despertar_en_cola(pid, sid, data.get("transcript_path")):
+        sin_waiter = False  # B1 (0.12.2): its waiter just woke; the queued notification opens the next turn
     pendientes = [it for it in decisiones.sin_preguntar(pid) if not it.get("recordada")]
     if not sin_waiter and not pendientes:
         return ""

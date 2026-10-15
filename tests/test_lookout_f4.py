@@ -138,12 +138,17 @@ class DigestBudgetTest(Base):
     def test_a_notification_does_not_hide_the_last_real_event(self):
         self.agent("s1", "uno")
         lookout_state.append_event(PID, {"event": "idle", "session_id": "s1", "nombre": "uno", "ultima": "Confirmado, sigo."})
-        lookout_state.append_event(PID, {"event": "notification", "session_id": "s1", "nombre": "uno", "tipo": "idle_prompt"})
+        lookout_state.append_event(PID, {"event": "notification", "session_id": "s1", "nombre": "uno", "tipo": "permission_prompt"})
         out = digest.render(PID)
         self.assertIn("Confirmado, sigo. (+1 antes)", out)
         self.assertNotIn("aviso", out)
+        lookout_state.append_event(PID, {"event": "notification", "session_id": "s1", "nombre": "uno", "tipo": "permission_prompt"})
+        self.assertIn("aviso (permission_prompt)", digest.render(PID))   # alone, it is shown with its type
+        # N4 (0.12.2): herdr's «idle_prompt» is not news: hidden, and counted in the header
         lookout_state.append_event(PID, {"event": "notification", "session_id": "s1", "nombre": "uno", "tipo": "idle_prompt"})
-        self.assertIn("aviso (idle_prompt)", digest.render(PID))   # alone, it is shown with its type
+        out = digest.render(PID)
+        self.assertNotIn("idle_prompt", out)
+        self.assertIn("Eventos nuevos: ninguno (1 ecos", out)
 
     def test_hidden_agents_are_counted(self):
         # Fase 9 E1: clip() collapsed the indent, so "(+0 agentes más)" hid 2 of 9 agents in claude-vzert
@@ -478,7 +483,7 @@ class DigestBudgetTest(Base):
         # claude-vzert, 2026-10-06: relaunched without `resumen`, the waiter woke at once on the same 12:58 event,
         # the supervisor took it for broken and stopped launching it.
         self.agent("s-a", "uno")
-        lookout_state.append_event(PID, {"event": "bg_wait", "session_id": "s-a", "nombre": "uno", "ts": time.time()})
+        lookout_state.append_event(PID, {"event": "idle", "session_id": "s-a", "nombre": "uno", "ts": time.time()})
         r = self.run_lk("espera", PID, "--timeout", "5")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("Resumen (ya marcado como atendido", r.stdout)
@@ -488,15 +493,18 @@ class DigestBudgetTest(Base):
         r = self.run_lk("espera", PID, "--timeout", "1")
         self.assertEqual(r.returncode, 2, r.stdout)                  # nothing new: it waits, it does not repeat
 
-    def test_two_waiter_wakes_without_resumen_are_both_shown_once(self):
-        # the mechanism itself (adversary r1: the end-to-end test below also passes on 0.8.0, which never marked)
+    def test_after_two_waiter_wakes_resumen_shows_only_the_last_one_again(self):
+        # B3 (0.12.2): each wake's output was read by the supervisor before it relaunched; only the last one may have been
+        # answered with `resumen` instead. With min(desde, offset) the first `resumen` after 36 wakes repeated 158 events.
         self.agent("s-a", "uno")
         lookout_state.append_event(PID, {"event": "ask", "session_id": "s-a", "nombre": "uno", "ts": time.time()})
         digest.render(PID, mark=True, por_waiter=True)
         lookout_state.append_event(PID, {"event": "idle", "session_id": "s-a", "nombre": "uno", "ts": time.time()})
         digest.render(PID, mark=True, por_waiter=True)
         out = digest.render(PID)
-        self.assertIn("Eventos nuevos (2", out)
+        self.assertIn("Eventos nuevos (1)", out)
+        self.assertIn("terminó su turno", out)
+        self.assertNotIn("pregunta", out)
         self.assertIn("Eventos nuevos: ninguno", digest.render(PID))
         self.assertNotIn("desde", lookout_state.read_json(digest.cursor_path(PID)))
 
