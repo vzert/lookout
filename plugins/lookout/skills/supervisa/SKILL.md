@@ -104,10 +104,15 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
   `lookout entrega <project_id> <agente>` para su nota. Si dice `NO ENTREGADO … borrador`, avisa al usuario una vez
   (su caja tiene texto suyo) y no reintentes en bucle; `NO ENTREGADO … working` → entrégala en su `terminó su turno`.
 - **`dejó un bloque para retomar (p-…, vigente|ambiguo…)`** (al terminar su turno, o `estaba quieto con un «Como
-  retomar»` al registrarlo): lookout ya miró su último turno.
+  retomar»` al registrarlo o en el barrido de cada 2 min a los agentes quietos): lookout ya miró su último turno, y
+  avisa una vez por bloque mientras no cambie lo que hace con él (un ambiguo que pasa a vigente se avisa otra vez).
   - `vigente` → `lookout relevo <project_id> <agente>` **sin preguntar**, y una línea al usuario («Relevé
     <pestaña>: sigue con p-…»). Si el relevo dice `NO: …`, pásale esa línea al usuario.
-  - `ambiguo` (con su motivo) → al modal en lote con su id dN: «¿relevo, cierro o lo dejo?». No adivines.
+  - `ambiguo` (con su motivo) → al modal en lote con su id dN: «¿relevo, cierro o lo dejo?». No adivines. La
+    opción recomendada es **«Relevarlo»** (decisión del usuario, 2026-10-15: un bloque con trabajo se releva por
+    defecto), salvo que el motivo diga `otro agente trabajó …` (recomienda lo que muestre ese trabajo) o `todo lo que cita ya está
+    cerrado` (recomienda cerrar su pestaña: `lookout cierra-pestana` lo acepta como terminado). Que
+    sus pendientes sean de baja prioridad o nuevos no es motivo para no relevar.
   - `terminó: su «Como retomar» dice que no queda nada` → no hay relevo (ver «Agente terminado»).
 - **`espera tarea de fondo`**: el agente espera un proceso suyo (p. ej. su adversario o un CI).
   **No está terminado ni atascado.** No te despierta, salvo que su turno haya preguntado algo: lo ves en el siguiente
@@ -302,7 +307,9 @@ encuentra, pídeselo al agente antes. Si `/exit` no sale, no arranca otro encima
 **Agente terminado** (su «Como retomar» dice que no queda nada, o dijo que terminó sin bloque):
 `lookout cierra-pestana <project_id> <agente>` **sin preguntar** (sin bloque: añade `--motivo "<su frase, tal cual>"`,
 p. ej. «No emito nada y termino aquí»; un `[COMPLETION-REVIEW` o «¿Cerrado? Sí» solos no bastan). Comprueba que su
-pantalla está quieta y con la caja vacía, y que no deja nada: cambios sin commit, commits sin subir en su árbol,
+pantalla está quieta y con la caja vacía, y que no deja nada: cambios sin commit, commits suyos o sin dueño sin subir en su árbol
+(el dueño de un commit es la sesión que corría un `git commit` a esa hora, o su sucesor si la relevaron; uno de
+otro agente vivo no frena),
 publicación pendiente, decisión abierta que lo nombre, mensaje suyo sin respuesta, una pregunta en su último turno o
 una tarea de fondo. Con todo limpio hace `/exit`, cierra su pestaña (o solo su pane si comparte pestaña) y te da la
 línea para el usuario. Si dice `NO cierro …`, pásale al usuario el motivo en una línea; si el motivo es «mensaje sin

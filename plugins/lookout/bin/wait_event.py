@@ -135,7 +135,7 @@ def revisor(project_id, every, para):
                 pass  # a failed check must never take the waiter down
             try:
                 if alta.toca(project_id):
-                    alta.descubre(project_id)  # 0.13.0: an agent the user launched by hand joins (Fase 3)
+                    alta.pasada(project_id)  # 0.13.0 alta (Fase 3); 0.13.2 sweep of quiet agents with a block
             except Exception:
                 pass
 

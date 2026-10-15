@@ -189,21 +189,75 @@ class VigenciaTest(f3.Base):
     def test_vigente_ambiguo_nada(self):
         r = self.info("minutos", MINUTOS, self.now - 600)
         self.assertEqual((r["estado"], r["pendientes"]), ("vigente", ["p-01dfac8763"]))
-        # its pendiente closed since: ambiguo
-        self.assertEqual(self.info("hook", HOOK, self.now - 600)["estado"], "ambiguo")
-        # another agent cited its p-id after the block (askuserquestion-pendientes did agrupar's work)
-        self.transcript("otro", [a_text("Cierro p-3d1c7ab131 con la 2.60.0.", self.now - 300)])
+        # everything it cites is closed: to the user, who usually closes it
+        r = self.info("hook", HOOK, self.now - 600)
+        self.assertEqual((r["estado"], r["pendientes"]), ("ambiguo", []))  # codex: the closed ones are dropped
+        self.assertIn("ya está cerrado", r["motivo"])
+        # another agent WORKED on its open p-id after the block: a tool call of its names it
+        self.transcript("otro", [{"type": "assistant", "timestamp": iso(self.now - 300), "message": {"content": [
+            {"type": "tool_use", "id": "x", "name": "Bash",
+             "input": {"command": "bin/journal-emit.py --type pendiente.close --id p-3d1c7ab131"}}]}}])
         r = self.info("agrupar", AGRUPAR, self.now - 600, otros=["otro"])
-        self.assertEqual(r["estado"], "ambiguo")
-        self.assertIn("otro agente", r["motivo"])
-        # cited BEFORE the block: still vigente
-        self.transcript("viejo", [a_text("Miro p-01dfac8763.", self.now - 9000)])
+        self.assertEqual((r["estado"], r["pendientes"]), ("ambiguo", ["p-3d1c7ab131", "p-3f22a1cba1"]))
+        self.assertIn("otro agente trabajó p-3d1c7ab131", r["motivo"])
+        # worked BEFORE the block: still vigente
+        self.transcript("viejo", [{"type": "assistant", "timestamp": iso(self.now - 9000), "message": {"content": [
+            {"type": "tool_use", "id": "y", "name": "Bash", "input": {"command": "grep p-01dfac8763 x"}}]}}])
         self.assertEqual(self.info("minutos2", MINUTOS, self.now - 600, otros=["viejo"])["estado"], "vigente")
-        # a block of 7 days (cambio-worktrees)
-        r = self.info("worktrees", WORKTREES, self.now - 7 * 86400)
-        self.assertEqual(r["estado"], "ambiguo")
-        self.assertIn("más de 24 h", r["motivo"])
         self.assertEqual(self.info("sidebar", SIDEBAR, self.now - 600)["estado"], "nada")
+
+    def test_a_mention_is_not_work(self):
+        # 0.13.2, 3-tier-memory 2026-10-15: a resume prompt pasted into another session named minutos-github's p-id
+        # («Si ese paso es corto, suma en la misma sesion: p-01dfac8763») and its live block became ambiguous
+        pegado = "Retomamos ... Si ese paso es corto, suma en la misma sesion: p-01dfac8763 (Baja)"
+        self.transcript("otro", [u_text(pegado, self.now - 300),
+                                 {"type": "attachment", "timestamp": iso(self.now - 299),
+                                  "attachment": {"type": "prompt_snapshot", "text": pegado}},
+                                 a_text("Leo p-01dfac8763 en la lista; no es mío.", self.now - 290),
+                                 {"type": "user", "timestamp": iso(self.now - 280), "message": {"content": [
+                                     {"type": "tool_result", "tool_use_id": "z", "content": "- [ ] x — p-01dfac8763"}]}}])
+        self.assertEqual(self.info("minutos", MINUTOS, self.now - 600, otros=["otro"])["estado"], "vigente")
+
+    def test_a_block_of_unknown_time_is_ambiguous(self):
+        import retomar
+        r = retomar.info(MINUTOS, None, [self.root], [])
+        self.assertEqual((r["estado"], r["motivo"]), ("ambiguo", "no sé de cuándo es el bloque"))
+
+    def test_a_subagent_of_another_agent_working_on_it_counts(self):
+        self.transcript("otro", [u_text("hola", self.now - 900)])
+        d = os.path.join(os.path.dirname(relevo.deliver.transcript_path("otro")), "otro", "subagents")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "agent-a.jsonl"), "w") as fh:
+            fh.write(json.dumps({"type": "assistant", "timestamp": iso(self.now - 300), "message": {"content": [
+                {"type": "tool_use", "id": "s", "name": "Edit", "input": {"file_path": "x", "new_string": "p-01dfac8763"}}]}}) + "\n")
+        r = self.info("minutos", MINUTOS, self.now - 600, otros=["otro"])
+        self.assertEqual(r["estado"], "ambiguo")
+
+    def test_reading_or_asking_about_it_is_not_work(self):
+        # codex, 0.13.2: a Read, a Grep or a question naming the p-id made a live block ambiguous
+        for i, (tool, inp) in enumerate((("Read", {"file_path": "memory/p-01dfac8763.md"}),
+                                         ("Grep", {"pattern": "p-01dfac8763"}),
+                                         ("AskUserQuestion", {"questions": [{"question": "¿p-01dfac8763?"}]}))):
+            self.transcript("lector%d" % i, [{"type": "assistant", "timestamp": iso(self.now - 300), "message": {
+                "content": [{"type": "tool_use", "id": "r%d" % i, "name": tool, "input": inp}]}}])
+            self.assertEqual(self.info("minutos%d" % i, MINUTOS, self.now - 600, otros=["lector%d" % i])["estado"],
+                             "vigente", tool)
+
+    def test_a_pendiente_found_nowhere_is_not_closed(self):
+        r = self.info("nuevo", "Como retomar:\n```\nSigue con p-ffffffffff.\n```", self.now - 600)
+        self.assertEqual(r["estado"], "ambiguo")
+        self.assertIn("no encuentro en la memoria: p-ffffffffff", r["motivo"])
+
+    def test_age_alone_is_not_ambiguous(self):
+        # cambio-worktrees: a block of 7 days whose p-id is still open and nobody worked on
+        r = self.info("worktrees", WORKTREES, self.now - 7 * 86400)
+        self.assertEqual(r["estado"], "vigente")
+
+    def test_closed_ones_are_dropped_and_the_open_ones_relieved(self):
+        mixto = "Como retomar:\n```\nSigue con p-92aa5de144 y p-3f22a1cba1.\n```"
+        r = self.info("mixto", mixto, self.now - 600)
+        self.assertEqual((r["estado"], r["pendientes"]), ("vigente", ["p-3f22a1cba1"]))
+        self.assertIn("ya cerrados: p-92aa5de144", r["motivo"])
 
     def test_only_the_last_turn_counts(self):
         # plan-ciclo: a block of 2026-10-07, then a prompt and a last message without one
@@ -230,7 +284,7 @@ class AvisoTest(f4.Base):
         super().setUp()
         os.makedirs(os.path.join(self.repo, "memory"))
         with open(os.path.join(self.repo, "memory", "_pendientes.md"), "w") as fh:
-            fh.write("- [ ] x — _id: p-01dfac8763_\n")
+            fh.write("- [ ] x — _id: p-01dfac8763_\n- [ ] w — _id: p-34c1ec3f19_\n")
 
     def stop(self, sid, text, reporto=False):
         now = time.time()
@@ -275,7 +329,8 @@ class AvisoTest(f4.Base):
         self.transcript("ciclo", [a_text(MINUTOS, now - 8 * 86400), u_text("¿sigue?", now - 700),
                                   a_text("No emito nada y termino aquí.", now - 600)])
         evs = retomar.al_registrar(PID, ["wt", "ciclo"])
-        self.assertEqual([(e["nombre"], e["retomar"]["estado"]) for e in evs], [("cambio-worktrees", "ambiguo")])
+        # 0.13.2: 7 days old, its p-id open and nobody worked on it: vigente (age is no longer a reason)
+        self.assertEqual([(e["nombre"], e["retomar"]["estado"]) for e in evs], [("cambio-worktrees", "vigente")])
         self.assertIn("retomar", digest.WAKE_TYPES.split(","))
         self.assertEqual(retomar.al_registrar(PID, ["wt", "ciclo"]), [])  # once per block
 
@@ -378,6 +433,49 @@ class RelevoSinTareaTest(f3.Base):
 
 
 
+class BarridoTest(AvisoTest):
+    """0.13.2: a registered agent, quiet since before 0.13.0, whose last turn left a live block gets its `retomar`."""
+
+    def test_a_quiet_agent_with_a_block_is_announced_once(self):
+        import alta
+        now = time.time()
+        self.agent("s1", "hook-para-checkpoint", estado_herdr="working")  # the registry's status is the old one
+        self.transcript("s1", [u_text("sigue", now - 60), a_text(MINUTOS, now - 30)])
+        herdr = [{"agent_session": {"value": "s1"}, "agent_status": "idle", "pane_id": "w1:p1"},
+                 {"agent_session": {"value": "otro"}, "agent_status": "idle", "pane_id": "w1:p2"}]
+        evs = alta.barre(PID, herdr)
+        self.assertEqual([(e["event"], e["hook"], e["retomar"]["estado"]) for e in evs], [("retomar", "barrido", "vigente")])
+        self.assertEqual(alta.barre(PID, herdr), [])  # transcript unchanged: not read again
+        os.utime(self.deliver.transcript_path("s1"), (now + 5, now + 5))
+        self.assertEqual(alta.barre(PID, herdr), [])  # read again, same block: not announced again
+
+    def test_a_block_its_stop_announced_is_not_swept_again(self):
+        # adversary round 1 of 0.13.2: the Stop's idle carried the block, then the sweep announced it again
+        import alta
+        self.agent("s1", "uno")
+        ev = self.stop("s1", MINUTOS)
+        lookout_state.append_event(PID, ev)
+        self.assertEqual(alta.barre(PID, [{"agent_session": {"value": "s1"}, "agent_status": "idle"}]), [])
+
+    def test_work_of_a_retired_agent_counts(self):
+        # codex, 0.13.2: retired sessions were left out of the "worked on it after the block" check
+        import retomar
+        now = time.time()
+        self.agent("s1", "uno")
+        self.transcript("s1", [u_text("sigue", now - 700), a_text(MINUTOS, now - 600)])
+        self.agent("viejo", "viejo", retirado="2026-10-15T10:00:00")
+        self.transcript("viejo", [{"type": "assistant", "timestamp": iso(now - 300), "message": {"content": [
+            {"type": "tool_use", "id": "v", "name": "Bash", "input": {"command": "journal-emit --id p-01dfac8763"}}]}}])
+        self.assertEqual(retomar.para_agente(PID, "s1")["estado"], "ambiguo")
+
+    def test_a_working_agent_is_not_swept(self):
+        import alta
+        now = time.time()
+        self.agent("s1", "uno", estado_herdr="idle")
+        self.transcript("s1", [a_text(MINUTOS, now - 30)])
+        self.assertEqual(alta.barre(PID, [{"agent_session": {"value": "s1"}, "agent_status": "working"}]), [])
+
+
 class CierraPestanaTest(f3.Base):
     """Fase 2: each signal and guard stops the close by itself; with everything clean it /exits and closes the tab."""
 
@@ -474,7 +572,79 @@ class CierraPestanaTest(f3.Base):
             fh.write("b\n")
         f3.git(self.repo, "add", "b.txt")
         f3.git(self.repo, "commit", "-q", "-m", "b")
-        self.assert_no("sin subir")
+        self.assert_no("sin dueño vivo conocido")  # no session's commit call covers it: it blocks everyone
+
+    def commit_de(self, sid, subagente=False):
+        """A commit in the shared checkout, made inside a Bash call of `sid` (or of a subagent of it)."""
+        with open(os.path.join(self.repo, "b.txt"), "w") as fh:
+            fh.write("b\n")
+        f3.git(self.repo, "add", "b.txt")
+        f3.git(self.repo, "commit", "-q", "-m", "b")
+        ct = int(subprocess.run(["git", "-C", self.repo, "log", "-1", "--format=%ct"], capture_output=True,
+                                text=True).stdout.strip())
+        rows = [{"type": "assistant", "timestamp": iso(ct - 1), "message": {"content": [
+            {"type": "tool_use", "id": "c1", "name": "Bash", "input": {"command": "git commit -q -F - <<'EOF'"}}]}},
+            {"type": "user", "timestamp": iso(ct + 1), "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "c1", "content": ""}]}}]
+        base = os.path.dirname(self.retiro.deliver.transcript_path("s1"))
+        if subagente:
+            d = os.path.join(base, sid, "subagents")
+            os.makedirs(d, exist_ok=True)
+            with open(os.path.join(d, "agent-x.jsonl"), "w") as fh:
+                fh.write("".join(json.dumps(r) + "\n" for r in rows))
+        else:
+            self.transcript(sid, rows)
+
+    def test_a_commit_of_another_session_does_not_block_it(self):
+        # 0.13.2: 3-tier-memory, 2026-10-15: 6 commits of one session blocked the close of all 8 agents of the checkout
+        self.agent("s2", nombre="otro", tarea="", cwd=self.repo, worktree=self.repo)
+        self.commit_de("s2")
+        ok, msg = self.cierra()
+        self.assertTrue(ok, msg)
+
+    def test_a_relieved_owner_passes_its_commits_to_its_successor(self):
+        # adversary round 1 of 0.13.2: the owner was the relieved predecessor; its work is the successor's to push
+        self.agent("s2", nombre="viejo", tarea="", cwd=self.repo, worktree=self.repo, tarea_estado="relevada",
+                   relevada_por="s1")
+        self.commit_de("s2")
+        self.assert_no("suyo(s) sin subir")
+
+    def test_a_relieved_owner_whose_successor_is_another_agent_does_not_block(self):
+        # 3-tier-memory, 2026-10-15: the 6 commits' owner was relieved; its successor owes them, nobody else
+        self.agent("s3", nombre="sucesor", tarea="", cwd=self.repo, worktree=self.repo)
+        self.agent("s2", nombre="viejo", tarea="", cwd=self.repo, worktree=self.repo, tarea_estado="relevada",
+                   relevada_por="s3")
+        self.commit_de("s2")
+        ok, msg = self.cierra()
+        self.assertTrue(ok, msg)
+
+    def test_a_commit_of_a_retired_session_still_blocks(self):
+        self.agent("s2", nombre="viejo", tarea="", cwd=self.repo, worktree=self.repo, retirado="2026-10-15T10:00:00")
+        self.commit_de("s2")
+        self.assert_no("sin dueño vivo conocido")
+
+    def test_a_block_that_cites_only_closed_pendientes_can_be_closed(self):
+        # adversary round 2 of 0.13.2: the skill recommends closing it, and the close refused it as a relief
+        os.makedirs(os.path.join(self.repo, "memory", "pendientes"))
+        with open(os.path.join(self.repo, "memory", "_pendientes.md"), "w") as fh:
+            fh.write("- [ ] otro — _id: p-3f22a1cba1_\n")
+        with open(os.path.join(self.repo, "memory", "pendientes", "_resueltos.md"), "w") as fh:
+            fh.write("- [ ] hecho — _id: p-92aa5de144_\n")  # 3-tier moves a resolved line here verbatim
+        f3.git(self.repo, "add", "memory")
+        f3.git(self.repo, "commit", "-q", "-m", "m")
+        f3.git(self.repo, "push", "-q")
+        self.last("Como retomar:\n```\nSigue con p-3f22a1cba1.\n```")  # one still open: a relief, not a close
+        self.assert_no("es un relevo")
+        # adversary round 3: a p-id found nowhere (a pendiente.add not compacted yet) is not closed
+        self.last("Como retomar:\n```\nSigue con p-ffffffffff (recién creado).\n```")
+        self.assert_no("es un relevo")
+        self.last("Como retomar:\n```\nSigue con p-92aa5de144.\n```")
+        ok, msg = self.cierra()
+        self.assertTrue(ok, msg)
+
+    def test_a_commit_of_its_own_subagent_blocks_as_its_own(self):
+        self.commit_de("s1", subagente=True)
+        self.assert_no("suyo(s) sin subir")
 
     def test_pending_publication(self):
         import publica

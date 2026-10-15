@@ -78,6 +78,47 @@ def renombra(entry, tab_of=None):
     return "hecho" if not fallos else "a medias: herdr no renombró " + ", ".join(fallos)
 
 
+def pasada(project_id):
+    """One discovery pass of the waiter's checker: herdr's agent list once, for the alta and for the sweep."""
+    todos = herdr_cli.agent_list()
+    descubre(project_id, todos)
+    barre(project_id, todos)
+
+
+def barre(project_id, agents):
+    """0.13.2: an agent already registered and quiet, whose last turn left a «Como retomar», never gets another Stop,
+    so its block was never read (3-tier-memory, 2026-10-15: hook-para-checkpoint, vigente, idle since 00:51 and never
+    relieved). Each pass reads the last turn of the registered agents herdr sees idle or done; `retomar.al_registrar`
+    writes one `retomar` event per block and classification (not one its Stop already announced; again when it changes,
+    e.g. an ambiguo now vigente). A transcript that did not change since the last read is
+    skipped (the per-agent read also scans the other agents' transcripts)."""
+    import retomar
+    reg = registry.load(project_id).get("agents", {})
+    estados, cambiados = {}, []
+    vistos_path = os.path.join(lookout_state.project_dir(project_id), "barrido.json")
+    vistos = lookout_state.read_json(vistos_path) or {}
+    for a in agents or []:
+        sid = (a.get("agent_session") or {}).get("value")
+        e = reg.get(sid)
+        if not sid or not e or e.get("retirado") or a.get("agent_status") not in ("idle", "done"):
+            continue
+        import deliver
+        try:
+            mtime = os.path.getmtime(deliver.transcript_path(sid))
+        except (OSError, TypeError):
+            continue
+        if vistos.get(sid) == mtime:
+            continue
+        estados[sid] = a.get("agent_status")
+        cambiados.append(sid)
+        vistos[sid] = mtime
+    if not cambiados:
+        return []
+    out = retomar.al_registrar(project_id, cambiados, estados=estados, hook="barrido")
+    lookout_state.write_json(vistos_path, vistos)
+    return out
+
+
 def descubre(project_id, agents=None, common_of=None, tab_of=None):
     """Register the new sessions of the project; append one `nuevo` event each. Returns those events."""
     import discover

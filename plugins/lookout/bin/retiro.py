@@ -16,7 +16,6 @@ Threat model: an accidental omission (work left behind, a pending answer); not a
 """
 import json
 import os
-import re
 import time
 
 import decisiones
@@ -36,11 +35,15 @@ def _turno(session_id):
     return retomar.ultimo_turno(deliver.transcript_path(session_id))
 
 
-def senal_terminado(entry, motivo=""):
-    """'' if its last turn says it finished, else why not."""
+def senal_terminado(entry, motivo="", project_id=""):
+    """'' if its last turn says it finished, else why not. 0.13.2: a block whose every cited pendiente is closed is
+    finished too (the supervise skill recommends closing it; adversary round 2: the close refused it)."""
     text, _ts = _turno(entry["session_id"])
     estado, blk = retomar.bloque(text)
     if estado == "hay":
+        r = retomar.para_agente(project_id, entry["session_id"]) if project_id else None
+        if r and (r.get("motivo") or "").startswith(retomar.CERRADO):
+            return ""
         return "su último turno deja un bloque para retomar con trabajo: es un relevo, no un cierre"
     if estado == "nada":
         return ""
@@ -79,22 +82,86 @@ def guarda_cambios(project_id, entry):
     return ""
 
 
-COMMIT_RE = re.compile(r"\[[^\]\s]+(?: \([^)]*\))? ([0-9a-f]{7,40})\]")
+MARGEN_COMMIT = 2  # s around a Bash call: the commit's committer time has a 1 s resolution
 
 
-def sus_commits(session_id):
-    """Short hashes its own `git commit` printed («[main 0192f4a] …»), from the tool results of its transcript. None if
-    the transcript cannot be read."""
-    path = deliver.transcript_path(session_id)
-    out = set()
+def _iso(ts):
+    import datetime
     try:
-        with open(path, encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                if '"tool_result"' in line and "] " in line:
-                    out |= set(COMMIT_RE.findall(line))
-    except (OSError, TypeError):
+        return datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except (AttributeError, ValueError):
         return None
+
+
+def _llamadas_commit(path, desde):
+    """[(start, end)] of the Bash calls in a transcript whose command says «commit» and that ended after `desde`."""
+    out, starts = [], {}
+    try:
+        if os.path.getmtime(path) < desde:
+            return out
+        fh = open(path, encoding="utf-8", errors="replace")
+    except OSError:
+        return out
+    with fh:
+        for line in fh:
+            if "commit" not in line and '"tool_result"' not in line:
+                continue
+            try:
+                o = json.loads(line)
+            except ValueError:
+                continue
+            content = (o.get("message") or {}).get("content")
+            t = _iso(o.get("timestamp"))
+            if not isinstance(content, list) or t is None:
+                continue
+            for it in content:
+                if not isinstance(it, dict):
+                    continue
+                if it.get("type") == "tool_use" and it.get("name") == "Bash" and \
+                        "commit" in str((it.get("input") or {}).get("command", "")):
+                    starts[it.get("id")] = t
+                elif it.get("type") == "tool_result" and it.get("tool_use_id") in starts:
+                    t0 = starts.pop(it["tool_use_id"])
+                    if t >= desde:
+                        out.append((t0, t))
     return out
+
+
+def duenos_commits(project_id, wt, hashes):
+    """{hash: set of registered session ids} — 0.13.2. A commit belongs to a session when one of its Bash calls (or one
+    of its subagents') whose command says «commit» was running at the commit's time. That covers `-q`, a subagent and a
+    script called from such a command, none of which print «[rama hash]» (the reason 0.13.0 stopped matching hashes).
+    Measured on 3-tier-memory, 2026-10-15: the 6 unpushed commits of the shared checkout all fell inside calls of one
+    session, and of no other. A commit no call covers has no owner and keeps blocking everyone."""
+    out = {h: set() for h in hashes}
+    if not hashes:
+        return out
+    code, log = _git(wt, "log", "--no-walk", "--format=%H %ct", *hashes)
+    if code != 0:
+        return out
+    horas = {}
+    for linea in (log or "").splitlines():
+        partes = linea.split()
+        if len(partes) == 2 and partes[1].isdigit():
+            horas[partes[0]] = int(partes[1])
+    if not horas:
+        return out
+    desde = min(horas.values()) - MARGEN_COMMIT
+    for sid in registry.load(project_id).get("agents", {}):
+        path = deliver.transcript_path(sid)
+        if not path:
+            continue
+        rutas = [path] + sorted(glob_subagentes(path, sid))
+        llamadas = [c for r in rutas for c in _llamadas_commit(r, desde)]
+        for h, ct in horas.items():
+            if any(t0 - MARGEN_COMMIT <= ct <= t1 + MARGEN_COMMIT for t0, t1 in llamadas):
+                out.setdefault(h, set()).add(sid)
+    return out
+
+
+def glob_subagentes(path, sid):
+    import glob
+    return glob.glob(os.path.join(os.path.dirname(path), sid, "subagents", "*.jsonl"))
 
 
 def guarda_sin_subir(project_id, entry):
@@ -107,14 +174,36 @@ def guarda_sin_subir(project_id, entry):
     pendientes = [h for h in (out or "").split() if h]
     if not pendientes:
         return ""
-    # Strict on purpose, also in a shared checkout: a commit made with -q, by a subagent or by a script prints no
-    # «[rama hash]» in its transcript (3-tier-memory, 2026-10-15: none of the 6 unpushed 2.58.1 commits did), so
-    # matching hashes would call an agent with unpushed work clean. Closing waits for the push, whoever owes it.
-    mios = sus_commits(entry["session_id"]) or set()
-    suyos = [h for h in pendientes if any(h.startswith(m) for m in mios)]
+    # A commit made with -q, by a subagent or by a script prints no «[rama hash]» in its transcript (3-tier-memory,
+    # 2026-10-15: none of the 6 unpushed 2.58.1 commits did), so the printed hash alone would call an agent with
+    # unpushed work clean. 0.13.2: the owner is read from the time of its Bash calls (duenos_commits); a commit with
+    # no owner still blocks everyone, and one owned only by other sessions no longer blocks this one.
+    # A commit stops blocking this agent only when every owner is ANOTHER agent still alive (not relieved, not
+    # retired): one of a relieved predecessor is this agent's work to push (adversary round 1 of 0.13.2).
+    # A relieved owner's work passes to its successor (relevada_por, followed to the live end of the chain): the
+    # successor must push it, and the other agents are free of it (3-tier-memory, 2026-10-15: the 6 commits' owner
+    # was relieved while this was being measured).
+    sid = entry["session_id"]
+    agentes = registry.load(project_id).get("agents", {})
+
+    def actual(s):
+        vistos = set()
+        while s in agentes and agentes[s].get("relevada_por") and s not in vistos:
+            vistos.add(s)
+            s = agentes[s]["relevada_por"]
+        return s
+    duenos = {h: {actual(s) for s in ss} for h, ss in duenos_commits(project_id, wt, pendientes).items()}
+
+    def vivo_ajeno(s):
+        e = agentes.get(s) or {}
+        return s != sid and e and not e.get("retirado") and e.get("tarea_estado") not in ("relevada", "relevando")
+    suyos = [h for h in pendientes if sid in duenos.get(h, ())]
     if suyos:
         return "%d commit(s) suyo(s) sin subir en %s" % (len(suyos), wt)
-    return "%d commit(s) sin subir en su árbol %s (quizá de otro agente): primero el push" % (len(pendientes), wt)
+    frenan = [h for h in pendientes if not duenos.get(h) or not all(vivo_ajeno(s) for s in duenos[h])]
+    if frenan:
+        return "%d commit(s) sin subir en su árbol %s sin dueño vivo conocido: primero el push" % (len(frenan), wt)
+    return ""
 
 
 def guarda_publicacion(project_id, entry):
@@ -198,7 +287,7 @@ GUARDAS = (guarda_cambios, guarda_sin_subir, guarda_publicacion, guarda_decision
 def revisa(project_id, entry, motivo=""):
     """The list of reasons not to close ([] = it can be closed)."""
     out = []
-    for check in (lambda: senal_terminado(entry, motivo), lambda: senal_pantalla(entry)):
+    for check in (lambda: senal_terminado(entry, motivo, project_id), lambda: senal_pantalla(entry)):
         r = check()
         if r:
             out.append(r)

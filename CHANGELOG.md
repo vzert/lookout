@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.13.2
+
+Found by measuring 0.13.0 in the live supervision of 3-tier-memory (2026-10-15): `cierra-pestana` could close none of
+the 8 older agents, because 6 unpushed commits of one session in the shared checkout blocked all of them; and an agent
+quiet since before 0.13.0 with a live «Como retomar» was never read, because the block is read only at its Stop or
+when it is registered.
+
+- **Behavior change:** a «Como retomar» is relieved by default. It is `vigente` when at least one cited pendiente is
+  still open (the closed ones are dropped) and no other registered agent, or a subagent of one, worked on it after the
+  block: a command, edit, message or task of its that names it (a Read, a Grep or a question does not); retired and
+  relieved sessions count. Closed means «- [x]» or listed in `memory/pendientes/_resueltos.md` or `_caducados.md`; a
+  p-id found nowhere (a `pendiente.add` not compacted yet) is not closed. All closed, or a
+  block of unknown time, is `ambiguo`; `cierra-pestana` takes the all-closed one as finished. A mention in a pasted prompt, a hook's context or a
+  file it read is no longer work, and the block's age no longer matters (`LOOKOUT_RETOMAR_HORAS` is gone). On
+  3-tier-memory a pasted resume prompt that named a p-id made a live block ambiguous, and the supervisor asked the
+  user about 5 blocks, recommending not to relieve. The supervise skill now recommends «Relevarlo» in that modal unless
+  another agent worked on it.
+- `cierra-pestana`: an unpushed commit belongs to the registered session (or one of its subagents) that had a Bash call
+  whose command says «commit» running at the commit's time. That covers `-q`, subagents and scripts called from such a
+  command, which print no «[rama hash]». A relieved owner's commits pass to its live successor. A commit owned only
+  by other live agents no longer blocks this one; a commit with no known owner, or one of a retired session, still
+  blocks. The hash an agent printed is no longer
+  used. On 3-tier-memory the 6 commits fall to one session and to no other.
+- The waiter's discovery pass (every `LOOKOUT_DESCUBRE_CADA` s, 120) also reads the last turn of each registered agent
+  herdr sees idle or done, and writes one `retomar` event per block and classification (hook `barrido`): a block its own
+  Stop already announced is not announced again, and one whose classification changed (an ambiguo now vigente) is. A transcript that did not change
+  since the last pass is not read again.
+
 ## 0.13.1
 
 Found in the live test of 0.13.0 in 3-tier-memory (2026-10-15): two sessions launched by hand were registered but kept
