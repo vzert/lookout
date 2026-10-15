@@ -266,17 +266,28 @@ def cmd_entrega(a):
         code, _o, _e = herdr_cli.run(["pane", "wait-output", pane, "--match", "Reloaded:", "--timeout", "15000"], timeout=20)
         print("reload: %s" % ("ok" if code == 0 else "sin confirmar en pantalla"))
     if "rename" in pasos:
-        herdr_cli.run(["agent", "prompt", pane, "/rename " + entry["nombre"]])
-        herdr_cli.run(["agent", "rename", pane, entry["nombre"]])
-        herdr_cli.run(["pane", "rename", pane, "lookout: " + entry["nombre"]])
-        entry["herdr_name"] = entry["nombre"]
+        # 0.13.1: the alta may have renamed it already; a session that carries the name gets no second /rename
+        if (live.get("terminal_title_stripped") or "") != entry["nombre"]:
+            herdr_cli.run(["agent", "prompt", pane, "/rename " + entry["nombre"]])
+        # 0.13.1 (codex round 3): a name herdr refused is not recorded nor reported as done
+        fallos = []
+        if herdr_cli.run(["agent", "rename", pane, entry["nombre"]])[0] == 0:
+            entry["herdr_name"] = entry["nombre"]
+        else:
+            fallos.append("agente")
+        if herdr_cli.run(["pane", "rename", pane, "lookout: " + entry["nombre"]])[0] != 0:
+            fallos.append("pane")
         # The tab is what the user sees. herdr's default label (the tab number) names nothing: put the agent's name
         # there. A label the user chose, or a tab shared with other panes, is never touched.
         tab = herdr_cli.tab_get(live.get("tab_id") or entry.get("tab_id", ""))
         if tab and (tab.get("pane_count") or 1) == 1 and not herdr_cli.own_label(tab):
             if herdr_cli.run(["tab", "rename", live.get("tab_id") or entry["tab_id"], entry["nombre"]])[0] == 0:
                 entry["pestana"] = entry["nombre"]
-        print("rename: %s (sesión, agente de herdr y pane; pestaña «%s»)" % (entry["nombre"], entry.get("pestana") or "-"))
+            else:
+                fallos.append("pestaña")
+        print("rename: %s (sesión, agente de herdr y pane; pestaña «%s»)%s" % (
+            entry["nombre"], entry.get("pestana") or "-",
+            "; A MEDIAS: herdr no renombró " + ", ".join(fallos) if fallos else ""))
     if "nota" in pasos and "rename" in pasos:
         # Fase 9 F3: the note is typed only once the /rename left the box. Typed while the /rename was still there, the
         # note arrived glued to it as <pasted_content> (claude-vzert, 2026-10-06). B2 (0.12.2): confirmed by the box,

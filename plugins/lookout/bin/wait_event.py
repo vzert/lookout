@@ -119,14 +119,14 @@ def watchdog(owner, lock_path, stop, every=WATCH_EVERY):
             stop(4)
 
 
-def revisor(project_id, every):
+def revisor(project_id, every, para):
     """Fase 6: the no-progress check (heuristicas.revisa), a script on a timer inside the single waiter, so the
     supervisor itself never polls. Only does work while some agent's hooks went quiet; what it decides is appended to
-    events.jsonl, where the tail below picks it up like any other event."""
+    events.jsonl, where the tail below picks it up like any other event. It ends when its wait() returns (`para`):
+    0.13.1, a thread left behind by an in-process wait() kept writing state after LOOKOUT_STATE_DIR changed."""
     import alta
     import heuristicas
-    while True:
-        time.sleep(every)
+    while not para.wait(every):
         with _REVISANDO:
             try:
                 if heuristicas.alguien_callado(project_id):
@@ -198,7 +198,9 @@ def wait(path, offset=0, types="", timeout=0, pidfile="", cursor="", owner=None,
         import heuristicas
         global _REVISANDO
         _REVISANDO = threading.Lock()
-        threading.Thread(target=revisor, args=(revisa, heuristicas.revisa_cada()), daemon=True).start()
+        para_revisor = threading.Event()
+        threading.Thread(target=revisor, args=(revisa, heuristicas.revisa_cada(), para_revisor), daemon=True,
+                         name="lookout-revisor").start()
     if timeout:
         def on_alarm(_s, _f):
             print("timeout del waiter: sin eventos; relánzalo")
@@ -232,6 +234,8 @@ def wait(path, offset=0, types="", timeout=0, pidfile="", cursor="", owner=None,
                 sys.stdout.flush()
             return 0
     finally:
+        if revisa:
+            para_revisor.set()
         if timeout:
             signal.setitimer(signal.ITIMER_REAL, 0)  # 0.12.1: a wait() that returns leaves no alarm armed behind it
         lookout_state.deja_de_seguir(tail)

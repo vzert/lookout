@@ -66,6 +66,8 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
 1. El resumen: tabla + eventos no atendidos (y los marca como atendidos). Lee esto, no la pantalla de los agentes.
    - Te despertó el waiter: su salida (el archivo `output-file` de la notificación, con `Read`) **ya es el resumen**
      y ya marcó los eventos. No hace falta `lookout resumen` (si lo corres, te muestra esos mismos eventos una vez más).
+     **Léela entera, nunca a través de `grep`, `tail` o `head`**: es corta, y como ya marcó sus eventos, uno que tu
+     filtro no deje pasar no vuelve a salir (2026-10-15: un grep de «pregunta» se comió dos `agente nuevo`).
    - Te despertó un mensaje o el usuario: `lookout resumen <project_id>`.
    - La salida del waiter muestra solo lo que cambió desde el despertar anterior: si la tabla de agentes, las
      decisiones o las publicaciones no cambiaron, dice `sin cambios` en una línea (todo: `lookout resumen <project_id>
@@ -95,7 +97,10 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
   escríbele por su nombre.
 - **`terminó su turno`**: si te debe un reporte y no llegó, una lectura corta de pantalla
   (`herdr agent read <pane> --source visible`) para verificar. Si no, nada.
-- **`agente nuevo (lanzado a mano), ya registrado`**: el waiter lo encontró y ya le escribió su marcador.
+- **`agente nuevo (lanzado a mano), ya registrado`**: el waiter lo encontró, ya le escribió su marcador y ya lo
+  renombró (`renombrado`; si dice `sin renombrar (…)`, `entrega` lo renombra; si dice `renombrado a medias: herdr no
+  renombró …`, la sesión sí cambió de nombre y lo que falta es cosmético: `entrega` lo reintenta, y si su salida dice
+  `A MEDIAS`, díselo al usuario en una línea y no reintentes).
   `lookout entrega <project_id> <agente>` para su nota. Si dice `NO ENTREGADO … borrador`, avisa al usuario una vez
   (su caja tiene texto suyo) y no reintentes en bucle; `NO ENTREGADO … working` → entrégala en su `terminó su turno`.
 - **`dejó un bloque para retomar (p-…, vigente|ambiguo…)`** (al terminar su turno, o `estaba quieto con un «Como

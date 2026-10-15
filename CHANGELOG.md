@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.13.1
+
+Found in the live test of 0.13.0 in 3-tier-memory (2026-10-15): two sessions launched by hand were registered but kept
+their old names. The supervisor read the waiter's digest through its own `grep` (23 times in that session), missed
+both `agente nuevo` lines, and never ran `lookout entrega`.
+
+- The alta renames a new agent itself: `/rename` of the session, herdr's agent and pane names, and a tab with herdr's
+  default label, as `lookout entrega` does. With text in its input box it types nothing and the `nuevo` line says
+  `sin renombrar (caja con …)`; if herdr refuses the `/rename` it says `sin renombrar`, and if it refuses the agent, pane or tab name, `renombrado a medias`. The note still comes from
+  `lookout entrega`, which no longer types a second `/rename` in a session whose title already is the agent's name, and no longer
+  records or reports as done a name herdr refused (its output says `A MEDIAS`). The supervise skill says what to do
+  with `renombrado a medias`.
+- The supervise skill tells the supervisor to read the waiter's output whole, never through `grep`, `tail` or `head`:
+  the digest marks its events handled, so one a filter hides does not come back.
+- The waiter's checker thread ends when its wait ends. An in-process wait in the tests left it running, and it wrote
+  `projects/pF4/descubre.json` in the user's real state.
+
 ## 0.13.0
 
 The supervisor takes care of the agents' life cycle: it relieves an agent that left a live «Como retomar», closes the

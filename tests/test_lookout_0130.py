@@ -609,6 +609,98 @@ class AltaTest(f4.Base):
         self.assertEqual(rc, 0)
         self.assertIn("nueva", registry.load(PID)["agents"])
 
+    def herdr_falso(self, caja="vacia"):
+        """Record the herdr calls of the alta's rename; the input box reads `caja`."""
+        import alta
+        llamadas = []
+        saved = (alta.herdr_cli.run, alta.caja)
+        alta.herdr_cli.run = lambda args, timeout=10: (llamadas.append(list(args)) or (0, "", ""))
+        alta.caja = lambda pane: caja
+        self.addCleanup(lambda: setattr(alta.herdr_cli, "run", saved[0]) or setattr(alta, "caja", saved[1]))
+        return llamadas
+
+    def test_a_new_agent_is_renamed_by_the_alta_itself(self):
+        # 0.13.1: live 2026-10-15 a supervisor filtered the waiter's digest with its own grep, never ran `lookout
+        # entrega`, and the hand-launched session kept its old name. The alta renames it without the supervisor.
+        llamadas = self.herdr_falso()
+        evs = self.descubre([self.herdr("nueva", "w1:p9", self.repo, "working")])
+        nombre = evs[0]["nombre"]
+        self.assertIn(["agent", "prompt", "w1:p9", "/rename " + nombre], llamadas)
+        self.assertIn(["agent", "rename", "w1:p9", nombre], llamadas)
+        self.assertIn(["pane", "rename", "w1:p9", "lookout: " + nombre], llamadas)
+        self.assertEqual(evs[0]["renombre"], "hecho")
+        self.assertEqual(registry.load(PID)["agents"]["nueva"]["herdr_name"], nombre)
+        self.assertIn("renombrado", digest.describe(evs[0]))
+
+    def test_a_refused_rename_is_not_reported_as_done(self):
+        import alta
+        llamadas = self.herdr_falso()
+        alta.herdr_cli.run = lambda args, timeout=10: (llamadas.append(list(args)) or (1, "", "EACCES"))
+        evs = self.descubre([self.herdr("nueva", "w1:p9", self.repo)])
+        self.assertNotEqual(evs[0]["renombre"], "hecho")
+        self.assertIn("sin renombrar", digest.describe(evs[0]))
+        self.assertFalse(registry.load(PID)["agents"]["nueva"].get("herdr_name"))
+
+    def test_a_refused_herdr_rename_is_reported_half_done(self):
+        # codex round 2: «hecho» while herdr refused the agent, pane or tab rename
+        import alta
+        for rehusa, falta in ((["agent", "rename"], "agente"), (["pane", "rename"], "pane"), (["tab", "rename"], "pestaña")):
+            llamadas = self.herdr_falso()
+            alta.herdr_cli.run = lambda args, timeout=10, r=rehusa: (llamadas.append(list(args)) or
+                                                                     ((1, "", "EACCES") if args[:2] == r else (0, "", "")))
+            sid = "nueva-" + falta
+            evs = alta.descubre(PID, [self.herdr(sid, "w1:p" + str(len(falta)), self.repo)],
+                                common_of=lambda cwd: self.repo + "/.git" if cwd == self.repo else None,
+                                tab_of=lambda t: {"label": "1", "number": 1, "pane_count": 1})
+            self.assertEqual(evs[0]["renombre"], "a medias: herdr no renombró " + falta)
+            self.assertIn("renombrado a medias", digest.describe(evs[0]))
+            e = registry.load(PID)["agents"][sid]
+            self.assertEqual(bool(e.get("herdr_name")), falta != "agente")
+
+    def test_the_event_names_the_renamed_default_tab(self):
+        import alta
+        self.herdr_falso()
+        evs = alta.descubre(PID, [self.herdr("nueva", "w1:p9", self.repo)],
+                            common_of=lambda cwd: self.repo + "/.git" if cwd == self.repo else None,
+                            tab_of=lambda t: {"label": "1", "number": 1, "pane_count": 1})
+        nombre = evs[0]["nombre"]
+        self.assertEqual(evs[0]["pestana"], nombre)
+        self.assertEqual(registry.load(PID)["agents"]["nueva"]["pestana"], nombre)
+
+    def test_the_alta_never_types_over_a_draft(self):
+        llamadas = self.herdr_falso(caja="borrador")
+        evs = self.descubre([self.herdr("nueva", "w1:p9", self.repo)])
+        self.assertFalse([c for c in llamadas if c[:2] == ["agent", "prompt"]])
+        self.assertEqual(evs[0]["renombre"], "caja con borrador")
+        self.assertIn("sin renombrar", digest.describe(evs[0]))
+        self.assertIn("lookout entrega", digest.describe(evs[0]))
+
+    def test_the_checker_thread_ends_with_its_waiter(self):
+        # 0.13.1: the in-process waiter of test_the_waiter_wakes_with_nuevo left its checker thread running; once
+        # tearDown dropped LOOKOUT_STATE_DIR it wrote projects/pF4/descubre.json in the user's real state.
+        import tempfile
+        import threading
+        import alta
+        import heuristicas
+        saved = (heuristicas.revisa_cada, alta.herdr_cli.agent_list)
+        heuristicas.revisa_cada = lambda: 0.1
+        alta.herdr_cli.agent_list = lambda: []
+        lookout_state.append_event(PID, {"event": "ask", "session_id": "s1"})
+        try:
+            try:
+                wait_event.wait(lookout_state.events_path(PID), 0, digest.WAKE_TYPES, 5, digest.pidfile(PID),
+                                digest.cursor_path(PID), revisa=PID, linea=False)
+            except SystemExit:
+                pass
+            otro = tempfile.mkdtemp()
+            self.addCleanup(lambda: __import__("shutil").rmtree(otro, ignore_errors=True))
+            os.environ["LOOKOUT_STATE_DIR"] = otro
+            time.sleep(0.5)
+            self.assertEqual(os.listdir(otro), [])
+            self.assertFalse([t for t in threading.enumerate() if t.name == "lookout-revisor"])
+        finally:
+            heuristicas.revisa_cada, alta.herdr_cli.agent_list = saved
+
     def test_the_pass_runs_every_n_seconds(self):
         import alta
         os.environ["LOOKOUT_DESCUBRE_CADA"] = "120"

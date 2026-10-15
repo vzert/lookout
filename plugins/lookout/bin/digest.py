@@ -187,9 +187,12 @@ def describe(ev, quien=None):
         # 0.12.2: the description first; a command is often a long scratchpad path
         cmds = [t.get("description") or t.get("command") or t.get("type", "") for t in ev.get("tareas", [])]
         return head + ": " + "; ".join(c for c in cmds if c) + (" — " + ev.get("ultima", "") if ev.get("ultima") else "")
-    if kind == "nuevo":  # 0.13.0 (Fase 3)
-        return head + ": pestaña «%s», %s → `lookout entrega` para darle su nota" % (
-            ev.get("pestana") or "-", ev.get("estado_herdr") or "sin estado")
+    if kind == "nuevo":  # 0.13.0 (Fase 3); 0.13.1: the alta renamed it itself, or says why not
+        r = ev.get("renombre") or ""
+        ren = ("renombrado" if r == "hecho" else "renombrado " + r if r.startswith("a medias") else
+               "sin renombrar (%s)" % r if r else "")
+        return head + ": %spestaña «%s», %s → `lookout entrega` para darle su nota" % (
+            ren + ", " if ren else "", ev.get("pestana") or "-", ev.get("estado_herdr") or "sin estado")
     if kind == "retomar":  # 0.13.0: registered while already idle, with a «Como retomar» in its last turn
         import retomar
         return head + ": " + retomar.describe(ev.get("retomar"))

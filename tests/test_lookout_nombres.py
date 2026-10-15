@@ -169,6 +169,46 @@ class EntregaTabTest(Case):
         self.assertEqual(renames, [["tab", "rename", "wS:t9", "nope-arreglar"]])
         self.assertEqual(registry.quien(e), "nope-arreglar")
 
+    def test_a_session_that_already_has_the_name_gets_no_second_rename(self):
+        # 0.13.1 (codex round 1): the alta renames a hand-launched agent; its `lookout entrega` must not type it again
+        registry.save("pA", {"agents": {"s1": {"session_id": "s1", "nombre": "nope-arreglar", "pane_id": "wS:p9",
+                                               "tab_id": "wS:t9", "cwd": "/nope", "pestana": "x"}}})
+        with open(os.path.join(FIX, "caja-a1.ansi")) as fh:
+            box = fh.read()
+        cli = load_cli()
+        cli.project = lambda arg: ("pA", "/nope/.git")
+        for titulo, esperados in (("nope-arreglar", 0), ("otro", 1)):
+            self.stub(agent_get={"pane_id": "wS:p9", "tab_id": "wS:t9", "cwd": "/nope", "agent_status": "idle",
+                                 "agent_session": {"value": "s1"}, "terminal_title_stripped": titulo},
+                      tabs={"wS:t9": {"label": "x", "number": 9, "pane_count": 1}}, agent_read=box)
+            cli.cmd_entrega(type("A", (), {"proyecto": "pA", "agente": "nope-arreglar", "pasos": "rename",
+                                           "timeout": 1})())
+            prompts = [c for c in self.calls() if c[:2] == ["agent", "prompt"] and "/rename" in c[-1]]
+            self.assertEqual(len(prompts), esperados, titulo)
+
+    def test_a_refused_herdr_name_is_not_recorded_nor_reported_done(self):
+        # 0.13.1 (codex round 3): entrega wrote herdr_name and printed success when herdr refused the rename
+        import contextlib
+        import io
+        registry.save("pA", {"agents": {"s1": {"session_id": "s1", "nombre": "nope-arreglar", "pane_id": "wS:p9",
+                                               "tab_id": "wS:t9", "cwd": "/nope", "pestana": "x"}}})
+        with open(os.path.join(FIX, "caja-a1.ansi")) as fh:
+            box = fh.read()
+        self.stub(agent_get={"pane_id": "wS:p9", "tab_id": "wS:t9", "cwd": "/nope", "agent_status": "idle",
+                             "agent_session": {"value": "s1"}},
+                  tabs={"wS:t9": {"label": "x", "number": 9, "pane_count": 1}}, agent_read=box)
+        cli = load_cli()
+        cli.project = lambda arg: ("pA", "/nope/.git")
+        real = herdr_cli.run
+        herdr_cli.run = lambda args, timeout=10: (1, "", "EACCES") if args[:2] == ["agent", "rename"] else real(args, timeout)
+        self.addCleanup(setattr, herdr_cli, "run", real)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            cli.cmd_entrega(type("A", (), {"proyecto": "pA", "agente": "nope-arreglar", "pasos": "rename",
+                                           "timeout": 1})())
+        self.assertIn("A MEDIAS: herdr no renombró agente", out.getvalue())
+        self.assertFalse(registry.load("pA")["agents"]["s1"].get("herdr_name"))
+
     def test_a_tab_the_user_named_is_never_renamed(self):
         renames, e = self.entrega({"label": "Cambio DeepSeek", "number": 9, "pane_count": 1})
         self.assertEqual(renames, [])
