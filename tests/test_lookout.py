@@ -483,8 +483,9 @@ class TailHuerfanoTest(unittest.TestCase):
             fh.write(json.dumps({"event": "ask", "nombre": "x"}) + "\n")
         self.assertEqual(p.wait(timeout=10), 0)
         self.assertTrue(self.gone_within(self.tmp.name), self.tails(self.tmp.name))
-        p = subprocess.Popen([sys.executable, "-c", "import sys; sys.path.insert(0, %r); import wait_event; "
-                              "sys.exit(wait_event.wait(%r, 999999, 'ask', 60))" % (BIN, path)],
+        vacio = os.path.join(self.tmp.name, "w5", "events.jsonl")      # a fresh file: GNU tail reads an offset past
+        p = subprocess.Popen([sys.executable, "-c", "import sys; sys.path.insert(0, %r); import wait_event; "  # the end
+                              "sys.exit(wait_event.wait(%r, 0, 'ask', 60))" % (BIN, vacio)],  # as a truncation
                              env=env, stdout=subprocess.PIPE, text=True)
         self.addCleanup(p.wait)
         self.addCleanup(p.kill)
