@@ -13,6 +13,7 @@ Layout:
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import time
 
@@ -117,6 +118,36 @@ def read_events(project_id, offset=0):
         except ValueError:
             continue
     return events, end
+
+
+# 0.12.1: `tail -F` never ends by itself (it waits for the file to come back), so a waiter or a delivery killed with
+# SIGKILL, where no `finally` runs, left it alive forever: Will-Ops found 1,483 of them (PPID 1, up to 12 days old),
+# most from test runs that kill their waiters. The tail now runs under a small sh guard in its own process group. The
+# guard blocks reading its stdin, a pipe whose only write end is held by the process that called `sigue` (Popen's
+# close_fds keeps it out of every other child). When that process ends, however it ends, the kernel closes the write
+# end, the guard's read returns and it kills the tail. No `ps`, no polling, no pid to be reused (adversary 0.12.1,
+# rounds 1-2: reading the parent with `ps` failed where `ps` is missing, and `kill -0 <pid>` trusts a reused pid).
+# `deja_de_seguir` kills the whole group on a normal end. The tail itself (an async command of a non-interactive sh:
+# its stdin is /dev/null) still writes straight to our stdout pipe: the kernel wakes the reader on each line.
+_GUARDIA = ('"$@" & t=$!; trap \'kill $t 2>/dev/null; exit 0\' TERM HUP INT; '
+            'while read -r _; do :; done; '
+            'kill "$t" 2>/dev/null')
+
+
+def sigue(path, offset=0):
+    """A `tail -c +N -F path` that dies with the process that called this. Its stdout is the lines after `offset`.
+    Keep the returned object (its stdin is the guard's lifeline) until `deja_de_seguir`."""
+    return subprocess.Popen(["sh", "-c", _GUARDIA, "lookout-tail", "tail", "-c", "+%d" % (offset + 1), "-F", path],
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                            start_new_session=True)
+
+
+def deja_de_seguir(proc):
+    """Kill the guard and its tail (one process group). Safe to call twice, also from a signal handler."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
 
 
 # ---------- projects ----------

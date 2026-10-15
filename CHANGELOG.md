@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.12.1
+
+- The `tail -F` that the waiter (`lookout espera`) and a delivery use to follow `events.jsonl` now dies with the
+  process that started it, also when that process is killed with SIGKILL and no cleanup runs. Before, `tail -F` stayed
+  alive forever waiting for the file: one machine had 1,483 of them, up to 12 days old, most left by test runs that
+  kill their waiters (reported from Will-Ops, 2026-10-15). The tail now runs under a small `sh` guard in its own
+  process group. The guard waits on a pipe that only the starting process holds open; when that process ends, for any
+  reason, the pipe closes and the guard ends the tail at once. It needs no `ps`, does no polling and trusts no process
+  id. A normal end kills the group. Lines still reach the waiter as soon as they are written.
+- `wait_event.wait()` no longer leaves its timeout alarm armed after it returns.
+
 ## 0.12.0
 
 The supervisor asks the user in a modal, never in prose (measured on 3-tier-memory, 2026-10-15: with four agents

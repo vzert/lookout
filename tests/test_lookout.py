@@ -5,6 +5,7 @@ records its arguments, so nothing touches ~/.local/state/lookout or a real herdr
 """
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -408,6 +409,116 @@ class DigestWaiterTest(StateCase):
             proc.communicate(timeout=5)
         self.assertEqual(digest.waiter_alive("pA"), 0)
         self.assertTrue(os.path.exists(digest.pidfile("pA")))  # never unlinked
+
+
+class TailHuerfanoTest(unittest.TestCase):
+    """0.12.1: a `tail -F` started by lookout dies with the process that started it, also on SIGKILL, where no `finally`
+    runs (Will-Ops, 2026-10-15: 1,483 orphan tails, PPID 1, up to 12 days old, most from test runs killing waiters)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.state = os.path.join(self.tmp.name, "state")
+
+    def tails(self, needle):
+        r = subprocess.run(["pgrep", "-f", "tail -c .* -F .*%s" % needle], capture_output=True, text=True)
+        return [p for p in r.stdout.split() if p]
+
+    def gone_within(self, needle, seconds=5.0):
+        end = time.time() + seconds
+        while time.time() < end:
+            if not self.tails(needle):
+                return True
+            time.sleep(0.2)
+        return False
+
+    def child(self, code):
+        env = dict(os.environ, LOOKOUT_STATE_DIR=self.state)
+        p = subprocess.Popen([sys.executable, "-c", "import sys; sys.path.insert(0, %r); " % BIN + code], env=env)
+        self.addCleanup(p.wait)
+        self.addCleanup(p.kill)
+        return p
+
+    def started(self, needle):
+        for _ in range(50):
+            if self.tails(needle):
+                return True
+            time.sleep(0.1)
+        return False
+
+    def test_the_waiters_tail_dies_when_the_waiter_is_killed(self):
+        path = os.path.join(self.tmp.name, "w", "events.jsonl")
+        p = self.child("import wait_event; wait_event.wait(%r, 0, 'ask', 60)" % path)
+        self.assertTrue(self.started(self.tmp.name))
+        p.kill()                                                   # SIGKILL: no finally, no signal handler
+        p.wait()
+        self.assertTrue(self.gone_within(self.tmp.name), self.tails(self.tmp.name))
+
+    def test_a_deliverys_tail_dies_when_its_process_is_killed(self):
+        p = self.child("import deliver; deliver.wait_event('pT', 0, 60, lambda ev: False)")
+        self.assertTrue(self.started(self.tmp.name))
+        p.kill()
+        p.wait()
+        self.assertTrue(self.gone_within(self.tmp.name), self.tails(self.tmp.name))
+
+    def test_without_ps_the_guard_keeps_the_tail_and_the_waiter_still_wakes(self):
+        # adversary 0.12.1 round 1: with no usable `ps` a ps-based guard killed the tail at once (waiter deaf); the
+        # guard no longer needs `ps` at all: a PATH without it must still wake and still clean up
+        sinps = os.path.join(self.tmp.name, "sinps")
+        os.makedirs(sinps)
+        for tool in ("sh", "tail", "sleep", "tr"):
+            src = subprocess.run(["sh", "-c", "command -v " + tool], capture_output=True, text=True).stdout.strip()
+            os.symlink(src, os.path.join(sinps, tool))
+        path = os.path.join(self.tmp.name, "w3", "events.jsonl")
+        env = dict(os.environ, LOOKOUT_STATE_DIR=self.state, PATH=sinps)
+        p = subprocess.Popen([sys.executable, "-c", "import sys; sys.path.insert(0, %r); import wait_event; "
+                              "sys.exit(wait_event.wait(%r, 0, 'ask', 20))" % (BIN, path)],
+                             env=env, stdout=subprocess.PIPE, text=True)
+        self.addCleanup(p.wait)
+        self.addCleanup(p.kill)
+        self.assertTrue(self.started(self.tmp.name))
+        time.sleep(2.5)                                            # two guard checks with no `ps`
+        self.assertIsNone(p.poll())                                # still waiting, not deaf
+        with open(path, "a") as fh:
+            fh.write(json.dumps({"event": "ask", "nombre": "x"}) + "\n")
+        self.assertEqual(p.wait(timeout=10), 0)
+        self.assertTrue(self.gone_within(self.tmp.name), self.tails(self.tmp.name))
+        p = subprocess.Popen([sys.executable, "-c", "import sys; sys.path.insert(0, %r); import wait_event; "
+                              "sys.exit(wait_event.wait(%r, 999999, 'ask', 60))" % (BIN, path)],
+                             env=env, stdout=subprocess.PIPE, text=True)
+        self.addCleanup(p.wait)
+        self.addCleanup(p.kill)
+        self.assertTrue(self.started(self.tmp.name))
+        p.kill()                                                   # SIGKILL with no `ps` on PATH
+        p.wait()
+        self.assertTrue(self.gone_within(self.tmp.name), self.tails(self.tmp.name))
+
+    def test_the_guard_ends_the_tail_at_once_not_on_a_timer(self):
+        # rounds 1-2: the guard watches a pipe only its starter holds, not a pid: the tail goes with the starter
+        # within a fraction of a second, with no polling loop to wait for
+        path = os.path.join(self.tmp.name, "w4", "events.jsonl")
+        p = self.child("import wait_event; wait_event.wait(%r, 0, 'ask', 60)" % path)
+        self.assertTrue(self.started(self.tmp.name))
+        p.kill()
+        p.wait()
+        self.assertTrue(self.gone_within(self.tmp.name, 0.8), self.tails(self.tmp.name))
+
+    def test_a_normal_end_leaves_no_tail(self):
+        os.environ["LOOKOUT_STATE_DIR"] = self.state
+        self.addCleanup(os.environ.pop, "LOOKOUT_STATE_DIR", None)
+        import deliver
+        self.assertFalse(deliver.wait_event("pT", 0, 0.5, lambda ev: False))      # timeout
+        lookout_state.append_event("pT", {"event": "working", "session_id": "s"})
+        self.assertTrue(deliver.wait_event("pT", 0, 5, lambda ev: ev.get("event") == "working"))  # found
+        self.assertTrue(self.gone_within(self.tmp.name, 2.0), self.tails(self.tmp.name))
+        path = os.path.join(self.tmp.name, "w2", "events.jsonl")
+        os.makedirs(os.path.dirname(path))
+        with open(path, "w") as fh:
+            fh.write(json.dumps({"event": "ask"}) + "\n")
+        self.assertEqual(wait_event.wait(path, 0, "ask", 5), 0)
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL)[0], 0.0)    # no alarm left armed in this process
+        self.assertTrue(self.gone_within(self.tmp.name, 2.0), self.tails(self.tmp.name))
+
 
 if __name__ == "__main__":
     unittest.main()

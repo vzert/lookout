@@ -17,7 +17,6 @@ import fcntl
 import json
 import os
 import signal
-import subprocess
 import time
 import sys
 
@@ -167,11 +166,10 @@ def wait(path, offset=0, types="", timeout=0, pidfile="", cursor="", owner=None,
         lookout_state.write_json(owner_path(pidfile), dict(owner, waiter_pid=os.getpid()))
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     open(path, "a").close()
-    tail = subprocess.Popen(["tail", "-c", "+%d" % (offset + 1), "-F", path],
-                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    tail = lookout_state.sigue(path, offset)  # 0.12.1: dies with this process, also on SIGKILL
 
     def stop(code):
-        tail.kill()
+        lookout_state.deja_de_seguir(tail)
         drop_pidfile(pidfile)
         sys.exit(code)
 
@@ -180,7 +178,7 @@ def wait(path, offset=0, types="", timeout=0, pidfile="", cursor="", owner=None,
         import threading
 
         def quit_now(code):
-            tail.kill()
+            lookout_state.deja_de_seguir(tail)
             drop_pidfile(pidfile)
             os._exit(code)  # from a thread: sys.exit would only end the thread
         lock_path = os.path.join(os.path.dirname(os.path.abspath(pidfile)), "lock.json")
@@ -217,7 +215,9 @@ def wait(path, offset=0, types="", timeout=0, pidfile="", cursor="", owner=None,
             sys.stdout.flush()
             return 0
     finally:
-        tail.kill()
+        if timeout:
+            signal.setitimer(signal.ITIMER_REAL, 0)  # 0.12.1: a wait() that returns leaves no alarm armed behind it
+        lookout_state.deja_de_seguir(tail)
         drop_pidfile(pidfile)
     return 2
 

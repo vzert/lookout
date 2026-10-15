@@ -18,7 +18,6 @@ import glob
 import json
 import os
 import signal
-import subprocess
 import sys
 import time
 
@@ -114,8 +113,7 @@ def wait_event(project_id, offset, timeout, pred):
     satisfies `pred`, or `timeout` seconds pass. Returns True/False."""
     path = lookout_state.events_path(project_id)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tail = subprocess.Popen(["tail", "-c", "+%d" % (offset + 1), "-F", path],
-                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    tail = lookout_state.sigue(path, offset)  # 0.12.1: dies with this process, also on SIGKILL
 
     def on_alarm(_s, _f):
         raise TimeoutError()
@@ -134,7 +132,8 @@ def wait_event(project_id, offset, timeout, pred):
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, old)
-        tail.kill()
+        lookout_state.deja_de_seguir(tail)
+        tail.stdin.close()
         tail.stdout.close()
         tail.wait()
     return False
