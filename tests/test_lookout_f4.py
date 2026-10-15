@@ -566,9 +566,13 @@ class ReportedTurnTest(Base):
 
 class EnviaLogTest(Base):
     def test_an_answer_typed_by_envia_is_logged_for_the_relief(self):
-        from importlib.machinery import SourceFileLoader
         import argparse
-        lk = SourceFileLoader("lookout_cli", LK).load_module()
+        import importlib.util
+        from importlib.machinery import SourceFileLoader
+        # load_module() is gone in Python 3.15 (macOS CI runner, 2026-10-15): spec + exec_module
+        loader = SourceFileLoader("lookout_cli", LK)
+        lk = importlib.util.module_from_spec(importlib.util.spec_from_loader("lookout_cli", loader))
+        loader.exec_module(lk)
         self.agent("s1", "uno")
         old = lk.deliver.deliver
         lk.deliver.deliver = lambda pid, e, clave, texto, confirmar: (0, "entregado")
