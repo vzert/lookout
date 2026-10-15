@@ -49,9 +49,9 @@ Antes de proponer, **en cada lote** (también el que imprimen `libera` y `cierra
 
 ## 3. Una sola aprobación del usuario
 
-Una pregunta en **tu** sesión (tú no estás supervisado) con el lote completo: `AskUserQuestion` si aún no hay
-agentes vivos (el primer lote); con agentes vivos, `lookout decision … --abre` y la pregunta en el chat, y terminas el
-turno con el waiter vivo (ver «Cómo pedirle una decisión al usuario» en `/lookout:supervisa`). En la pregunta:
+Una pregunta en **tu** sesión (tú no estás supervisado) con el lote completo, siempre en `AskUserQuestion`, nunca
+en prosa. Con agentes vivos, antes `lookout decision … --abre` y el waiter vivo (ver «Cómo pedirle una decisión al
+usuario» en `/lookout:supervisa`). En la pregunta:
 por pendiente, **qué problema resuelve en palabras simples** (para alguien que no recuerda el pendiente) y qué hará
 el agente (solo medir, cambiar código, redactar algo sin enviarlo); al final, entre paréntesis, id, agente y dónde trabaja (pestaña en main o el worktree que pidió el usuario).
 En una línea, la cola y los excluidos. Solo el lote: ninguna otra decisión va en esta pregunta (ver «Cómo pedirle una
@@ -74,13 +74,13 @@ Qué hacer con cada salida:
 - **Cualquier otro `FALLO`** (worktree o workspace que herdr no creó, diálogo de confianza con otra ruta,
   sin `SessionStart`, carpeta que ya existe): la tarea no arrancó. No lo arregles por tu cuenta ni borres
   nada. Mira la pantalla del agente una vez si hay pane (`herdr agent read <pane> --source visible`) y
-  pregunta al usuario (en el chat si hay otros agentes vivos, con `lookout decision … --abre` antes): **Reintentar** (si quedó un worktree, él corre en su
+  pregunta al usuario en el modal (con `lookout decision … --abre` antes si hay otros agentes vivos): **Reintentar** (si quedó un worktree, él corre en su
   terminal `! git -C <repo> worktree remove <ruta del worktree>`; sin él, el pendiente vuelve a salir en
   `lookout pendientes`) / **Dejarlo fuera** (queda excluido como "ya tiene agente"). Un agente de código que falló
   en main deja sus cambios a medias en el árbol: no vuelve a proponerse hasta que el usuario decida qué hacer con
   ellos y corras `lookout pendientes <project_id> --reintenta <id>` (lo dice `libera --fallida`); también si su
   lanzamiento falló (no llegó a editar: dilo así al usuario). Es una decisión del
-  usuario: va con su decisión abierta, no como frase suelta en el chat.
+  usuario: va con su decisión abierta y al modal, no como frase suelta en el chat.
 - `FALLO … la entrega no se confirmó`: **no reenvíes a mano**. Corre `lookout envia <project_id> <agente> --tarea`
   (misma entrega: antes de reintentar lee eventos, transcript y caja, y nunca la duplica). Si dice
   `NO ENTREGADO … borrador`, el usuario escribe en esa caja: avísale y no escribas. Si dice `ESCALAR`, al usuario.

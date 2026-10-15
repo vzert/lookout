@@ -186,8 +186,8 @@ class RepiteTest(F6Case):
         code, txt = heuristicas.corrige(PID, e, "una tercera corrección que no debe salir")
         self.assertEqual(code, 5)
         self.assertTrue(txt.startswith("PARA"))
-        self.assertIn("la pregunta en el chat", txt)  # 0.10.0 (F2): never the modal while agents are alive
-        self.assertNotIn("AskUserQuestion", txt)
+        self.assertIn("AskUserQuestion", txt)  # 0.12.0: always the modal (0.10.0 F2 asked in the chat; it got lost)
+        self.assertNotIn("en el chat", txt)
         self.assertEqual(len(self.events("correccion")), 2)
         self.assertIn("PARA Y REPLANTEA", digest.describe(rep[-1]))
 

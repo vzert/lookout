@@ -227,7 +227,8 @@ class RespuestaEnChatTest(StateCase):
             cli.cmd_publica(argparse.Namespace(proyecto="/x", agente="fix-login", cola=False, hecho=False,
                                                retira=False))
         self.assertIn("lookout decision %s --abre" % self.pid, out.getvalue())
-        self.assertIn("en el chat si hay agentes vivos", out.getvalue())
+        self.assertIn("AskUserQuestion", out.getvalue())  # 0.12.0: always the modal, never prose
+        self.assertNotIn("en el chat", out.getvalue())
 
     def test_the_round_cap_and_the_close_ask_in_the_chat_too(self):
         # adversary round 2 (subagent): two more carriers of the rule still sent the supervisor to the modal
@@ -236,18 +237,19 @@ class RespuestaEnChatTest(StateCase):
         self.transcript("s1", [SPAWN, a_text(M_SUB + "\n" + BREAK)] * 5)
         ok, code, text = gobierno.decide_ronda(gobierno.estado(self.pid, e, self.projects))
         self.assertEqual((ok, code), (False, "PREGUNTA-USUARIO"))
-        self.assertIn("en el chat", text)
-        self.assertNotIn("AskUserQuestion", text)
+        self.assertIn("AskUserQuestion", text)
+        self.assertNotIn("en el chat", text)
         ok, lines = cierre.cierra(self.pid, "/x/.git", e, gobierno.estado(self.pid, e, self.projects), "completed",
                                   "nota", "")
         self.assertFalse(ok)
-        self.assertIn("en el chat", lines[0])
-        self.assertNotIn("AskUserQuestion", lines[0])
+        self.assertIn("AskUserQuestion", lines[0])
+        self.assertNotIn("en el chat", lines[0])
 
     def test_the_skill_asks_in_the_chat_while_agents_are_alive(self):
         with open(os.path.join(ROOT, "plugins", "lookout", "skills", "supervisa", "SKILL.md"), encoding="utf-8") as fh:
             skill = fh.read()
-        self.assertIn("Con agentes vivos, pregunta en el chat", skill)
+        self.assertNotIn("Con agentes vivos, pregunta en el chat", skill)  # 0.12.0: the rule was reversed
+        self.assertIn("Pregúntale siempre con `AskUserQuestion`, nunca en prosa", skill)
         self.assertIn("es regla de\n     goalspec, no tuya ni de lookout", skill)
         self.assertNotIn("MISMO-MODELO", skill)
 

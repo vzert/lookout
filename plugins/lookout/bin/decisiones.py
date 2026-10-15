@@ -7,6 +7,7 @@ No repeated reminders here (that is F6). An option offered to the user stays blo
 answers (T3): an open entry is that block, written down.
 """
 import os
+import re
 import time
 
 import herdr_cli
@@ -53,21 +54,63 @@ def respondida(project_id, did):
 
 
 # Fase 9 C4: every AskUserQuestion of the supervisor is on record from its hook, without depending on the model
-# (claude-vzert: not one question of the session reached decisiones.json). A question asked right after
-# `decision --abre` attaches to that decision; any other one becomes its own. The hook writes down the user's
-# answer as given and never turns it into a yes: only `decision --cierra … --si` authorizes (respondida()).
-LIGA_S = 120  # `decision --abre` and its AskUserQuestion go in the same turn
+# (claude-vzert: not one question of the session reached decisiones.json). 0.12.0: the supervisor asks the user's
+# pending decisions in ONE modal (3-tier-memory, 2026-10-15: two decisions in prose, 34 s apart, lost in the scroll),
+# one question per decision with its id at the end: `(d3)`. A question attaches ONLY to the decision whose id it names
+# (the last id in its full text; adversary rounds 1-2: every guess, "all open ones" and then "the oldest waiting",
+# put an answer on a decision the modal never asked). A decision counts as answered only when the answer to its own
+# question arrives. Anything unmatched stays waiting, and the Stop check reminds it once: a miss errs toward asking.
+# A modal that names no decision at all becomes its own entry, as before. The hook writes down the user's answer as
+# given and never turns it into a yes: only `decision --cierra … --si` authorizes (respondida()).
+ID_EN_PREGUNTA = re.compile(r"\bd(\d+)\b")
 
 
-def registra_pregunta(project_id, tool_use_id, texto, now=None):
-    now = now or time.time()
+def esperando(project_id, d=None):
+    """Decisions the supervisor opened that have no answer of the user yet (modal or chat). A modal the user dismissed,
+    or one whose questions did not name the decision, leaves it here."""
+    d = d or load(project_id)
+    return [it for it in d["items"] if it["estado"] == "abierta" and it.get("origen") != "hook"
+            and not it.get("respuesta_usuario")]
+
+
+def sin_preguntar(project_id):
+    """What the supervisor's Stop check reminds it of (0.12.0): a decision it opened that the user has not answered."""
+    return esperando(project_id)
+
+
+def marca_recordadas(project_id, ids, now=None):
+    """The Stop check reminds each decision once: it stamps the ones it named, so the next turn end does not nag."""
     d = load(project_id)
-    manual = [it for it in d["items"] if it["estado"] == "abierta" and not it.get("tool_use_id")
-              and now - it["desde"] <= LIGA_S]
-    if manual:
-        item = manual[-1]
-        item.update(tool_use_id=tool_use_id, pregunta=texto)
+    for it in d["items"]:
+        if it["id"] in ids:
+            it["recordada"] = now or time.time()
+    lookout_state.write_json(path(project_id), d)
+
+
+def id_de(pregunta):
+    """The decision id a question names: the LAST `dN` in its full text (the id goes at the end), or None."""
+    ids = ID_EN_PREGUNTA.findall(pregunta or "")
+    return "d" + ids[-1] if ids else None
+
+
+def registra_pregunta(project_id, tool_use_id, preguntas, now=None):
+    """`preguntas`: the modal's FULL question texts (never truncated: the id is at the end). A string joined by " | "
+    is split."""
+    now = now or time.time()
+    if isinstance(preguntas, str):
+        preguntas = [q for q in preguntas.split(" | ") if q]
+    d = load(project_id)
+    libres = {it["id"]: it for it in esperando(project_id, d)}
+    ligadas = []
+    for q in preguntas:
+        it = libres.pop(id_de(q), None)
+        if it:
+            it.update(tool_use_id=tool_use_id, pregunta=q[:2000])
+            ligadas.append(it)
+    if ligadas:
+        item = ligadas[-1]
     else:
+        texto = " | ".join(q[:300] for q in preguntas)
         d["n"] += 1
         item = {"id": "d%d" % d["n"], "texto": texto, "agentes": [], "desde": now, "estado": "abierta",
                 "origen": "hook", "tool_use_id": tool_use_id, "pregunta": texto}
@@ -76,18 +119,32 @@ def registra_pregunta(project_id, tool_use_id, texto, now=None):
     return item
 
 
-def registra_respuesta(project_id, tool_use_id, respuesta, now=None):
-    """The user's literal answer. A decision the hook opened is closed with it (aprueba unknown: None); one the
-    supervisor opened stays open with the answer attached, for `decision --cierra … --si|--no`."""
+def registra_respuesta(project_id, tool_use_id, respuesta, now=None, por_pregunta=None):
+    """The user's literal answer. A decision the hook opened (a modal naming no decision) is closed with the whole
+    `respuesta` (aprueba unknown: None). A decision the supervisor opened gets only the answer to ITS question
+    (`por_pregunta`: question text -> answer, as Claude Code reports it); with no answer to its question it stays
+    waiting. It stays open for `decision --cierra … --si|--no`. Returns the last one it touched, or None."""
+    if not tool_use_id:
+        return None
+    por_pregunta = por_pregunta or {}
     d = load(project_id)
+    hit = None
     for it in d["items"]:
-        if tool_use_id and it.get("tool_use_id") == tool_use_id:
+        if it.get("tool_use_id") != tool_use_id:
+            continue
+        if it.get("origen") == "hook":
             it["respuesta_usuario"] = respuesta
-            if it.get("origen") == "hook" and it["estado"] == "abierta":
+            if it["estado"] == "abierta":
                 it.update(estado="respondida", respuesta=respuesta, aprueba=None, hasta=now or time.time())
-            lookout_state.write_json(path(project_id), d)
-            return it
-    return None
+            hit = it
+            continue
+        mia = next((a for q, a in por_pregunta.items() if id_de(q) == it["id"]), None)
+        if mia not in (None, ""):
+            it["respuesta_usuario"] = str(mia)[:300]
+            hit = it
+    if hit:
+        lookout_state.write_json(path(project_id), d)
+    return hit
 
 
 def registra_respuesta_chat(project_id, respuesta, now=None):

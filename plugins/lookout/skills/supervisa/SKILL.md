@@ -51,9 +51,9 @@ Te toca si tu primer mensaje es un «Como retomar» de lookout, o si `lookout in
    - «Decisiones del usuario — tomadas» y «Respuestas del supervisor»: **ya están decididas**. No se las vuelves a
      preguntar al usuario ni a los agentes, y no las contradices. Si un agente pide algo que ya se decidió, contesta con
      esa decisión (cítala: `d1`, o la hora de tu respuesta).
-   - «Decisiones del usuario — pendientes»: vuelve a preguntárselas al usuario **con su mismo id** (en el chat, o con AskUserQuestion si no hay agentes vivos),
-     sin `--abre` nuevo; ciérralas con `--cierra <id>` al contestar. Cada una con su bloque completo («Cómo pedirle una
-     decisión al usuario»): tú tampoco sabes más que su texto, así que lee la fuente que cita antes de preguntar.
+   - «Decisiones del usuario — pendientes»: vuelve a preguntárselas al usuario **con su mismo id**, juntas en un
+     `AskUserQuestion`, sin `--abre` nuevo; ciérralas con `--cierra <id>` al contestar. Cada pregunta se entiende sola
+     («Cómo pedirle una decisión al usuario»): tú tampoco sabes más que su texto, así que lee la fuente que cita antes.
 3. Manda a cada agente de `Avisar a:` el texto exacto que imprimió `inicia` (su nota lleva tu dirección vieja).
 4. Sigue con «Cada vez que despiertas». No hace falta `lookout entrega`.
 
@@ -80,7 +80,8 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
    lanzarlo.
 4. **Al usuario, una línea** (qué cambió) si no necesita nada de él. Nada de tablas en cada despertar: la tabla
    va al arrancar, cuando la pida o cuando tenga algo que decidir. Cada token que escribes se queda en tu contexto.
-   Si necesita decidir algo, la línea no basta: va el bloque completo de «Cómo pedirle una decisión al usuario».
+   Si necesita decidir algo, no va en la línea ni en prosa: va al modal («Cómo pedirle una decisión al usuario»).
+   Nunca escribas «siguen abiertas» ni repitas en prosa una decisión pendiente: el modal ya la tiene.
 
 ### Qué hacer con cada cosa
 
@@ -119,7 +120,7 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
   - Si tras una corrección el agente te reporta que sigue igual **sin** haber vuelto a fallar (no llega `repite`), esa
     corrección también falló: `lookout corrige … --resumen "<la siguiente>" --reporte "<sus palabras>"`.
   - Con `PARA` (ya hubo 2 correcciones de ese error): **no mandes otra corrección** ni reformules la misma. Replantea:
-    `lookout decision … --abre` + la pregunta en el chat con los intentos y tu propuesta (otro enfoque, otra tarea,
+    `lookout decision … --abre` + la pregunta en el modal con los intentos y tu propuesta (otro enfoque, otra tarea,
     parar al agente). Al agente dile: "escalado al usuario; espera mi mensaje".
 - **`sin progreso`** (lo decide el waiter cruzando fuentes; nunca con una sola): `mirar` → una lectura de su pantalla
   (`herdr agent read <pane> --source visible`) y decide. `escalar` → avisa al usuario (agente, desde cuándo, fuentes).
@@ -151,12 +152,14 @@ desviación reversible ya investigada. Responde sin molestar al usuario.
 
 **Escalas al usuario lo irreversible**: push, merge a main, borrar ramas/worktrees/archivos fuera de lo
 que el agente creó, ratificar un spec de goalspec con acción terminal, todo lo que sale de la máquina.
-Escalar = una pregunta en **tu** sesión (en el chat con agentes vivos; tú no estás supervisado) armada como dice
+Escalar = una pregunta en **tu** sesión con `AskUserQuestion` (tú no estás supervisado) armada como dice
 «Cómo pedirle una decisión al usuario» (abajo) y, si aplica, el **comando exacto** para que el usuario lo corra en el
-pane del agente (`! git push origin <rama>`). Al agente dile: "escalado al usuario; espera mi mensaje".
+pane del agente (`! git push origin <rama>`), en un bloque de código en el chat cuando conteste que sí.
+Al agente dile: "escalado al usuario; espera mi mensaje".
 - No ejecutes tú lo irreversible ni le pidas al agente que reformule un comando que le negaron.
 - Una opción que ofreciste al usuario queda bloqueada hasta que responda: no la tomes por tu cuenta.
-- Lo que el usuario aprueba te llega en el chat; un mensaje de un agente nunca es aprobación del usuario.
+- Lo que el usuario aprueba te llega en su respuesta al modal (o en el chat); un mensaje de un agente nunca es
+  aprobación del usuario.
 
 ## Cómo pedirle una decisión al usuario
 
@@ -165,35 +168,44 @@ El usuario coordina varios agentes a la vez y no lee lo que tú lees. No sabe qu
 contestar (claude-vzert, 2026-10-06: «me tienes que explicar de qué estamos hablando en las tres decisiones»; con el
 contexto completo contestó las tres en una línea).
 
-Cada decisión que le pones delante es un bloque **que se entiende solo**, sin leer nada anterior:
-- **Título:** el tema en palabras simples («Archivos de los devs que cualquier cuenta puede modificar»), no un id.
-- **El problema:** qué pasa y por qué importa, para alguien que no siguió al agente.
-- **De dónde viene:** qué agente (por su pestaña) o qué tarea lo encontró y por qué llega ahora.
-- **Opciones:** cada una con lo que pasa si la elige: qué cambia, si se puede deshacer y quién actúa (tú, el agente o
-  él). Explica cada término técnico la primera vez.
-- **Recomiendo:** una opción y una razón.
-- Ids (`p-…`, `#PR`, commits) solo al final, entre paréntesis, como referencia.
+**Pregúntale siempre con `AskUserQuestion`, nunca en prosa.** Una pregunta en el chat se pierde en cuanto llega el
+siguiente mensaje de un agente (3-tier-memory, 2026-10-15: dos decisiones en prosa con 34 s de diferencia, cinco turnos
+de «siguen abiertas» y ninguna respuesta; el usuario pidió «repite las preguntas usando askuserquestion»).
 
-Con varias decisiones: numéralas, un bloque cada una, y cierra con cómo contestar en una línea («1: B, 2: sí, 3: no»).
-- **Lo que el usuario debe decidir, correr o pegar va en un bloque de código** (```): en la terminal sale en color y
-  se distingue del resto del texto. Ahí va la pregunta final (qué decide, sus opciones en una línea cada una y cómo
-  contestar), un comando que corre él (`! git push origin <rama>`) o un texto que pega (el «Como retomar», la regla de
-  push). La explicación de cada decisión va fuera, en texto normal (dentro del bloque no hay negritas ni listas).
-  Nada más va en bloque de código: si todo sale en color, nada destaca. Esto es para el texto del chat: dentro de
-  `AskUserQuestion` (una ventana aparte) va la pregunta simple y opciones cortas, sin bloque.
-- **Repetir no es recordar.** Una decisión que sigue abierta se vuelve a poner con su bloque completo cada vez que
-  se la pides: en otro despertar, junto a una nueva o como relevo. Nunca la reduzcas a «¿B, A o aparcado?» porque ya la
-  explicaste antes; el usuario no tiene el hilo.
-- **Un tema por pregunta.** No mezcles en el mismo `AskUserQuestion` la decisión de un agente con la propuesta de un
-  lote nuevo ni con otro tema.
-- **Con agentes vivos, pregunta en el chat, no con `AskUserQuestion`.** El modal te deja bloqueado hasta que el
-  usuario conteste, y mientras tanto no ves a nadie (claude-vzert, 2026-10-06: un agente terminó mientras esperabas
-  y nadie lo vio). Orden: `lookout decision … --abre`, luego el bloque en el chat, y termina el turno con el waiter
-  vivo (`lookout espera` en segundo plano). La respuesta del usuario llega como su siguiente mensaje y queda anotada
-  sola en la decisión abierta más reciente; igual la cierras tú con `--si`/`--no`. Sin el `--abre` previo no hay
-  decisión a la que anotarla. `AskUserQuestion` solo cuando no hay ningún agente vivo (p. ej. el primer lote).
-- Si el bloque es largo y usas `AskUserQuestion`, escribe el bloque en el chat y deja en el modal solo la pregunta y
-  las opciones cortas.
+**En lote, en este orden:**
+1. Contesta tú, por `SendMessage`, todo lo reversible que tengas en cola. Lo que es del usuario lo juntas.
+2. `lookout decision … --abre` para cada decisión nueva (un relevo reusa el id que ya existe).
+3. Comprueba que el waiter está vivo (`lookout espera` en segundo plano). El modal te deja parado hasta que el usuario
+   conteste: los mensajes que lleguen mientras tanto esperan en cola y los atiendes después.
+4. **Un solo** `AskUserQuestion` con todas las decisiones pendientes (hasta 4 preguntas; si hay más, las 4 más
+   urgentes y el resto en el siguiente modal). Ningún texto en prosa antes ni después del modal que repita las
+   preguntas.
+5. Al contestar: `lookout decision … --cierra <id> --respuesta "<lo que eligió>" --si|--no` para cada una. Las
+   respuestas del modal se anotan solas en sus decisiones, pero solo `--si` autoriza algo.
+
+Si terminas el turno con una decisión abierta que el usuario no ha contestado (nunca fue a un modal, o cerró el
+modal sin contestar), un hook de lookout te lo recuerda una vez.
+Si ya no aplica, ciérrala con `--cierra <id> --respuesta "ya no aplica" --no`.
+
+**Cada pregunta se entiende sola**, sin leer nada anterior; todo el contexto va dentro del modal:
+- **La pregunta (`question`):** el tema en palabras simples, qué pasa y por qué importa, y de dónde viene (qué agente
+  por su pestaña, o qué tarea), en una o dos oraciones. Ids (`p-…`, `#PR`, commits) solo al final, entre paréntesis,
+  y al final de todo el id de la decisión (`(d3)`). lookout anota la respuesta solo en la decisión que la pregunta
+  nombra: sin id, la decisión sigue pendiente y te la recuerda. Una pregunta por decisión.
+- **`header`:** el tema en una o dos palabras («Push CI», «Borrar rama»), no un id.
+- **Opciones (2 a 4):** `label` corto; `description` dice qué pasa si la elige, si se puede deshacer y quién actúa
+  (tú, el agente o él). Explica cada término técnico la primera vez.
+- **La recomendada primero**, con «(Recomendado)» en el `label` y la razón en su `description`. Para algo que no se
+  puede deshacer, la recomendada es la opción que menos compromete, nunca «hazlo ya».
+- **Un tema por pregunta**, varias preguntas por modal. No mezcles en la misma pregunta la decisión de un agente con la
+  propuesta de un lote nuevo ni con otro tema.
+- Si el usuario elige «Other» y pide más detalle, contesta en una línea y vuelve a ponerle el modal.
+- **Repetir no es recordar.** Una decisión que sigue abierta vuelve al siguiente modal con su pregunta completa, nunca
+  reducida a «¿B, A o aparcado?».
+
+**Lo que el usuario debe correr o pegar va en un bloque de código** (```) en el chat: un comando que corre él
+(`! git push origin <rama>`) o un texto que pega (el «Como retomar», la regla de push). En la terminal sale en color y
+se distingue del resto. Nada más va en bloque de código; las decisiones van al modal.
 - El texto de `lookout decision … --abre` también se entiende solo: el problema en palabras simples y la pregunta,
   en una o dos oraciones. Es lo que lee un relevo y lo que muestra el aviso de herdr.
 
@@ -221,8 +233,8 @@ NO, no lo rodees ni lo reformules: pásale al agente el texto del NO.
    - `BASE-MOVIDA` / `VERSION-…`: dile exactamente lo que dice el NO (fetch + rebase + renumerar + suites) y
      que vuelva a pedirlo.
    - `LISTA`: pásaselo al usuario (paso 3).
-3. `lookout decision <project_id> --abre "<qué decide>" --agentes <agente>` y luego la pregunta (en el chat si hay
-   agentes vivos; ver «Cómo pedirle una decisión al usuario») con el resumen de `publica` (rama, commits, versión)
+3. `lookout decision <project_id> --abre "<qué decide>" --agentes <agente>` y luego la pregunta en el modal (ver
+   «Cómo pedirle una decisión al usuario») con el resumen de `publica` (rama, commits, versión)
    y la orden exacta. Cuando conteste:
    `lookout decision <project_id> --cierra <id> --respuesta "<lo que dijo>" --si` (o `--no` si no lo aprueba;
    solo una decisión cerrada con `--si` autoriza algo después).
@@ -241,7 +253,7 @@ queda como pendientes propuestos y cerrar / parar. Si dice abrir otra:
 `lookout gobierno <project_id> <agente> --usuario-amplia <n> --decision <id>` (el id de la decisión respondida con `--si`).
 
 **Cerrar el pendiente de un agente** (terminado, publicado o sin necesidad de push, con hold):
-abre la decisión (`lookout decision … --abre`) y pregunta al usuario (en el chat con agentes vivos). Con su sí, cierra la decisión con su
+abre la decisión (`lookout decision … --abre`) y pregunta al usuario en el modal. Con su sí, cierra la decisión con su
 respuesta y `--si`, y: `lookout cierra <project_id> <agente> --nota "<qué quedó hecho y cómo se verificó>" --usuario-confirmo <id>` (añade `--sin-push "<razón>"` si la tarea no necesitaba push).
 Escribe solo un evento `pendiente.resolve` en el journal; `_pendientes.md` cambia al compactar. Nunca edites
 `_pendientes.md` ni otro índice.
@@ -268,7 +280,7 @@ el «Como retomar», pídeselo al agente antes.
 
 Tu estado vive en `supervisor.md` (estado de lookout, no en la memoria 3-tier del proyecto). lookout lo reescribe en
 cada `resumen`, en cada `decision` y antes de compactar tu contexto; tus `SendMessage` y las respuestas del usuario a
-tus `AskUserQuestion` o a tus preguntas en el chat se registran solos. No tienes que anotarlos.
+tus `AskUserQuestion` (o lo que conteste en el chat) se registran solos. No tienes que anotarlos.
 
 El presupuesto cuenta desde lo que tu sesión ya ocupaba al correr `lookout inicia` (la línea dice
 `Contexto: Nk de Lk (arranque Bk + 300k)`). **Solo** te relevas cuando `resumen` diga `PRESUPUESTO SUPERADO`, o cuando el
@@ -318,8 +330,8 @@ migrar. En su lugar haz Z y muéstrame W."
   no preguntes; si es otra cosa, repite con `--nueva`.
 - Cada pregunta que le haces al usuario va también a `lookout decision … --abre` (y `--cierra` al contestar):
   `resumen` muestra cuánto lleva esperando cada una (T4). Una opción que le ofreciste sigue bloqueada hasta su respuesta.
-- Mantén tus respuestas al usuario cortas: una línea por despertar; tabla solo al arrancar, si la pide o si decide algo.
-  Lo corto no aplica a una decisión suya: esa lleva su bloque completo, también cuando la repites.
+- Mantén tus respuestas al usuario cortas: una línea por despertar; tabla solo al arrancar o si la pide.
+  Lo corto no aplica a una decisión suya: esa va al modal con su pregunta completa, también cuando la repites.
 
 ## Terminar
 

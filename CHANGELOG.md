@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.12.0
+
+The supervisor asks the user in a modal, never in prose (measured on 3-tier-memory, 2026-10-15: with four agents
+reporting, two decisions went out in prose 34 s apart, five of the next eight turns only said they were still open,
+and the user never answered them; they asked for `AskUserQuestion`).
+
+- **Behavior change:** `/lookout:supervisa` and `/lookout:pendientes` put every decision of the user in one
+  `AskUserQuestion`, also while agents are alive (0.10.0 asked in the chat then). First the supervisor answers
+  whatever reversible questions it has queued, then it opens one modal with all pending decisions (up to 4). The
+  context goes inside the modal: the question states the problem and where it came from; each option says what
+  happens and whether it can be undone. No prose block before the modal and no "still open" reminders. While the modal
+  is open, agent messages wait in the queue.
+- A new reminder at the supervisor's turn end: a decision opened with `lookout decision --abre` that the user has not
+  answered (in a modal or in the chat) is reminded once, with the way to close it if it no longer applies. It goes out with the "no live waiter"
+  reminder in the same output, waiter first (the modal holds the turn until the user answers).
+- Both turn-end reminders now go out as non-error Stop feedback (`hookSpecificOutput.additionalContext`) for the
+  model plus a one-line `systemMessage` for the user, instead of a `decision: block` with the full instructions. The
+  user sees a short line, not the model's orders, and no hook error notice.
+- One modal now carries several decisions, whatever their age (a question used to attach to the last decision
+  opened in the previous 2 minutes). Each question names its decision at the end (`(d3)`) and attaches only to that
+  one; a decision counts as answered only when the answer to its own question arrives. A question without an id, or a
+  modal dismissed without an answer, leaves the decision waiting, and the turn-end reminder names it. An answer is still never a yes: only
+  `decision --cierra … --si` authorizes.
+- The texts printed by `lookout publica`, `gobierno` (round cap), `cierra` and the correction cap point to the modal.
+
 ## 0.11.0
 
 Agents in tabs on the main checkout, not in worktrees (docs/plan.md, Fase 9 G; measured on claude-vzert and decided by

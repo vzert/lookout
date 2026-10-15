@@ -389,7 +389,8 @@ class DecisionesDesdeHookTest(unittest.TestCase):
 
     def test_a_question_right_after_decision_abre_attaches_to_it(self):
         d1 = decisiones.abre(PID, "¿Cierro p-1?", notificar=False)
-        self.ask("tu2", "¿Cierro el pendiente p-1?", "Sí, ciérralo")
+        # 0.12.0: the question names its decision at the end; an id-less one no longer guesses (test_lookout_f4)
+        self.ask("tu2", "¿Cierro el pendiente p-1? (%s)" % d1["id"], "Sí, ciérralo")
         items = decisiones.load(PID)["items"]
         self.assertEqual(len(items), 1)  # no duplicate
         self.assertEqual(items[0]["id"], d1["id"])

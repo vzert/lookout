@@ -529,8 +529,8 @@ def cmd_publica(a):
         est, _ = publica.regla_estado(root)
         print("")
         print("Siguiente: `lookout decision %s --abre \"<qué decide>\" --agentes %s` y pásale al usuario este push "
-              "para que lo apruebe, con el resumen de arriba (en el chat si hay agentes vivos; AskUserQuestion solo "
-              "sin agentes vivos)." % (pid, e["nombre"]))
+              "para que lo apruebe en un AskUserQuestion (junto con sus otras decisiones pendientes, nunca en prosa), "
+              "con el resumen de arriba." % (pid, e["nombre"]))
         if est == "aplicada":
             print("Regla temporal de push: APLICADA. Con el sí del usuario, dile al agente que corra la orden exacta, sola.")
         else:

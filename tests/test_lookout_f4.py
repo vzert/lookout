@@ -35,6 +35,17 @@ def dead_pid():
     return p.pid
 
 
+def sigue(out):
+    """The supervisor's Stop output keeps the turn going (0.12.0: non-error Stop feedback, not a block) and returns the
+    model's detail; the human's short line is systemMessage."""
+    d = json.loads(out)
+    assert "decision" not in d, d
+    assert d["hookSpecificOutput"]["hookEventName"] == "Stop", d
+    assert d["systemMessage"].startswith("lookout: ") and len(d["systemMessage"]) < len(
+        d["hookSpecificOutput"]["additionalContext"]), d
+    return d["hookSpecificOutput"]["additionalContext"]
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -267,8 +278,8 @@ class DigestBudgetTest(Base):
     def test_the_supervisors_stop_is_blocked_once_without_a_waiter(self):
         supervisor_md.mark_supervisor(SUP, PID)
         out = on_supervisor.stop_check({"session_id": SUP}, PID, SUP, grace=0)
-        self.assertEqual(json.loads(out)["decision"], "block")
-        self.assertIn("lookout espera %s" % PID, json.loads(out)["reason"])
+        self.assertIn("lookout espera %s" % PID, sigue(out))
+        self.assertIn("waiter", json.loads(out)["systemMessage"])
         self.assertEqual(on_supervisor.stop_check({"stop_hook_active": True}, PID, SUP, grace=0), "")  # no loop
         self.assertEqual(on_supervisor.stop_check({}, PID, "otra-sesion", grace=0), "")               # not the owner
         w = self.start_waiter(os.getpid(), SUP)
@@ -287,14 +298,14 @@ class DigestBudgetTest(Base):
         try:
             self.assertEqual(holder.stdout.readline().strip(), "ok")
             self.assertEqual(digest.waiter_alive(PID), -1)
-            self.assertEqual(json.loads(on_supervisor.stop_check({}, PID, SUP, grace=0))["decision"], "block")
+            self.assertIn("lookout espera", sigue(on_supervisor.stop_check({}, PID, SUP, grace=0)))
         finally:
             holder.kill()
             holder.wait()
         # a stale waiter (dead owner) does not count as the supervisor's own (adversary F4 round 3, run 4 relief)
         w = self.start_waiter(dead_pid(), "muerta", watch="30")
         try:
-            self.assertEqual(json.loads(on_supervisor.stop_check({}, PID, SUP, grace=0))["decision"], "block")
+            self.assertIn("lookout espera", sigue(on_supervisor.stop_check({}, PID, SUP, grace=0)))
         finally:
             w.kill()
             w.wait()
@@ -313,12 +324,155 @@ class DigestBudgetTest(Base):
                 self.assertEqual((r.returncode, r.stdout), (0, ""))           # the async entry stays silent
                 r = subprocess.run(["sh", os.path.join(HOOKS, "guard-sup.sh"), "on_supervisor.py"], input=payload,
                                    capture_output=True, text=True, env=env)
-                self.assertEqual(json.loads(r.stdout)["decision"], "block")
+                self.assertIn("lookout espera", sigue(r.stdout))
         self.assertEqual(lookout_state.read_events(PID, 0)[0], [])   # not logged as an executor event
         stop = json.load(open(os.path.join(HOOKS, "hooks.json")))["hooks"]["Stop"]
         sync = [h for e in stop for h in e["hooks"] if "guard-sup.sh on_supervisor.py" in h["command"]]
         self.assertEqual(len(sync), 1)
         self.assertFalse(sync[0].get("async"))
+
+    # 0.12.0 (3-tier-memory, 2026-10-15): the supervisor put two decisions to the user in prose, 34 s apart, and five
+    # of its eight turns only said they were still open; the user never answered and asked for a modal. Every hop below
+    # goes through the real hook entries (guard.sh / guard-sup.sh), as Claude Code calls them.
+    def hook(self, script, handler, ev):
+        env = dict(os.environ, LOOKOUT_STATE_DIR=self.state)
+        r = subprocess.run(["sh", os.path.join(HOOKS, script), handler], input=json.dumps(dict({"session_id": SUP}, **ev)),
+                           capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout
+
+    def stop(self):
+        return self.hook("guard-sup.sh", "on_supervisor.py", {"hook_event_name": "Stop", "stop_hook_active": False})
+
+    def ask(self, tuid, n=2, textos=None):
+        textos = textos or ["¿Pregunta %d?" % i for i in range(n)]
+        q = {"questions": [{"question": t, "header": "h", "multiSelect": False,
+                            "options": [{"label": "A", "description": "a"}, {"label": "B", "description": "b"}]}
+                           for t in textos]}
+        self.hook("guard.sh", "on_ask.py", {"hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion",
+                                             "tool_use_id": tuid, "tool_input": q})
+        return q
+
+    def answer(self, tuid, q, answers):
+        self.hook("guard-sup.sh", "on_supervisor.py", {"hook_event_name": "PostToolUse", "tool_name": "AskUserQuestion",
+                                                       "tool_use_id": tuid, "tool_input": q,
+                                                       "tool_response": {"answers": answers}})
+
+    def test_a_question_attaches_only_to_the_decision_it_names_and_counts_only_when_answered(self):
+        # adversary rounds 1-2: guessing the decision ("every open one", then "the oldest waiting") put answers on
+        # decisions a modal never asked. Now only the id a question names counts, and only its own answer.
+        supervisor_md.mark_supervisor(SUP, PID)
+        self.with_waiter()
+        d1 = decisiones.abre(PID, "¿Pruebo el comando sobre una copia?", ["plan"], notificar=False)
+        d2 = decisiones.abre(PID, "¿Cierro el pendiente de CI?", ["ci"], notificar=False)
+        d3 = decisiones.abre(PID, "¿Borro la rama vieja?", ["rama"], notificar=False)
+        largo = "El agente de CI encontró que la prueba de Windows falla por una ruta. " * 6 + "(%s)" % d2["id"]
+        self.assertGreater(len(largo), 300)                                # past the 300-char log line: id survives
+        q = self.ask("t-uno", textos=[largo, "¿Usas tabs o espacios?"])    # an id-less question attaches nothing
+        items = {it["id"]: it for it in decisiones.load(PID)["items"]}
+        self.assertEqual(items[d2["id"]].get("tool_use_id"), "t-uno")
+        self.assertIsNone(items[d1["id"]].get("tool_use_id"))
+        self.assertIsNone(items[d3["id"]].get("tool_use_id"))
+        self.assertEqual(len(items), 3)                                    # some question matched: no extra entry
+        ctx = sigue(self.stop())                                           # the modal never returned: all three wait
+        for d in (d1, d2, d3):
+            self.assertIn(d["id"] + ":", ctx)
+        self.answer("t-uno", q, {"¿Usas tabs o espacios?": "tabs"})        # only the unrelated one answered
+        self.assertEqual([it["id"] for it in decisiones.sin_preguntar(PID)], [d1["id"], d2["id"], d3["id"]])
+        q = self.ask("t-dos", textos=["Tras lo de %s, ¿cierro CI? (%s)" % (d1["id"], d2["id"]),   # the LAST id counts
+                                      "¿Pruebo sobre una copia? (%s)" % d1["id"]])
+        items = {it["id"]: it for it in decisiones.load(PID)["items"]}
+        self.assertEqual((items[d1["id"]]["tool_use_id"], items[d2["id"]]["tool_use_id"]), ("t-dos", "t-dos"))
+        self.assertEqual(items[d1["id"]]["pregunta"], "¿Pruebo sobre una copia? (%s)" % d1["id"])
+        self.answer("t-dos", q, {q["questions"][0]["question"]: "No"})     # a partial answer: only d2's question
+        items = {it["id"]: it for it in decisiones.load(PID)["items"]}
+        self.assertEqual(items[d2["id"]]["respuesta_usuario"], "No")
+        self.assertIsNone(items[d1["id"]].get("respuesta_usuario"))
+        self.assertEqual([it["id"] for it in decisiones.sin_preguntar(PID)], [d1["id"], d3["id"]])
+        self.assertIsNone(decisiones.respondida(PID, d2["id"]))            # an answer is never a yes by itself
+
+    def test_a_modal_that_names_no_decision_is_its_own_entry(self):
+        supervisor_md.mark_supervisor(SUP, PID)
+        d1 = decisiones.abre(PID, "¿Pruebo el comando sobre una copia?", ["plan"], notificar=False)
+        q = self.ask("t-otro", textos=["¿Arranco el siguiente lote?"])
+        items = decisiones.load(PID)["items"]
+        self.assertEqual(len(items), 2)
+        self.assertIsNone(items[0].get("tool_use_id"))
+        self.assertEqual((items[1]["origen"], items[1]["tool_use_id"]), ("hook", "t-otro"))
+        self.answer("t-otro", q, {"¿Arranco el siguiente lote?": "Sí"})
+        self.assertEqual(decisiones.load(PID)["items"][1]["estado"], "respondida")
+        self.assertEqual([it["id"] for it in decisiones.sin_preguntar(PID)], [d1["id"]])
+
+    def with_waiter(self):
+        w = self.start_waiter(os.getpid(), SUP)
+        self.addCleanup(w.wait)
+        self.addCleanup(w.kill)
+
+    def test_a_decision_never_asked_in_a_modal_is_reminded_once_at_the_stop(self):
+        supervisor_md.mark_supervisor(SUP, PID)
+        self.with_waiter()
+        self.assertEqual(self.stop(), "")                                  # nothing open, waiter alive: silent
+        d1 = decisiones.abre(PID, "¿Pruebo el comando sobre una copia?", ["plan"], notificar=False)
+        out = self.stop()
+        ctx = sigue(out)
+        self.assertIn(d1["id"], ctx)
+        self.assertIn("AskUserQuestion", ctx)
+        self.assertIn("--cierra", ctx)                                     # a way out for a decision that became moot
+        self.assertNotIn("lookout espera", ctx)                            # the waiter is alive: not mentioned
+        self.assertIn("decisión", json.loads(out)["systemMessage"])
+        self.assertNotIn("AskUserQuestion", json.loads(out)["systemMessage"])  # the human gets the line, not the order
+        self.assertEqual(self.stop(), "")                                  # once per decision: no nagging
+        d2 = decisiones.abre(PID, "¿Cierro el pendiente de CI?", ["ci"], notificar=False)
+        ctx = sigue(self.stop())                                           # a new one is reminded, the old one is not
+        self.assertIn(d2["id"], ctx)
+        self.assertNotIn(d1["id"] + ":", ctx)
+
+    def test_one_modal_asks_every_open_decision_whatever_its_age(self):
+        supervisor_md.mark_supervisor(SUP, PID)
+        self.with_waiter()
+        d1 = decisiones.abre(PID, "¿Pruebo el comando sobre una copia?", ["plan"], notificar=False)
+        d = decisiones.load(PID)
+        d["items"][0]["desde"] -= 600                                      # opened ten minutes before the batch
+        lookout_state.write_json(decisiones.path(PID), d)
+        d2 = decisiones.abre(PID, "¿Cierro el pendiente de CI?", ["ci"], notificar=False)
+        textos = ["¿Pruebo el comando sobre una copia? (%s)" % d1["id"], "¿Cierro el pendiente de CI? (%s)" % d2["id"]]
+        q = self.ask("t-lote", textos=textos)
+        items = {it["id"]: it for it in decisiones.load(PID)["items"]}
+        self.assertEqual((items[d1["id"]].get("tool_use_id"), items[d2["id"]].get("tool_use_id")), ("t-lote", "t-lote"))
+        self.assertEqual(len(items), 2)                                    # the batch did not open a third one
+        self.answer("t-lote", q, {textos[0]: "A", textos[1]: "B"})
+        self.assertEqual(self.stop(), "")                                  # answered: no reminder
+        items = {it["id"]: it for it in decisiones.load(PID)["items"]}
+        self.assertEqual((items[d1["id"]]["respuesta_usuario"], items[d2["id"]]["respuesta_usuario"]), ("A", "B"))
+        for did in (d1["id"], d2["id"]):
+            self.assertEqual(items[did]["estado"], "abierta")              # an answer is never a yes by itself
+        self.assertIsNone(decisiones.respondida(PID, d1["id"]))
+
+    def test_a_decision_answered_in_the_chat_is_not_reminded(self):
+        supervisor_md.mark_supervisor(SUP, PID)
+        self.with_waiter()
+        decisiones.abre(PID, "¿Pruebo el comando sobre una copia?", ["plan"], notificar=False)
+        self.hook("guard.sh", "on_state.py", {"hook_event_name": "UserPromptSubmit", "prompt": "1: B"})
+        self.assertEqual(self.stop(), "")
+
+    def test_no_waiter_and_an_unasked_decision_go_out_in_one_output_waiter_first(self):
+        supervisor_md.mark_supervisor(SUP, PID)
+        d1 = decisiones.abre(PID, "¿Pruebo el comando sobre una copia?", ["plan"], notificar=False)
+        out = self.stop()
+        ctx = sigue(out)
+        self.assertLess(ctx.index("lookout espera"), ctx.index(d1["id"]))  # the waiter before the modal blocks the turn
+        self.assertIn("ANTES del modal", ctx)
+        msg = json.loads(out)["systemMessage"]
+        self.assertIn("waiter", msg)
+        self.assertIn("decisión", msg)
+        self.assertEqual(self.hook("guard-sup.sh", "on_supervisor.py",
+                                   {"hook_event_name": "Stop", "stop_hook_active": True}), "")   # no loop
+
+    def test_only_the_lock_owner_is_reminded(self):
+        supervisor_md.mark_supervisor("otra", PID)
+        decisiones.abre(PID, "¿Pruebo el comando sobre una copia?", ["plan"], notificar=False)
+        self.assertEqual(on_supervisor.stop_check({}, PID, "otra", grace=0), "")
+        self.assertEqual(decisiones.sin_preguntar(PID)[0].get("recordada"), None)  # not spent on a non-owner
 
     def test_a_waiter_wake_carries_the_digest_and_a_relaunch_does_not_repeat_it(self):
         # claude-vzert, 2026-10-06: relaunched without `resumen`, the waiter woke at once on the same 12:58 event,
