@@ -491,6 +491,10 @@ class RelevoFallidoTest(Base):
         with open(src, "w") as fh:
             fh.write("# Encargo\n## Tu tarea: p-1\n")
         self.agent("old", nombre="ag", pane_id="w9:p1", herdr_name="ag", prompt_sistema=src, tarea_estado="trabajando")
+        # 0.13.0: a relief needs the old session's model, effort and permission mode from its transcript
+        self.transcript("old", [{"type": "attachment", "attachment": {"type": "model", "identity": {"modelId": HAIKU}}},
+                                {"type": "permission-mode", "permissionMode": "default"},
+                                dict(a_text("trabajo"), effort="medium")])
         saved = (relevo.herdr_cli.agent_get, relevo.herdr_cli.run, relevo.deliver.read_box, relevo.deliver.wait_event,
                  relevo.lote.arranca, relevo.lote.unique_name, relevo.lote.live_sessions)
         calls = []

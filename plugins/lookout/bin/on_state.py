@@ -280,6 +280,14 @@ def build(data, marker):
         ev.update(event="idle")
         if reported_this_turn(data.get("transcript_path"), marker.get("address")):
             ev.update(reporto=True)
+        try:
+            import retomar  # 0.13.0: a «Como retomar» at the end of the turn reaches the supervisor (research C)
+            r = retomar.para_agente(marker.get("project_id", ""), ev["session_id"], data.get("transcript_path"),
+                                    data.get("cwd") or "")
+        except Exception:  # noqa: BLE001 — a hook never fails the agent's turn
+            r = None
+        if r:
+            ev.update(retomar=r)
         return ev, "listo", []
     if name == "StopFailure":
         kind = str(data.get("error") or data.get("error_type") or "")

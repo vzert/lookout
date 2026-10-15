@@ -295,8 +295,10 @@ class RelevoEnMainTest(StubCase):
         e.update(extra)
         registry.save(self.pid, {"agents": {"old": e}})
         saved = (relevo.herdr_cli.agent_get, relevo.herdr_cli.run, relevo.deliver.read_box, relevo.deliver.wait_event,
-                 relevo.lote.arranca, relevo.lote.unique_name)
+                 relevo.lote.arranca, relevo.lote.unique_name, relevo.retomar_mod.config)
         seen = []
+        # 0.13.0: a relief reads the old session's model, effort and permission mode from its transcript
+        relevo.retomar_mod.config = lambda path: {"modelo": "claude-haiku-5-5", "esfuerzo": "medium", "permisos": "default"}
         relevo.herdr_cli.agent_get = lambda pane: {"agent_session": {"value": "old"}, "agent_status": "idle"}
         relevo.herdr_cli.run = lambda *a, **k: (0, "", "")
         relevo.deliver.read_box = lambda pane: ("vacia", "")
@@ -308,7 +310,7 @@ class RelevoEnMainTest(StubCase):
                                      None, 1, 1, lambda m: None)
         finally:
             (relevo.herdr_cli.agent_get, relevo.herdr_cli.run, relevo.deliver.read_box, relevo.deliver.wait_event,
-             relevo.lote.arranca, relevo.lote.unique_name) = saved
+             relevo.lote.arranca, relevo.lote.unique_name, relevo.retomar_mod.config) = saved
         self.assertTrue(ok, msg)
         return seen[0]
 

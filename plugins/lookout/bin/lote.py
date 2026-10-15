@@ -519,13 +519,18 @@ def render_propuesta(prop):
 READ_ONLY = ["--disallowedTools", "Edit", "Write", "MultiEdit", "NotebookEdit"]
 
 
-def exec_args(modelo, solo_lectura=False, env=None):
+def exec_args(modelo, solo_lectura=False, env=None, esfuerzo="", permisos=""):
     """Claude flags for an executor. `env` (Fase 6: PORT) is merged into the --settings env; the settings come from
-    LOOKOUT_EXEC_SETTINGS (a JSON text or a file), else just the state dir. One --settings flag, always."""
+    LOOKOUT_EXEC_SETTINGS (a JSON text or a file), else just the state dir. One --settings flag, always.
+    0.13.0: a relief passes the effort and permission mode its old session ran with (retomar.config)."""
     import json
     args = []
     if modelo:
         args += ["--model", modelo]
+    if esfuerzo:
+        args += ["--effort", esfuerzo]
+    if permisos:
+        args += ["--permission-mode", permisos]
     if "/.claude/plugins/cache/" not in PLUGIN_ROOT:
         # The supervisor runs this tree with --plugin-dir: the agent must run the same code.
         args += ["--plugin-dir", PLUGIN_ROOT]
@@ -676,7 +681,8 @@ def lanza_uno(project_id, common_dir, item, plan, draft, modelo, confirmar, log,
     return ok, msg
 
 
-def arranca(project_id, sid, pane, wt, nombre, sysfile, modelo, lectura, clave, trigger, confirmar, log, puerto_de=None):
+def arranca(project_id, sid, pane, wt, nombre, sysfile, modelo, lectura, clave, trigger, confirmar, log, puerto_de=None,
+            esfuerzo="", permisos=""):
     """Start an already-registered session in `pane` with its system prompt file, accept the trust dialog only
     for its own folder, wait for its SessionStart and its prompt box, then deliver `trigger` once (deliver.py).
     Shared by lanza (F2) and relevo (F3). Returns (ok, message)."""
@@ -684,7 +690,7 @@ def arranca(project_id, sid, pane, wt, nombre, sysfile, modelo, lectura, clave, 
     port = ports.de(puerto_de) if puerto_de else None  # Fase 6: its port as $PORT (a relief gets the same)
     args = ["agent", "start", nombre, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
             "--session-id", sid, "-n", nombre, "--append-system-prompt-file", sysfile] + exec_args(
-                modelo, lectura, {"PORT": port} if port else None)
+                modelo, lectura, {"PORT": port} if port else None, esfuerzo, permisos)
     code, out, err = herdr_cli.run(args, timeout=75)
     log("agent start rc=%s %s" % (code, (out or err).strip()[:160]))
     trust = trust_dialog(pane, wt)

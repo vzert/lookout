@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.13.0
+
+The supervisor takes care of the agents' life cycle: it relieves an agent that left a live «Como retomar», closes the
+tab of a finished one and takes in an agent launched by hand; and its context budget follows the model's window.
+Found in a real supervision of 3-tier-memory (2026-10-15): 2 live blocks and 0 reliefs, 3 finished agents with their
+tab open, and a supervisor that asked for a relief it did not need. Scope decided by the user.
+
+- **Behavior change:** the supervisor's budget is 80 % of its model's window when that is above the fixed limit
+  (arranque + 300k, or 370k). The window comes from the model line Claude Code writes in the transcript
+  («claude-opus-5-5[1m]»): a 1M supervisor now asks for its relief at 800k, not at 370k (it read «382k de 370k …
+  PRESUPUESTO SUPERADO» six times). A 200k window, or one lookout cannot read, keeps the fixed limit.
+- An end of turn with a «Como retomar» carries `retomar` (`vigente`, `ambiguo` or `nada`, the cited pendientes and why):
+  `vigente` when every cited p-id is still open in the project's `memory/_pendientes.md`, no other registered agent
+  cited them after the block, and the block is from the agent's last turn and younger than `LOOKOUT_RETOMAR_HORAS`
+  (24 h). It also recognizes 3-tier's «🔁 Siguiente sesión — copia y pega:» and «Como retomar: Ninguno — …». Such a turn
+  wakes the supervisor even when the agent already reported. Registering an agent that is already idle with a block
+  writes a `retomar` event.
+- `lookout relevo` works for an agent the user launched (no task of lookout), reads the block only from the agent's
+  last turn (a stale one under newer messages no longer counts), and starts the new session with the old one's model
+  (with its window), `--effort` and `--permission-mode`, read from its transcript. If one cannot be read it does not
+  relieve. It gives no port to an agent that had none. `/exit` that does not exit still aborts.
+- New `lookout cierra-pestana <proyecto> <agente> [--motivo "<cita>"] [--revisa]`: closes the tab (or only the pane)
+  of a finished agent after two signals (its last turn says it finished; herdr idle with an empty box) and guards that
+  each stop it: uncommitted changes of its own, unpushed commits in its tree (strict in a shared checkout), a queued
+  publication, an open decision naming it, a message of its to the supervisor with no answer, a question in its last
+  turn, a background task. A goalspec completion marker alone is not «finished».
+- The waiter's checker registers a Claude session of the project that is not in the registry every
+  `LOOKOUT_DESCUBRE_CADA` s (120) and wakes the supervisor with `nuevo`, who delivers its note.
+
 ## 0.12.2
 
 Fewer wakes of the supervisor, a shorter waiter digest and four output bugs, measured on a real supervision of

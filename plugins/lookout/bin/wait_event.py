@@ -123,6 +123,7 @@ def revisor(project_id, every):
     """Fase 6: the no-progress check (heuristicas.revisa), a script on a timer inside the single waiter, so the
     supervisor itself never polls. Only does work while some agent's hooks went quiet; what it decides is appended to
     events.jsonl, where the tail below picks it up like any other event."""
+    import alta
     import heuristicas
     while True:
         time.sleep(every)
@@ -132,6 +133,11 @@ def revisor(project_id, every):
                     heuristicas.revisa(project_id)
             except Exception:
                 pass  # a failed check must never take the waiter down
+            try:
+                if alta.toca(project_id):
+                    alta.descubre(project_id)  # 0.13.0: an agent the user launched by hand joins (Fase 3)
+            except Exception:
+                pass
 
 
 def pass_budget(project_id):
@@ -210,8 +216,8 @@ def wait(path, offset=0, types="", timeout=0, pidfile="", cursor="", owner=None,
                 continue
             if wanted and event.get("event") not in wanted:
                 continue
-            if event.get("event") == "idle" and event.get("reporto"):
-                continue  # its report already woke the supervisor by SendMessage (Fase 4)
+            if event.get("event") == "idle" and event.get("reporto") and not event.get("retomar"):
+                continue  # its report already woke the supervisor by SendMessage (Fase 4); a «Como retomar» still wakes
             if event.get("event") == "bg_wait" and not event.get("pregunta"):
                 continue  # 0.12.2: waiting for its own task, nothing asked; it stays in the next digest
             if pos <= handled_offset(cursor):

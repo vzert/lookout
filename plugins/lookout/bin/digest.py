@@ -14,7 +14,7 @@ import registry
 # `pausa` (provider limit) does not wake: it is not something to answer (Fase 6). `fallo` neither: only its 3rd repeat.
 # 0.12.2: `bg_wait` wakes only when its turn asked something (`pregunta`, wait_event): 19 of 36 wakes in 3-tier-memory
 # (2026-10-15) were background waits with nothing to answer. One that waits too long wakes as `largo` (heuristicas.revisa).
-WAKE_TYPES = "ask,blocked,negado,idle,bg_wait,unknown,crossrepo,end,repite,sin_progreso,largo"
+WAKE_TYPES = "ask,blocked,negado,idle,bg_wait,unknown,crossrepo,end,repite,sin_progreso,largo,retomar,nuevo"
 ESTADO = {
     "working": "trabajando",
     "ask": "pregunta",
@@ -23,6 +23,8 @@ ESTADO = {
     "aprobado": "permiso aprobado por regla",
     "notification": "aviso",
     "idle": "terminó su turno",
+    "retomar": "estaba quieto con un «Como retomar»",
+    "nuevo": "agente nuevo (lanzado a mano), ya registrado",
     "bg_wait": "espera tarea de fondo",
     "unknown": "error de API",
     "crossrepo": "tocó otro proyecto",
@@ -185,8 +187,18 @@ def describe(ev, quien=None):
         # 0.12.2: the description first; a command is often a long scratchpad path
         cmds = [t.get("description") or t.get("command") or t.get("type", "") for t in ev.get("tareas", [])]
         return head + ": " + "; ".join(c for c in cmds if c) + (" — " + ev.get("ultima", "") if ev.get("ultima") else "")
+    if kind == "nuevo":  # 0.13.0 (Fase 3)
+        return head + ": pestaña «%s», %s → `lookout entrega` para darle su nota" % (
+            ev.get("pestana") or "-", ev.get("estado_herdr") or "sin estado")
+    if kind == "retomar":  # 0.13.0: registered while already idle, with a «Como retomar» in its last turn
+        import retomar
+        return head + ": " + retomar.describe(ev.get("retomar"))
     if kind == "idle":
-        extra = ("(ya te reportó) " if ev.get("reporto") else "") + ev.get("ultima", "")
+        if ev.get("retomar"):
+            import retomar
+            extra = ("(ya te reportó) " if ev.get("reporto") else "") + retomar.describe(ev["retomar"])
+        else:
+            extra = ("(ya te reportó) " if ev.get("reporto") else "") + ev.get("ultima", "")
         if ev.get("marcadores"):
             extra += " " + " ".join(ev["marcadores"])
         for b in ev.get("bloqueos_hook") or []:  # Fase 9 E8: a plugin's hook, not the user
@@ -243,6 +255,13 @@ KEEP_ALL = ("ask", "blocked", "negado", "crossrepo", "unknown", "repite", "sin_p
 # prints the «Como retomar», so that path is covered too.
 PRESUPUESTO_EXTRA = 300000
 PRESUPUESTO_SIN_ARRANQUE = 370000  # when the starting size was not recorded (a lock from an older lookout)
+# 0.13.0: that limit ignored the model's window. A 1M Opus supervisor on 3-tier-memory read «382k de 370k ...
+# PRESUPUESTO SUPERADO» six times and asked for a relief it did not need (2026-10-15, p-3268dded6f). With the window
+# known (the transcript's model line: «claude-opus-5-5[1m]»), the limit is VENTANA_USO of it when that is above the
+# fixed one; a 200k window keeps the fixed limit, since it compacts before reaching it (see above).
+VENTANA_USO = 0.8
+VENTANA_1M = 1000000
+VENTANA_BASE = 200000
 
 
 def clip(line, n=MAX_COLS):
@@ -278,8 +297,38 @@ def context_tokens(session_id, projects_dir=None):
     return None
 
 
-def presupuesto_limite(project_id):
-    """(limit, starting size or 0). LOOKOUT_PRESUPUESTO, when set, is the whole limit."""
+def ventana_modelo(session_id, projects_dir=None):
+    """Context window of the session's model, from the last model line Claude Code writes in its transcript
+    (attachment type "model": modelId «claude-opus-5-5[1m]», marketingName «Opus 5.5 (1M context)»). A /model switch
+    writes a new one, so the last one counts. None if there is none."""
+    import json
+    import deliver
+    path = deliver.transcript_path(session_id, projects_dir) if session_id else ""
+    if not path:
+        return None
+    ident = None
+    try:
+        with open(path, "rb") as fh:
+            for raw in fh:
+                if b'"identity"' not in raw or b'"attachment"' not in raw:
+                    continue
+                try:
+                    att = json.loads(raw).get("attachment") or {}
+                except ValueError:
+                    continue
+                if att.get("type") == "model" and isinstance(att.get("identity"), dict):
+                    ident = att["identity"]
+    except OSError:
+        return None
+    if not isinstance(ident, dict) or not (ident.get("modelId") or ident.get("marketingName")):
+        return None
+    uno_m = str(ident.get("modelId", "")).lower().endswith("[1m]") or "1m context" in str(ident.get("marketingName", "")).lower()
+    return VENTANA_1M if uno_m else VENTANA_BASE
+
+
+def presupuesto_limite(project_id, ventana=None):
+    """(limit, starting size or 0). LOOKOUT_PRESUPUESTO, when set, is the whole limit. With the model's window known,
+    the limit is never below VENTANA_USO of it."""
     import lock
     try:
         env = int(os.environ.get("LOOKOUT_PRESUPUESTO") or 0)
@@ -288,7 +337,10 @@ def presupuesto_limite(project_id):
     if env > 0:
         return env, 0
     base = int((lock.read(project_id) or {}).get("contexto_inicial") or 0)
-    return (base + PRESUPUESTO_EXTRA, base) if base else (PRESUPUESTO_SIN_ARRANQUE, 0)
+    limit, base = (base + PRESUPUESTO_EXTRA, base) if base else (PRESUPUESTO_SIN_ARRANQUE, 0)
+    if ventana and int(ventana * VENTANA_USO) > limit:
+        return int(ventana * VENTANA_USO), 0
+    return limit, base
 
 
 def presupuesto_line(project_id, session_id=None, projects_dir=None):
@@ -303,9 +355,15 @@ def presupuesto_line(project_id, session_id=None, projects_dir=None):
     # `inicia` may run before its session's transcript has a usage line (it lags the hooks ~1 s): then the first
     # summary records the starting size, a little higher than the true start.
     lock.set_contexto_inicial(project_id, sid, tok)
-    limit, base = presupuesto_limite(project_id)
-    line = "Contexto: %dk de %dk%s." % (tok // 1000, limit // 1000,
-                                        " (arranque %dk + %dk)" % (base // 1000, PRESUPUESTO_EXTRA // 1000) if base else "")
+    ventana = ventana_modelo(sid, projects_dir)
+    limit, base = presupuesto_limite(project_id, ventana)
+    if base:
+        detalle = " (arranque %dk + %dk)" % (base // 1000, PRESUPUESTO_EXTRA // 1000)
+    elif ventana and not os.environ.get("LOOKOUT_PRESUPUESTO"):
+        detalle = " (%d %% de la ventana de %dk)" % (round(VENTANA_USO * 100), ventana // 1000)
+    else:
+        detalle = ""
+    line = "Contexto: %dk de %dk%s." % (tok // 1000, limit // 1000, detalle)
     if tok >= limit:
         line += (" PRESUPUESTO SUPERADO: termina lo que tengas abierto y haz el relevo (skill, «Relevo del supervisor»): "
                  "`lookout retomar %s`." % project_id)

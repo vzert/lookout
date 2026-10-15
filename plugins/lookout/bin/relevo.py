@@ -11,7 +11,6 @@ The "Como retomar" travels in the system prompt, not typed into the box: a long 
 as pasted text and an agent may decline it (H17, learning 10).
 """
 import os
-import re
 import time
 import uuid
 
@@ -21,11 +20,13 @@ import lookout_state
 import lote
 import publica
 import registry
+import retomar as retomar_mod
 
 TRIGGER = ("Retoma la tarea {id}: eres el relevo de otra sesión y su «Como retomar» está en tus instrucciones de "
            "sistema, bajo «Relevo». Lo primero: manda al supervisor por SendMessage 3 líneas de dónde quedamos.")
-HEAD_RE = re.compile(r"(?im)^[^\w\n]*como retomar[^\w\n]*$|^#+[ \t]*como retomar.*$")
-FENCE_RE = re.compile(r"```[^\n]*\n(.*?)```", re.S)
+TRIGGER_SIN_TAREA = ("Retoma el trabajo de {id}: eres el relevo de otra sesión y su «Como retomar» está en tus "
+                     "instrucciones de sistema, bajo «Relevo». Lo primero: manda al supervisor por SendMessage 3 líneas "
+                     "de dónde quedamos.")
 
 
 def assistant_texts(path):
@@ -52,24 +53,22 @@ def assistant_texts(path):
 
 
 def extract_retomar(text):
-    """The block under a 'Como retomar' heading: its first fenced block, else the text up to the next heading."""
-    m = HEAD_RE.search(text or "")
-    if not m:
-        return ""
-    rest = text[m.end():]
-    f = FENCE_RE.search(rest)
-    if f and not re.search(r"(?m)^#+\s", rest[:f.start()]):
-        return f.group(1).strip()
-    nxt = re.search(r"(?m)^#+\s", rest)
-    return (rest[:nxt.start()] if nxt else rest).strip()
+    """The block to resume from (retomar.bloque): "" when there is none or its header says there is nothing to
+    resume («Como retomar: Ninguno»)."""
+    estado, blk = retomar_mod.bloque(text)
+    return blk if estado == "hay" else ""
 
 
 def retomar_de(session_id, projects_dir=None):
-    for t in reversed(assistant_texts(deliver.transcript_path(session_id, projects_dir))):
-        r = extract_retomar(t)
-        if r:
-            return r
-    return ""
+    """0.13.0: only the agent's LAST turn. Searching back took a stale block under newer messages without one
+    (plan-ciclo, 3-tier-memory: a block of 2026-10-07 under its last message of 2026-10-15)."""
+    text, _ts = retomar_mod.ultimo_turno(deliver.transcript_path(session_id, projects_dir))
+    return extract_retomar(text)
+
+
+def clave_de(entry):
+    """The task id, or the agent's name for one launched by hand (0.13.0: discovered agents have no task)."""
+    return entry.get("tarea") or entry.get("nombre", "").split("~")[0]
 
 
 def relevo_prompt(project_id, entry, retomar, nota, n):
@@ -78,9 +77,13 @@ def relevo_prompt(project_id, entry, retomar, nota, n):
         with open(entry.get("prompt_sistema") or "", encoding="utf-8") as fh:
             body = fh.read()
     except OSError:
-        body = "# Encargo del supervisor lookout\n\nTarea: %s (no encuentro el encargo original).\n" % entry.get("tarea")
+        if entry.get("tarea"):
+            body = "# Encargo del supervisor lookout\n\nTarea: %s (no encuentro el encargo original).\n" % entry.get("tarea")
+        else:
+            body = ("# Agente supervisado por lookout\n\nLa sesión anterior (%s) la lanzó el usuario, sin encargo escrito de "
+                    "lookout: tu trabajo es el de su «Como retomar», abajo.\n" % entry.get("nombre"))
     body = body.split("\n## Nota del supervisor", 1)[0].split("\n## Relevo", 1)[0].rstrip("\n")
-    path = os.path.join(lote.tareas_dir(project_id), "%s.relevo%d.sistema.md" % (entry.get("tarea") or "sesion", n))
+    path = os.path.join(lote.tareas_dir(project_id), "%s.relevo%d.sistema.md" % (clave_de(entry) or "sesion", n))
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(body + "\n\n## Relevo\nEres el relevo número %d de esta tarea. La sesión anterior (%s) terminó y dejó "
@@ -98,8 +101,6 @@ def relevo(project_id, entry, nota_for, retomar="", modelo=None, confirmar=30.0,
 
 
 def _relevo(project_id, entry, nota_for, retomar, modelo, confirmar, fin_timeout, log):
-    if not entry.get("tarea"):
-        return False, "NO: %s no tiene tarea registrada; el relevo es para agentes con tarea." % entry.get("nombre")
     pane = entry["pane_id"]
     live = herdr_cli.agent_get(pane) or {}
     reintento = entry.get("tarea_estado") == "relevo-fallido" and entry["session_id"] in lote.ended_sessions(project_id)
@@ -121,8 +122,21 @@ def _relevo(project_id, entry, nota_for, retomar, modelo, confirmar, fin_timeout
     if not retomar:
         return False, ("NO: no encuentro su «Como retomar» (ni en su texto ni pasado con --retomar). Pídeselo por "
                        "SendMessage: su bloque «Como retomar» tal cual, si algo posterior lo vuelve falso, y qué le queda.")
+    # 0.13.0: the relief runs with the old session's model (with its window), effort and permission mode; one that cannot
+    # be read stops it (adversary round 1: also for an agent with a task): a relief must not change the agent silently.
+    # The API's message.model is not used: it drops the window («claude-opus-5-5» for a [1m] session).
+    cfg = retomar_mod.config(deliver.transcript_path(entry["session_id"]))
+    modelo = modelo or cfg.get("modelo") or entry.get("modelo", "")
+    faltan = [k for k, v in (("modelo", modelo), ("esfuerzo", cfg.get("esfuerzo")), ("modo de permisos", cfg.get("permisos")))
+              if not v]
+    if faltan:  # a retry too (adversary round 2): its ended session's transcript still says how it ran
+        return False, ("NO: no leo %s de %s en su transcript. No lo relevo solo: pregúntale al usuario (o repite con "
+                       "--modelo si solo falta el modelo y él lo confirma)." % (", ".join(faltan), entry.get("nombre")))
     reg = registry.load(project_id)
-    n = 1 + sum(1 for e in reg.get("agents", {}).values() if e.get("tarea") == entry["tarea"] and e.get("relevo_de"))
+    if entry.get("tarea"):
+        n = 1 + sum(1 for e in reg.get("agents", {}).values() if e.get("tarea") == entry["tarea"] and e.get("relevo_de"))
+    else:
+        n = int(entry.get("relevo_n") or 0) + 1
     sysfile = relevo_prompt(project_id, entry, retomar, nota_for(entry["nombre"]), n)
     log("prompt de sistema del relevo: %s" % sysfile)
     if not reintento:
@@ -143,7 +157,8 @@ def _relevo(project_id, entry, nota_for, retomar, modelo, confirmar, fin_timeout
     old = reg["agents"][entry["session_id"]]
     new = dict(old, session_id=sid, herdr_name=nombre_herdr, hooks="sin-confirmar", tarea_estado="lanzando",
                prompt_sistema=sysfile, relevo_de=entry["session_id"], relevo_n=n,
-               modelo=modelo or old.get("modelo", ""), alta=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+               modelo=modelo or old.get("modelo", ""), esfuerzo=cfg.get("esfuerzo") or old.get("esfuerzo", ""),
+               permisos=cfg.get("permisos") or old.get("permisos", ""), alta=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
     for k in ("tarea_motivo", "relevo_retomar"):
         new.pop(k, None)
     # The old session keeps the task until the new one is confirmed (adversary round 1: marking it relieved first
@@ -154,8 +169,11 @@ def _relevo(project_id, entry, nota_for, retomar, modelo, confirmar, fin_timeout
     marker = lookout_state.read_marker(entry["session_id"]) or {}
     lookout_state.write_marker(sid, dict(marker, nombre=new["nombre"], display=new["nombre"] + " (lookout)"))
     ok, msg = lote.arranca(project_id, sid, pane, new["worktree"] or new["cwd"], nombre_herdr, sysfile,
-                           new["modelo"], lote.solo_lectura(new), "relevo:%s:%s" % (new["tarea"], sid[:8]),
-                           TRIGGER.format(id=new["tarea"]), confirmar, log, lote.puerto_de(new))
+                           new["modelo"], lote.solo_lectura(new), "relevo:%s:%s" % (clave_de(new), sid[:8]),
+                           (TRIGGER if new.get("tarea") else TRIGGER_SIN_TAREA).format(id=clave_de(new)), confirmar, log,
+                           # an agent launched by hand had no port of lookout; its checkout path is shared by all
+                           lote.puerto_de(new) if new.get("tarea") or new.get("clave_puerto") else None,
+                           new.get("esfuerzo", ""), new.get("permisos", ""))
     reg = registry.load(project_id)
     old, new = reg["agents"][entry["session_id"]], reg["agents"][sid]
     if ok or new.get("tarea_estado") == "sin-confirmar":
@@ -166,10 +184,10 @@ def _relevo(project_id, entry, nota_for, retomar, modelo, confirmar, fin_timeout
         registry.save(project_id, reg)
         lookout_state.remove_marker(entry["session_id"])
         publica.retira_sesion(project_id, entry["session_id"], "relevada")
-        return ok, ("relevo %d de %s: %s" % (n, new["tarea"], msg))
+        return ok, ("relevo %d de %s: %s" % (n, clave_de(new), msg))
     old.update(tarea_estado="relevo-fallido", tarea_motivo=msg)
     new.update(nombre="%s~%s" % (new["nombre"], sid[:6]), herdr_name="")
     registry.save(project_id, reg)
     lookout_state.remove_marker(sid)
     return False, ("relevo %d de %s FALLÓ: %s. La tarea sigue con %s (estado relevo-fallido): corrige la causa y repite "
-                   "`lookout relevo` sobre ese mismo nombre; arranca otra vez sin /exit." % (n, new["tarea"], msg, old["nombre"]))
+                   "`lookout relevo` sobre ese mismo nombre; arranca otra vez sin /exit." % (n, clave_de(new), msg, old["nombre"]))

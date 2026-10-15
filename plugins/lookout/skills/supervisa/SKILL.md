@@ -95,6 +95,15 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
   escríbele por su nombre.
 - **`terminó su turno`**: si te debe un reporte y no llegó, una lectura corta de pantalla
   (`herdr agent read <pane> --source visible`) para verificar. Si no, nada.
+- **`agente nuevo (lanzado a mano), ya registrado`**: el waiter lo encontró y ya le escribió su marcador.
+  `lookout entrega <project_id> <agente>` para su nota. Si dice `NO ENTREGADO … borrador`, avisa al usuario una vez
+  (su caja tiene texto suyo) y no reintentes en bucle; `NO ENTREGADO … working` → entrégala en su `terminó su turno`.
+- **`dejó un bloque para retomar (p-…, vigente|ambiguo…)`** (al terminar su turno, o `estaba quieto con un «Como
+  retomar»` al registrarlo): lookout ya miró su último turno.
+  - `vigente` → `lookout relevo <project_id> <agente>` **sin preguntar**, y una línea al usuario («Relevé
+    <pestaña>: sigue con p-…»). Si el relevo dice `NO: …`, pásale esa línea al usuario.
+  - `ambiguo` (con su motivo) → al modal en lote con su id dN: «¿relevo, cierro o lo dejo?». No adivines.
+  - `terminó: su «Como retomar» dice que no queda nada` → no hay relevo (ver «Agente terminado»).
 - **`espera tarea de fondo`**: el agente espera un proceso suyo (p. ej. su adversario o un CI).
   **No está terminado ni atascado.** No te despierta, salvo que su turno haya preguntado algo: lo ves en el siguiente
   resumen. No lo empujes; dile al usuario que espera esa tarea si pregunta. Si la espera pasa de 60 min, te despierta una vez como `trabaja hace mucho …
@@ -278,10 +287,21 @@ con el texto del pendiente y la orden exacta (`journal-emit.py --memory-dir <rep
 --prioridad … --origen … --text "…"`); él decide.
 
 **Relevo de un agente** (su contexto se llena, o terminó con un bloque «Como retomar» y queda trabajo):
-`lookout relevo <project_id> <agente>`. Hace `/exit`, espera su fin de sesión, arranca una sesión nueva en el
-mismo pane y worktree con la tarea y su «Como retomar» en el prompt de sistema, y le manda un disparador de
-una línea. Su primer acto es un SendMessage de 3 líneas: esa es la prueba del canal. Si dice que no encuentra
-el «Como retomar», pídeselo al agente antes.
+`lookout relevo <project_id> <agente>`. Sirve también para un agente que lanzó el usuario (sin tarea de lookout).
+Hace `/exit`, espera su fin de sesión, arranca una sesión nueva en el mismo pane y carpeta con el mismo modelo,
+esfuerzo y modo de permisos (los lee de su transcript; si no puede, no releva y lo dice), con su tarea (si tiene) y
+su «Como retomar» en el prompt de sistema, y le manda un disparador de una línea. Su primer acto es un SendMessage
+de 3 líneas: esa es la prueba del canal. Lee el bloque solo del último turno del agente; si dice que no lo
+encuentra, pídeselo al agente antes. Si `/exit` no sale, no arranca otro encima: avisa al usuario.
+
+**Agente terminado** (su «Como retomar» dice que no queda nada, o dijo que terminó sin bloque):
+`lookout cierra-pestana <project_id> <agente>` **sin preguntar** (sin bloque: añade `--motivo "<su frase, tal cual>"`,
+p. ej. «No emito nada y termino aquí»; un `[COMPLETION-REVIEW` o «¿Cerrado? Sí» solos no bastan). Comprueba que su
+pantalla está quieta y con la caja vacía, y que no deja nada: cambios sin commit, commits sin subir en su árbol,
+publicación pendiente, decisión abierta que lo nombre, mensaje suyo sin respuesta, una pregunta en su último turno o
+una tarea de fondo. Con todo limpio hace `/exit`, cierra su pestaña (o solo su pane si comparte pestaña) y te da la
+línea para el usuario. Si dice `NO cierro …`, pásale al usuario el motivo en una línea; si el motivo es «mensaje sin
+respuesta», contéstale primero (un acuse basta) y repite. `--revisa` solo dice si se puede, sin tocar nada.
 
 ## Relevo del supervisor (presupuesto de contexto)
 
@@ -289,8 +309,9 @@ Tu estado vive en `supervisor.md` (estado de lookout, no en la memoria 3-tier de
 cada `resumen`, en cada `decision` y antes de compactar tu contexto; tus `SendMessage` y las respuestas del usuario a
 tus `AskUserQuestion` (o lo que conteste en el chat) se registran solos. No tienes que anotarlos.
 
-El presupuesto cuenta desde lo que tu sesión ya ocupaba al correr `lookout inicia` (la línea dice
-`Contexto: Nk de Lk (arranque Bk + 300k)`). **Solo** te relevas cuando `resumen` diga `PRESUPUESTO SUPERADO`, o cuando el
+El límite sale de la ventana de tu modelo: con 1M es el 80 % (`Contexto: Nk de 800k (80 % de la ventana de 1000k)`);
+con una ventana menor, o si lookout no la lee, cuenta desde lo que tu sesión ocupaba al correr `lookout inicia`
+(`Contexto: Nk de Lk (arranque Bk + 300k)`). **Solo** te relevas cuando `resumen` diga `PRESUPUESTO SUPERADO`, o cuando el
 usuario lo pida. Un número alto sin esa marca no es motivo: sigue supervisando.
 
 Cuando toque:

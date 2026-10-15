@@ -71,6 +71,8 @@ import registry  # noqa: E402
 import supervisor_md  # noqa: E402
 import relevo  # noqa: E402
 import requisitos  # noqa: E402
+import retiro  # noqa: E402
+import retomar  # noqa: E402
 
 NOTA = os.path.join(HERE, "..", "skills", "supervisa", "references", "nota-reporte.md")
 WAITER_TIMEOUT = 7000  # s; under the 7200 s ceiling of a background Bash task
@@ -129,6 +131,7 @@ def cmd_inicia(a):
     mine = {f.get("session_id") for f in found}
     ajenos = {t.get("name") for t in todos if (t.get("agent_session") or {}).get("value") not in mine}
     reg = registry.register(pid, me, found, ajenos, todos)
+    retomar.al_registrar(pid, [f.get("session_id") for f in found if f.get("session_id")])  # 0.13.0
     others = [f for f in found if f.get("kind") != "claude" or not f.get("session_id")]
     for x in publica.concilia(pid):  # Fase 9 E3
         print(x)
@@ -676,6 +679,23 @@ def cmd_relevo(a):
     return 0 if ok else 4
 
 
+def cmd_cierra_pestana(a):
+    """0.13.0 (Fase 2): close the tab of a finished agent after two signals and the guards (retiro.py)."""
+    pid, _ = project(a.proyecto)
+    lk = lock.read(pid) or {}
+    if (lk.get("supervisor") or {}).get("session_id") != lock.me()["session_id"]:
+        print("No cierro nada: el candado de %s no es de esta sesión." % pid)
+        return 3
+    e = agent_entry(pid, a.agente)
+    if a.revisa:
+        frenos = retiro.revisa(pid, e, a.motivo or "")
+        print("Se puede cerrar." if not frenos else "No se puede cerrar: " + "; ".join(frenos) + ".")
+        return 0 if not frenos else 4
+    ok, msg = retiro.cierra(pid, e, a.motivo or "")
+    print(msg)
+    return 0 if ok else 4
+
+
 def cmd_decision(a):
     pid, _ = project(a.proyecto)
     if a.abre:
@@ -750,6 +770,9 @@ def main():
     p = sub.add_parser("relevo"); p.add_argument("proyecto"); p.add_argument("agente")
     p.add_argument("--retomar"); p.add_argument("--modelo", default=os.environ.get("LOOKOUT_MODELO"))
     p.add_argument("--confirmar", type=float, default=30)
+    p = sub.add_parser("cierra-pestana"); p.add_argument("proyecto"); p.add_argument("agente")
+    p.add_argument("--motivo", help="cita tal cual de su último turno que dice que terminó (si no dejó «Como retomar»)")
+    p.add_argument("--revisa", action="store_true", help="solo dice si se puede cerrar; no toca nada")
     p = sub.add_parser("decision"); p.add_argument("proyecto"); p.add_argument("--abre"); p.add_argument("--agentes")
     p.add_argument("--cierra"); p.add_argument("--respuesta"); p.add_argument("--lista", action="store_true")
     p.add_argument("--si", action="store_true"); p.add_argument("--no", action="store_true")
@@ -763,7 +786,7 @@ def main():
             "resumen": cmd_resumen, "espera": cmd_espera, "suelta": cmd_suelta,
             "pendientes": cmd_pendientes, "lanza": cmd_lanza, "libera": cmd_libera, "descarta": cmd_descarta, "envia": cmd_envia,
             "gobierno": cmd_gobierno, "publica": cmd_publica, "regla-push": cmd_regla_push, "permisos": cmd_permisos, "cierra": cmd_cierra,
-            "relevo": cmd_relevo, "decision": cmd_decision, "retomar": cmd_retomar, "corrige": cmd_corrige,
+            "relevo": cmd_relevo, "cierra-pestana": cmd_cierra_pestana, "decision": cmd_decision, "retomar": cmd_retomar, "corrige": cmd_corrige,
             "puerto": cmd_puerto}[a.cmd](a) or 0
 
 
