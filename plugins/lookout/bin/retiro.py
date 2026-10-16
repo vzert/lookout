@@ -289,8 +289,47 @@ def guarda_fondo(project_id, entry):
 GUARDAS = (guarda_cambios, guarda_sin_subir, guarda_publicacion, guarda_decision, guarda_mensaje, guarda_fondo)
 
 
-def revisa(project_id, entry, motivo=""):
+def _fallido_desde(project_id, entry):
+    """When the relief failed: its stamp, or (state older than 0.13.4) the end event of its session."""
+    if entry.get("relevo_fallido_ts"):
+        return float(entry["relevo_fallido_ts"])
+    events, _ = lookout_state.read_events(project_id, 0)
+    ends = [float(ev.get("ts") or 0) for ev in events
+            if ev.get("session_id") == entry["session_id"] and ev.get("event") == "end"]
+    return max(ends) if ends else None
+
+
+def revisa_relevo_fallido(project_id, entry, confirmo=""):
+    """0.13.4 (adversary r1-r2): a failed relief ended the session and started none, so neither its last turn nor its
+    pane can say it finished. A tab the user already closed is his decision; otherwise the decision `confirmo` (dN)
+    must be one the user answered yes, opened after the failure and naming the agent, and its pane must hold no other
+    session (read from the pane itself: an empty `agent list` after a herdr failure is no evidence)."""
+    found, pane = herdr_cli.pane_get(entry["pane_id"])
+    if found is False:
+        return [], "gone"
+    if found is None:
+        return ["no puedo preguntarle a herdr por su pane"], ""
+    out = []
+    sesion = (pane.get("agent_session") or {}).get("value")
+    if sesion and sesion != entry["session_id"]:
+        out.append("su pane tiene otra sesión (%s)" % sesion[:8])
+    desde = _fallido_desde(project_id, entry)
+    it = next((x for x in decisiones.load(project_id).get("items") or () if x.get("id") == confirmo), None) if confirmo else None
+    if not it:
+        out.append("un relevo fallido se cierra solo con la decisión del usuario: ábrela con --agentes %s preguntando "
+                   "si cierras su pestaña y repite con --usuario-confirmo <id> tras su sí" % entry.get("nombre"))
+    elif (it.get("aprueba") is not True or entry.get("nombre") not in (it.get("agentes") or ())
+          or desde is None or float(it.get("desde") or 0) < desde):
+        out.append("la decisión %s no es un sí del usuario abierto después del fallo que nombre a %s"
+                   % (confirmo, entry.get("nombre")))
+    return out, ""
+
+
+def revisa(project_id, entry, motivo="", confirmo=""):
     """The list of reasons not to close ([] = it can be closed)."""
+    if entry.get("tarea_estado") == "relevo-fallido":
+        frenos, gone = revisa_relevo_fallido(project_id, entry, confirmo)
+        return [] if gone else frenos + [r for r in (g(project_id, entry) for g in GUARDAS) if r]
     out = []
     for check in (lambda: senal_terminado(entry, motivo, project_id), lambda: senal_pantalla(entry)):
         r = check()
@@ -303,17 +342,31 @@ def revisa(project_id, entry, motivo=""):
     return out
 
 
-def cierra(project_id, entry, motivo="", fin_timeout=FIN_TIMEOUT, log=print):
+def cierra(project_id, entry, motivo="", fin_timeout=FIN_TIMEOUT, log=print, confirmo=""):
     """(ok, message for the user)."""
     with lote.project_mutex(project_id):
-        frenos = revisa(project_id, entry, motivo)
+        fallido = entry.get("tarea_estado") == "relevo-fallido"
+        if fallido and revisa_relevo_fallido(project_id, entry, confirmo)[1] == "gone":
+            # nothing left to close; the guards cannot stop it, but what they find goes to the user (adversary r2)
+            ojo = [r for r in (g(project_id, entry) for g in GUARDAS) if r]
+            reg = registry.load(project_id)
+            reg["agents"][entry["session_id"]].update(retirado=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                                                       retirado_por="relevo fallido: el usuario cerró su pestaña")
+            registry.save(project_id, reg)
+            publica.retira_sesion(project_id, entry["session_id"], "terminado")
+            lookout_state.remove_marker(entry["session_id"])
+            return True, "%s: su pestaña ya no existe; lo saco de la tabla.%s" % (
+                entry.get("nombre"), (" Díselo al usuario, quedó: " + "; ".join(ojo) + ".") if ojo else "")
+        frenos = revisa(project_id, entry, motivo, confirmo)
         if frenos:
             return False, "NO cierro la pestaña de %s: %s." % (entry.get("nombre"), "; ".join(frenos))
         pane = entry["pane_id"]
         offset = deliver.events_size(project_id)
-        herdr_cli.run(["agent", "prompt", pane, "/exit"])
-        ended = deliver.wait_event(project_id, offset, fin_timeout,
-                                   lambda ev: ev.get("session_id") == entry["session_id"] and ev.get("event") == "end")
+        ended = fallido  # its session ended in the relief: nothing to /exit
+        if not fallido:
+            herdr_cli.run(["agent", "prompt", pane, "/exit"])
+            ended = deliver.wait_event(project_id, offset, fin_timeout,
+                                       lambda ev: ev.get("session_id") == entry["session_id"] and ev.get("event") == "end")
         if not ended:
             return False, ("NO cierro la pestaña de %s: no salió en %d s tras /exit (sin SessionEnd). Mira su pane o "
                            "avisa al usuario." % (entry.get("nombre"), fin_timeout))

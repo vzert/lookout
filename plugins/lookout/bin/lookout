@@ -699,10 +699,10 @@ def cmd_cierra_pestana(a):
         return 3
     e = agent_entry(pid, a.agente)
     if a.revisa:
-        frenos = retiro.revisa(pid, e, a.motivo or "")
+        frenos = retiro.revisa(pid, e, a.motivo or "", a.usuario_confirmo or "")
         print("Se puede cerrar." if not frenos else "No se puede cerrar: " + "; ".join(frenos) + ".")
         return 0 if not frenos else 4
-    ok, msg = retiro.cierra(pid, e, a.motivo or "")
+    ok, msg = retiro.cierra(pid, e, a.motivo or "", confirmo=a.usuario_confirmo or "")
     print(msg)
     return 0 if ok else 4
 
@@ -784,6 +784,7 @@ def main():
     p = sub.add_parser("cierra-pestana"); p.add_argument("proyecto"); p.add_argument("agente")
     p.add_argument("--motivo", help="cita tal cual de su último turno que dice que terminó (si no dejó «Como retomar»)")
     p.add_argument("--revisa", action="store_true", help="solo dice si se puede cerrar; no toca nada")
+    p.add_argument("--usuario-confirmo", help="id (dN) del sí del usuario; lo exige un relevo fallido")
     p = sub.add_parser("decision"); p.add_argument("proyecto"); p.add_argument("--abre"); p.add_argument("--agentes")
     p.add_argument("--cierra"); p.add_argument("--respuesta"); p.add_argument("--lista", action="store_true")
     p.add_argument("--si", action="store_true"); p.add_argument("--no", action="store_true")

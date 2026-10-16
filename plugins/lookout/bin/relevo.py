@@ -185,9 +185,13 @@ def _relevo(project_id, entry, nota_for, retomar, modelo, confirmar, fin_timeout
         lookout_state.remove_marker(entry["session_id"])
         publica.retira_sesion(project_id, entry["session_id"], "relevada")
         return ok, ("relevo %d de %s: %s" % (n, clave_de(new), msg))
-    old.update(tarea_estado="relevo-fallido", tarea_motivo=msg)
-    new.update(nombre="%s~%s" % (new["nombre"], sid[:6]), herdr_name="")
+    old.update(tarea_estado="relevo-fallido", tarea_motivo=msg, relevo_fallido_ts=time.time())
+    # 0.13.4: the never-started session is not an agent of the table (live 3-tier 2026-10-16: a ghost row)
+    new.update(nombre="%s~%s" % (new["nombre"], sid[:6]), herdr_name="", retirado=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+               retirado_por="relevo fallido de %s" % entry["session_id"][:8])
     registry.save(project_id, reg)
     lookout_state.remove_marker(sid)
     return False, ("relevo %d de %s FALLÓ: %s. La tarea sigue con %s (estado relevo-fallido): corrige la causa y repite "
-                   "`lookout relevo` sobre ese mismo nombre; arranca otra vez sin /exit." % (n, clave_de(new), msg, old["nombre"]))
+                   "`lookout relevo` sobre ese mismo nombre; arranca otra vez sin /exit. Su pestaña quedó sin agente: díselo al "
+                   "usuario en una línea; si prefiere cerrarla, ábrele una decisión con --agentes %s y, con su sí, "
+                   "`lookout cierra-pestana … --usuario-confirmo <id>`." % (n, clave_de(new), msg, old["nombre"], old["nombre"]))

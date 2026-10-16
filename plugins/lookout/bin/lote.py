@@ -597,10 +597,15 @@ def system_prompt(project_id, item, draft, nota):
 
 
 def unique_name(base, agents=None):
+    """0.13.4: the suffix fits in herdr's 32 characters (live 3-tier 2026-10-16: the relief of the 32-character
+    «agente-3-tier-memory-prueba-de-l» asked herdr for «…-2», herdr refused it after the /exit and the tab was left
+    with a bare shell)."""
     taken = {a.get("name") for a in (herdr_cli.agent_list() if agents is None else agents)}
+    base = base[:registry.HERDR_MAX].rstrip("-")
     name, n = base, 2
     while name in taken:
-        name = "%s-%d" % (base, n)
+        suf = "-%d" % n
+        name = base[:registry.HERDR_MAX - len(suf)].rstrip("-") + suf
         n += 1
     return name
 

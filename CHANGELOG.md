@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.13.4
+
+- A relief no longer asks herdr for a name it refuses. `lookout relevo` of the 32-character
+  «agente-3-tier-memory-prueba-de-l» asked for «…-2» (34 characters); herdr answered `invalid_agent_name` after the
+  `/exit`, and the tab was left with a bare shell (3-tier-memory, 2026-10-16). `unique_name` now cuts the base so the
+  suffix fits in herdr's 32 characters, like the alta's names since 0.13.3.
+- A failed relief stays in «Te necesita» on every wake (`relevo fallido → díselo al usuario; lookout relevo otra vez o
+  lookout cierra-pestana`) instead of going to «terminados», and its output asks the supervisor to tell the user: the
+  supervisor saw it once, in the command's exit code 4, and never said it. The session that never started is no
+  longer a «sin eventos» row.
+- A failed relief can be closed. `cierra-pestana` refused it (its pane is a bare shell and its last turn keeps the
+  block), so the row had no way out. Now `lookout cierra-pestana … --usuario-confirmo <dN>` closes it when dN is a yes
+  of the user opened after the failure and naming the agent, its pane holds no other session (read from the pane, not
+  from `agent list`) and the git guards pass; there is no `/exit` (its session already ended). A tab the user already
+  closed leaves the table without a decision, and what the git guards find there goes to the user.
+- The skill check asks for a reload only when the installed lookout is newer than the loaded skill text (semver
+  order, pre-releases included), and reads the transcript again from the start when it was replaced in place.
+- The supervisor learns when the skill text it loaded is older than the installed lookout. `/plugin` and
+  `/reload-plugins` update the hooks and the `lookout` command, but not a skill text already read: in 3-tier-memory the
+  supervisor went on with 0.10.0 for a whole day, and on 2026-10-16 with 0.13.2 while 0.13.3 was installed. Its Stop
+  hook now reads the last «Base directory for this skill» of `lookout:supervisa` in its transcript, compares it with
+  `installed_plugins.json` and, when they differ, tells it once (per pair of versions) to load the skill again with
+  the Skill tool; the user sees one line.
+- The decisions about pendientes come before an agent's `/checkpoint-3t`, not halfway. A supervised agent cannot open
+  the checkpoint's modal, so «haz tu checkpoint y mándame la lista» split it in two turns: the agent wrote its session
+  file, stopped halfway, 3-tier's close guard blocked it twice and the pendientes were emitted after the audit
+  (3-tier-memory, 2026-10-16). The supervise skill now asks the agent for its candidates first, puts them to the user
+  in one modal, and only then sends «Haz /checkpoint-3t de un tirón con estas decisiones: … (dN)»; the note to the
+  agents says to send its plan before starting `/checkpoint-3t`, not halfway through it.
+
 ## 0.13.3
 
 Found by measuring 0.13.2 in the live supervision of 3-tier-memory (2026-10-16).

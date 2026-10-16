@@ -40,6 +40,19 @@ def agent_get(target):
     return res.get("agent")
 
 
+def pane_get(pane_id):
+    """(found, pane): (False, None) only when herdr says pane_not_found; (None, None) when herdr cannot be asked."""
+    code, out, err = run(["pane", "get", pane_id])
+    if "pane_not_found" in (out or "") + (err or ""):
+        return False, None
+    if code != 0:
+        return None, None
+    try:
+        return True, (json.loads(out).get("result") or {}).get("pane") or {}
+    except ValueError:
+        return None, None
+
+
 def tab_get(tab_id):
     """The tab as herdr shows it: label, number, pane_count. None on any failure."""
     if not tab_id:

@@ -8,6 +8,7 @@ with a supervisor marker through (written by `lookout inicia`); executors never 
   A question asked and never answered is a pending user decision in supervisor.md.
 - Stop (its own synchronous entry, via hooks/guard-sup.sh; an async hook cannot block): no live waiter, or a decision
   of the user never asked in a modal → keep the turn going once and say what to do (stop_check).
+  0.13.4: also a skill text older than the installed lookout (skill_vieja).
 - PreCompact: rewrite supervisor.md before the context is summarized.
 - SessionStart[compact]: print the «Como retomar» (plain stdout reaches the model's context after a compaction; V14).
 Exit 0 always. Its only turn-extending output is the Stop check above, from the synchronous entry; the async on_state.py entry
@@ -15,6 +16,7 @@ Exit 0 always. Its only turn-extending output is the Stop check above, from the 
 """
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -115,7 +117,8 @@ def stop_check(data, pid, sid, grace=1.5):
     if sin_waiter and digest.despertar_en_cola(pid, sid, data.get("transcript_path")):
         sin_waiter = False  # B1 (0.12.2): its waiter just woke; the queued notification opens the next turn
     pendientes = [it for it in decisiones.sin_preguntar(pid) if not it.get("recordada")]
-    if not sin_waiter and not pendientes:
+    vieja = skill_vieja(pid, sid, data.get("transcript_path"))
+    if not sin_waiter and not pendientes and not vieja:
         return ""
     pasos, aviso = [], []
     if sin_waiter:
@@ -133,12 +136,87 @@ def stop_check(data, pid, sid, grace=1.5):
                      % (len(pendientes), "; ".join("%s: %s" % (it["id"], supervisor_md.one_line(it["texto"], 120))
                                                    for it in pendientes), pid))
         aviso.append("%d decisión(es) para ti en camino" % len(pendientes))
+    if vieja:
+        cargada, instalada = vieja
+        pasos.append("la skill supervisa que tienes cargada es la %s y la instalada es la %s (/reload-plugins no recarga "
+                     "el texto de una skill ya cargada). Vuelve a cargarla ahora con la herramienta Skill "
+                     "(`lookout:supervisa` con la ruta del proyecto) y sigue sus reglas desde ahí; si vuelve a salir "
+                     "la %s, pide al usuario /reload-plugins." % (cargada, instalada, cargada))
+        aviso.append("skill supervisa %s cargada, %s instalada: la recargo" % (cargada, instalada))
     if sin_waiter and pendientes:
         pasos[0] += " Hazlo ANTES del modal: el modal te deja parado hasta que el usuario conteste."
     detalle = " ".join("%d) %s" % (i + 1, t) for i, t in enumerate(pasos)) if len(pasos) > 1 else pasos[0]
     return json.dumps({"systemMessage": "lookout: " + "; ".join(aviso) + ".",
                        "hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": "lookout: " + detalle}},
                       ensure_ascii=False)
+
+
+SKILL_CARGADA = re.compile(rb"Base directory for this skill: ([^\"\\\n]*?)/lookout/([0-9][^/\"\\\n]*)/skills/supervisa")
+
+
+def _ver(v):
+    """Semver order for the plugin's versions: a pre-release sorts before its release, rc1 before rc2 (adversary r2)."""
+    m = re.match(r"(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?", str(v))
+    if not m:
+        return (-1,)
+    pre = m.group(4)
+    if not pre:
+        return (int(m.group(1)), int(m.group(2)), int(m.group(3)), 1)
+    partes = tuple((0, int(x), "") if x.isdigit() else (1, 0, x) for x in re.split(r"[.-]|(?<=[A-Za-z])(?=\d)", pre) if x)
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)), 0) + partes
+
+
+def installed_plugins_path():
+    base = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+    return os.path.join(base, "plugins", "installed_plugins.json")
+
+
+def skill_vieja(pid, sid, transcript_path):
+    """0.13.4 (p-72a8efc1a9): 3-tier-memory, 2026-10-15 and 16: after /plugin and /reload-plugins the supervisor went
+    on with the skill text it had loaded (0.10.0 all day, then 0.13.2 with 0.13.3 installed). The last «Base directory
+    for this skill» of lookout's supervisa in the transcript says which version it loaded; installed_plugins.json says
+    which one is installed. Different → (cargada, instalada), once per pair and session. The transcript is read
+    from where the previous Stop left it. Unsure (no transcript, no entry, a dev install) → None."""
+    import lookout_state
+    if not transcript_path:
+        return None
+    path = os.path.join(lookout_state.project_dir(pid), "skill_cargada.json")
+    st = lookout_state.read_json(path) or {}
+    if st.get("transcript") != transcript_path or st.get("session_id") != sid:
+        st = {"transcript": transcript_path, "session_id": sid}
+    try:
+        with open(transcript_path, "rb") as fh:
+            head = fh.read(256).hex()
+            fh.seek(0, 2)
+            size = fh.tell()
+            off = int(st.get("offset") or 0)
+            if off > size or (st.get("cabeza") and st["cabeza"] != head):  # truncated or replaced in place (adversary r1)
+                off, st["cargada"] = 0, None
+            st["cabeza"] = head if size >= 256 else None
+            fh.seek(max(0, off - 300))  # a match split by the previous read
+            found = SKILL_CARGADA.findall(fh.read())
+    except OSError:
+        return None
+    if found:
+        base, version = found[-1]
+        st["cargada"] = version.decode("utf-8", "replace")
+        st["marketplace"] = os.path.basename(base.decode("utf-8", "replace"))
+    st["offset"] = size
+    instalada = None
+    if st.get("cargada") and st.get("marketplace"):
+        entries = (lookout_state.read_json(installed_plugins_path()) or {}).get("plugins") or {}
+        for e in entries.get("lookout@" + st["marketplace"]) or []:
+            if isinstance(e, dict) and e.get("version"):
+                instalada = str(e["version"])
+                break
+    out = None
+    if instalada and _ver(instalada) > _ver(st["cargada"]):  # a newer loaded text is no reason (adversary r1)
+        par = "%s>%s" % (st["cargada"], instalada)
+        if st.get("avisada") != par:
+            st["avisada"] = par
+            out = (st["cargada"], instalada)
+    lookout_state.write_json(path, st)
+    return out
 
 
 def main():

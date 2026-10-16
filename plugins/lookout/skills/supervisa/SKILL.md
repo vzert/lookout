@@ -296,6 +296,14 @@ Escribe solo un evento `pendiente.resolve` en el journal; `_pendientes.md` cambi
 - **Todo cierre lo decide el usuario, también el que pide un agente que ya corría** (p. ej. en su `/checkpoint-3t`):
   si un agente te avisa que va a cerrar un pendiente, no le das tu OK; abres la decisión, se lo preguntas al usuario
   y le pasas su respuesta.
+- **Las decisiones van antes del `/checkpoint-3t`, no a mitad.** En una sesión sin lookout el checkpoint pregunta
+  los pendientes en un modal y sigue en el mismo turno; el agente supervisado no puede abrir modal, así que si le dices
+  «haz tu checkpoint y mándame la lista» lo parte en dos turnos: escribe la ficha, para a medias, el cierre de 3-tier
+  lo frena y emite los pendientes después de su auditoría (3-tier-memory, 2026-10-16: hook-para-checkpoint, d57-d59).
+  Cuando un agente terminó su trabajo: 1) pídele los candidatos (pendientes a cerrar con su evidencia, nuevos con
+  texto y prioridad); 2) pregúntale al usuario en un modal, una pregunta por candidato; 3) mándale «Haz
+  /checkpoint-3t de un tirón con estas decisiones: … (d57, d58)». Si ya empezó y paró a medias, pásale las decisiones
+  igual.
 **Hallazgos que quedan sin arreglar** (residuales del adversario): no los escribes tú. Propónselos al usuario
 con el texto del pendiente y la orden exacta (`journal-emit.py --memory-dir <repo>/memory --type pendiente.add
 --prioridad … --origen … --text "…"`); él decide.

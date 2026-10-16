@@ -453,8 +453,11 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
     ecos = [ev for ev in new if es_eco(ev)]
     new = [ev for ev in new if not es_eco(ev)]
     import heuristicas
+    # 0.13.4: a failed relief ended the session and started none; it stays until the relief is repeated or it is closed
+    # and the session it tried to start is no agent (a ghost row «x~3b9909 | sin eventos»)
     vivos = {s: e for s, e in agents.items() if e.get("tarea_estado") != "relevada" and not e.get("retirado")
-             and (last.get(s) or {}).get("event") != "end"}
+             and not (e.get("relevo_de") and e.get("tarea_estado") == "fallida" and s not in last)
+             and ((last.get(s) or {}).get("event") != "end" or e.get("tarea_estado") == "relevo-fallido")}
     head = ["Agentes (%d%s), por grupo: pestaña (nombre) | rama | tarea | último evento" % (
         len(vivos), ", +%d terminados" % (len(agents) - len(vivos)) if len(agents) > len(vivos) else "")]
     now = time.time()
@@ -475,7 +478,11 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
             estado = ("%s %s" % (ESTADO.get(ev.get("event"), ev.get("event")), hhmmss(ev.get("ts")))) if ev else "sin eventos"
             ev_e = last_estado.get(sid)
             blk = heuristicas.bloque_sin_atender(ev_e, e, decs) if ev_e and g == "te_necesita" else None
-            if blk:  # 0.13.3: the row says what to do, every wake, until it is attended
+            if e.get("tarea_estado") == "relevo-fallido":  # 0.13.4: every wake, like a block, until attended
+                estado = "relevo fallido → díselo al usuario; `lookout relevo` otra vez, o con su sí `lookout cierra-pestana … --usuario-confirmo <id>` (%s)" % (
+                    e.get("tarea_motivo") or "?")
+                filas_bloque.append("  " + clip("%s | %s" % (registry.quien(e), estado), MAX_COLS - 2))
+            elif blk:  # 0.13.3: the row says what to do, every wake, until it is attended
                 import retomar
                 estado = "bloque %s %s → %s" % (blk.get("estado"), hhmmss(ev_e.get("ts")), retomar.accion(blk))
                 filas_bloque.append("  " + clip("%s | %s" % (registry.quien(e), estado), MAX_COLS - 2))

@@ -325,6 +325,7 @@ class CierresTest(unittest.TestCase):
         self.assertIn("--estado abandoned", skill)
         self.assertIn("**Nunca** corras `journal-emit.py --type pendiente.resolve`", skill)
         self.assertIn("también el que pide un agente que ya corría", skill)
+        self.assertIn("Las decisiones van antes del `/checkpoint-3t`, no a mitad.", skill)
 
     def test_the_note_to_running_agents_covers_their_checkpoint(self):
         tmp = tempfile.TemporaryDirectory()
@@ -334,7 +335,7 @@ class CierresTest(unittest.TestCase):
         self.addCleanup(lambda: os.environ.__setitem__("LOOKOUT_STATE_DIR", old) if old is not None
                         else os.environ.pop("LOOKOUT_STATE_DIR", None))
         nota = load_cli().render_nota(PID, {"nombre": "snippet"})
-        self.assertIn("(aun en /checkpoint-3t)", nota)
+        self.assertIn("Antes de /checkpoint-3t o de borrar, merge o cerrar un pendiente, manda tu plan y espera", nota)
         self.assertNotIn("\n", nota)  # one line: a multi-line prompt arrives as <pasted_content>
 
     def test_descarta_is_a_command(self):

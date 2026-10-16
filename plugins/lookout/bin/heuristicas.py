@@ -511,6 +511,8 @@ def grupo(events, sid, entry=None, decs=None):
     """The agent's group in the grouped view, from its last state event (fallo/aprobado/crossrepo/notification are
     in-turn noise and do not move it: a `repite` keeps it in "te necesita" while it keeps failing)."""
     entry = entry or {}
+    if entry.get("tarea_estado") == "relevo-fallido":
+        return "te_necesita"  # 0.13.4: its session ended in the relief and no new one started (live 3-tier 2026-10-16)
     for ev in reversed(events):
         if ev.get("session_id") != sid or ev.get("event") in NO_ESTADO:
             continue
