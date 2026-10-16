@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.13.5
+
+- An agent whose alta could not rename it names itself in herdr. The alta renames once, from the waiter; a box with
+  the user's draft at that moment («caja con borrador») left the agent without its herdr name until the supervisor
+  delivered the note (3-tier-memory, 2026-10-16: a session registered in 16 s while the user typed its first
+  prompt). Now the agent's own state hook finishes it on its next hook event: it runs inside that session, and its
+  `HERDR_PANE_ID` is that session's pane; herdr must still answer and see this same session there (a pane moved to
+  another workspace gets a new id). It runs on its asynchronous events only (end of turn, prompt, notification), never
+  on the synchronous SessionEnd. Only herdr's side (agent, pane, tab), nothing typed into the box (the session's own
+  `/rename` still comes with the note); only when the alta recorded «caja con …», herdr shows no other name for it
+  (one the user gave is kept), and at most 3 times, a half-done try included; an agent retired or relieved meanwhile
+  keeps its record. `lookout entrega` renaming it ends those tries. Residual: between that check and the rename call
+  (milliseconds) the session would have to exit and another start in the same pane; then only a herdr label changes,
+  which can be renamed back (the alta and `lookout entrega` have had the same window since 0.13.1). A retry from the waiter was tried first
+  and dropped: from outside, the pane's session could change between the check and the rename (adversary, three
+  rounds).
+
 ## 0.13.4
 
 - A relief no longer asks herdr for a name it refuses. `lookout relevo` of the 32-character

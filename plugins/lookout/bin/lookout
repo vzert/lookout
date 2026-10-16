@@ -273,6 +273,7 @@ def cmd_entrega(a):
         fallos = []
         if herdr_cli.run(["agent", "rename", pane, entry["nombre"]])[0] == 0:
             entry["herdr_name"] = entry["nombre"]
+            entry.pop("renombre_parcial", None)  # 0.13.5: the agent's own retry stops here (adversary r3)
         else:
             fallos.append("agente")
         if herdr_cli.run(["pane", "rename", pane, "lookout: " + entry["nombre"]])[0] != 0:

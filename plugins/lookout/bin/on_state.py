@@ -366,6 +366,13 @@ def main():
             supervisor_md.write(own)
     except Exception:  # a state hook must never disturb the agent
         return 0
+    if data.get("hook_event_name") not in ("Stop", "UserPromptSubmit", "Notification"):
+        return 0  # async entries only: SessionEnd is synchronous with 5 s, too little for several herdr calls
+    try:  # 0.13.5: the agent finishes in herdr a rename the alta left at «caja con …» (alta.renombra_propio)
+        import alta
+        alta.renombra_propio(marker.get("project_id", ""), data.get("session_id", ""), os.environ.get("HERDR_PANE_ID", ""))
+    except Exception:
+        return 0
     return 0
 
 

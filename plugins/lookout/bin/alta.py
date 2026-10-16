@@ -60,6 +60,12 @@ def renombra(entry, tab_of=None):
     # what reaches the session is the /rename: if herdr refused it, nothing was renamed (codex round 1)
     if herdr_cli.run(["agent", "prompt", pane, "/rename " + nombre])[0] != 0:
         return "herdr no tecleó el /rename"
+    return renombra_herdr(entry, tab_of)
+
+
+def renombra_herdr(entry, tab_of=None):
+    """herdr's side of the rename (agent, pane, tab): calls to herdr only, nothing typed into the session's box."""
+    pane, nombre = entry.get("pane_id") or "", entry.get("nombre") or ""
     fallos = []
     if herdr_cli.run(["agent", "rename", pane, nombre])[0] == 0:
         entry["herdr_name"] = nombre
@@ -76,6 +82,49 @@ def renombra(entry, tab_of=None):
             fallos.append("pestaña")
     # codex round 2: a refused herdr rename is not "hecho"; the session's /rename did go
     return "hecho" if not fallos else "a medias: herdr no renombró " + ", ".join(fallos)
+
+
+RENOMBRE_INTENTOS = 3
+
+
+def renombra_propio(project_id, session_id, pane, tab_of=None):
+    """0.13.5: the alta renames once, from the waiter; a box with the user's draft at that moment («caja con borrador»)
+    left the agent without its herdr name until the supervisor delivered the note (3-tier-memory 2026-10-16: a
+    session registered in 16 s while the user typed its first prompt). The agent's own state hook finishes it: it runs
+    inside that session, and `pane` is its HERDR_PANE_ID, so the pane is that session's while the hook runs. A retry
+    from the waiter, outside, had to guess which session the pane held and raced it (adversary, three rounds). Only
+    herdr's side (agent, pane, tab), nothing typed into the box; only when the alta recorded «caja con …», herdr shows
+    no other name for it (one the user gave is kept), and at most RENOMBRE_INTENTOS times. Returns the result or ""."""
+    import lote
+    e = registry.load(project_id).get("agents", {}).get(session_id) or {}
+    if (not pane or e.get("pane_id") != pane or not str(e.get("renombre") or "").startswith("caja con")
+            or (e.get("herdr_name") and not e.get("renombre_parcial")) or e.get("retirado")
+            or e.get("tarea_estado") in ("relevada", "relevando", "relevo-fallido", "fallida")
+            or int(e.get("renombre_intentos") or 0) >= RENOMBRE_INTENTOS):
+        return ""
+    # adversary r1 (codex): herdr must answer and see THIS session on that pane (a pane moved to another workspace
+    # gets a new id, and HERDR_PANE_ID keeps the old one); a name other than ours was given after the alta
+    vivo = herdr_cli.agent_get(pane)
+    if not vivo or (vivo.get("agent_session") or {}).get("value") != session_id:
+        return ""
+    if vivo.get("name") and vivo.get("name") != e.get("nombre"):
+        return ""
+    copia = dict(e)
+    r = renombra_herdr(copia, tab_of)
+    with lote.project_mutex(project_id):
+        reg = registry.load(project_id)
+        x = reg["agents"].get(session_id)
+        # adversary r1 (codex): retired or relieved meanwhile: its record is not written over
+        if x and not x.get("retirado") and x.get("tarea_estado") not in ("relevada", "relevando", "relevo-fallido"):
+            x["renombre_intentos"] = int(x.get("renombre_intentos") or 0) + 1
+            x["renombre_parcial"] = r.startswith("a medias")
+            if r == "hecho":
+                x["renombre"] = "hecho por el agente en herdr (el /rename de la sesión llega con la nota)"
+            for k in ("herdr_name", "pestana"):
+                if copia.get(k):
+                    x[k] = copia[k]
+            registry.save(project_id, reg)
+    return r
 
 
 def pasada(project_id):
@@ -159,6 +208,7 @@ def descubre(project_id, agents=None, common_of=None, tab_of=None):
         for sid, r in renombres.items():
             e = reg["agents"].get(sid)
             if e:  # renombra sets each field only when herdr accepted it
+                e["renombre"] = r  # 0.13.5: the agent's own hook finishes what a draft stopped (renombra_propio)
                 for k in ("herdr_name", "pestana"):
                     if copias[sid].get(k):
                         e[k] = copias[sid][k]
