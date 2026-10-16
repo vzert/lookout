@@ -110,6 +110,33 @@ def remote_tip(wt, branch):
     return out.split()[0] if code == 0 and out.strip() else ""
 
 
+def valida_worktree(common_dir, ruta):
+    """0.13.6: `--worktree`. An agent launched on the main checkout that works in a worktree of its own (`cd` in its
+    Bash; herdr and the registry only see the main checkout) was checked on the main checkout's branch and got
+    BASE-MOVIDA (3-tier-memory, 2026-10-16). Returns (top level, branch, "") for a worktree of this same repository,
+    or ("", "", why not)."""
+    if not ruta or not os.path.isdir(ruta):
+        return "", "", "no existe el directorio %s" % ruta
+    rc, top = git(ruta, "rev-parse", "--show-toplevel")
+    rc2, com = git(ruta, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if rc != 0 or rc2 != 0 or not top.strip():
+        return "", "", "%s no es un checkout de git" % ruta
+    if os.path.realpath(com.strip()) != os.path.realpath(common_dir or ""):
+        return "", "", "%s es de otro repositorio (%s)" % (ruta, com.strip())
+    _, rama = git(ruta, "rev-parse", "--abbrev-ref", "HEAD")
+    return os.path.realpath(top.strip()), rama.strip(), ""
+
+
+def pista_worktree(wt):
+    """The hint for a NO on the main checkout of a repository that has other worktrees."""
+    rc, out = git(wt, "worktree", "list", "--porcelain")
+    trees = [l[9:] for l in out.splitlines() if l.startswith("worktree ")] if rc == 0 else []
+    if len(trees) < 2 or os.path.realpath(trees[0]) != os.path.realpath(wt or ""):
+        return []
+    return ["Lo comprobé en el checkout principal (%s). Si el agente trabaja en otro worktree, pregúntale la ruta y "
+            "repite con `--worktree <ruta>`." % wt]
+
+
 def private_hits(wt, base, limit=5):
     code, out = git(wt, "diff", "--unified=0", base + "..HEAD")
     hits = []
@@ -125,7 +152,8 @@ def private_hits(wt, base, limit=5):
 
 # ---------- the queue ----------
 
-def pide(project_id, entry, st, log=None):
+def pide(project_id, entry, st, log=None, worktree=None):
+    """`worktree`: (top level, branch) from valida_worktree; it stays with this publication for --hecho and expiry."""
     """Ask to publish. Returns (ok, code, lines). Never pushes, never fetches into the agent's tree."""
     if entry.get("sin_worktree"):
         # Fase 9 G: an agent on the main checkout does not commit; a push from there would carry every commit on main
@@ -138,6 +166,8 @@ def pide(project_id, entry, st, log=None):
               "rama": entry.get("branch"), "worktree": entry.get("worktree"), "estado": "esperando",
               "pedida": time.time()}
         led["cola"].append(me)
+    if worktree:
+        me.update(worktree=worktree[0], rama=worktree[1])
     for p in led["cola"]:
         if p is not me and p["estado"] in VIVAS:
             why = caducada(project_id, p)
@@ -166,7 +196,7 @@ def pide(project_id, entry, st, log=None):
 
 
 def verifica(project_id, entry, st, led, me):
-    wt = entry.get("worktree") or entry.get("cwd")
+    wt = me.get("worktree") or entry.get("worktree") or entry.get("cwd")
     lines = []
     ok, code, text = gobierno.decide_push(st)
     lines.append("Adversario: " + text)
@@ -191,12 +221,12 @@ def verifica(project_id, entry, st, led, me):
             "NO: origin/%s está en %s y la rama del agente no se apoya en ese commit (%s). Dile: `git fetch origin`, "
             "rebase sobre origin/%s, renumera la versión si otra publicación ya usó la suya, corre sus suites y vuelve "
             "a pedir el push." % (branch, tip[:9], "commit desconocido aquí: falta fetch" if not known else "no es fast-forward",
-                                  branch)]
+                                  branch)] + pista_worktree(wt)
     _, head = git(wt, "rev-parse", "HEAD")
     head = head.strip()
     _, commits = git(wt, "log", "--oneline", tip + "..HEAD")
     if not commits.strip():
-        return False, "NADA", lines + ["NO: no hay commits nuevos sobre origin/%s." % branch]
+        return False, "NADA", lines + ["NO: no hay commits nuevos sobre origin/%s." % branch] + pista_worktree(wt)
     vfile, vhead = version_at(wt, "HEAD")
     _, vbase = version_at(wt, tip)
     _, touched = git(wt, "diff", "--name-only", tip + "..HEAD")
@@ -330,7 +360,7 @@ def caducada(project_id, p):
     if p["session_id"] in lote.ended_sessions(project_id):
         return "su sesión terminó (SessionEnd)"
     if p["estado"] == "lista":
-        _, head = git(e.get("worktree") or e.get("cwd"), "rev-parse", "HEAD")
+        _, head = git(p.get("worktree") or e.get("worktree") or e.get("cwd"), "rev-parse", "HEAD")
         if p.get("head") and head.strip() != p["head"]:
             return "su HEAD cambió después de verificarla"
         if not gobierno.decide_push(gobierno.estado(project_id, e, guardar=False))[0]:
@@ -381,7 +411,7 @@ def hecho(project_id, entry):
     me = entry_of(led, entry["session_id"])
     if not me or me["estado"] != "lista":
         return False, ["NO: %s no tiene una publicación lista en la cola." % entry.get("nombre")]
-    wt = entry.get("worktree") or entry.get("cwd")
+    wt = me.get("worktree") or entry.get("worktree") or entry.get("cwd")
     tip = remote_tip(wt, me.get("rama_remota") or remote_branch(entry))
     if tip != me.get("head"):
         return False, ["NO: origin/%s está en %s, no en el commit verificado %s. ¿Se hizo el push? ¿El agente añadió "

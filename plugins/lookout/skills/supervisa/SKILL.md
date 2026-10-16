@@ -258,7 +258,9 @@ NO, no lo rodees ni lo reformules: pásale al agente el texto del NO.
      usuario di que este push **no tuvo revisión independiente**.
 2. Con `OK`: `lookout publica <project_id> <agente>`. Pone a los agentes en una sola cola (H14) y verifica
    por su cuenta: base = punta actual de origin y fast-forward, commits, versión nueva (contra origin y
-   contra las otras publicaciones), sin rutas privadas.
+   contra las otras publicaciones), sin rutas privadas. Si el agente trabaja en un worktree propio (su mensaje
+   o sus comandos `cd` lo nombran), añade `--worktree <ruta>`: sin él, lookout comprueba el árbol del registro, que
+   para un agente lanzado en el checkout principal es ese checkout (`WORKTREE-AJENO`: la ruta no es de este repo).
    - `ESPERA`: otro publica primero. Dile al agente que espere tu mensaje.
    - `BASE-MOVIDA` / `VERSION-…`: dile exactamente lo que dice el NO (fetch + rebase + renumerar + suites) y
      que vuelva a pedirlo.

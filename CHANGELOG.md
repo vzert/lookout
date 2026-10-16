@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.13.6
+
+- An agent's marker keeps every address its supervisor had. After a relief of the supervisor the markers
+  (`sessions/<session_id>.json` under lookout's state) held only the new address (3-tier-memory, 2026-10-16: 2476.sock
+  → 95700.sock), so 3-tier's `checkpoint-close-guard` (2.62.3) stopped counting the questions the agent had already
+  sent to the old supervisor. New key `direcciones`: a list of strings, every non-empty address the session's
+  supervisor had in this project, without repeats, the current one last. `address` does not change: it is still the
+  current address as a string (`""` with no socket, and `""` for any value that is not text, which 3-tier reads as
+  unreadable). A marker written before 0.13.6 counts its `address` as the first
+  entry. An agent's relief carries the list to the new session. Reading `direcciones` is 3-tier's side; until 3-tier reads it, its
+  `checkpoint-close-guard` behaves as before (only `address`), so questions sent to an earlier supervisor still do
+  not count there.
+- `lookout publica <proyecto> <agente> --worktree <ruta>` checks the agent's own worktree. An agent launched on the
+  main checkout that works in a worktree of its own (`cd` in its Bash) is registered with the main checkout, the only
+  tree herdr sees; `publica` checked that checkout's branch and answered BASE-MOVIDA for branches that did contain
+  origin's tip (3-tier-memory, 2026-10-16: aviso-sin-git and plan-poda-guardian). The path must be a checkout of the
+  same repository (`WORKTREE-AJENO` otherwise, exit 5, nothing queued); it stays with the publication, so `--hecho`
+  and the queue's expiry read the same tree without the flag. A BASE-MOVIDA or NADA checked on the main checkout of a
+  repository that has other worktrees now says to ask the agent for its path and repeat with `--worktree`. The
+  supervisor skill says when to pass it.
+
 ## 0.13.5
 
 - An agent whose alta could not rename it names itself in herdr. The alta renames once, from the waiter; a box with

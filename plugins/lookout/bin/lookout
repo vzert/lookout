@@ -27,7 +27,8 @@ Subcommands (PROYECTO = a path inside the repo, or its project_id):
   gobierno PROYECTO AGENTE [--para push|ronda] [--usuario-amplia N --decision ID]
                                 goalspec governance (F3): may this agent's push go to the user? may it open one
                                 more adversary round? (from its own transcript; exit 5 = no)
-  publica PROYECTO AGENTE [--hecho | --retira]   publications in order (H14): verify and queue; --hecho after the push
+  publica PROYECTO AGENTE [--worktree RUTA] [--hecho | --retira]   publications in order (H14): verify and queue;
+                                --worktree when the agent works in a worktree its registry entry does not name
   publica PROYECTO --cola       the publication queue
   regla-push PROYECTO [--estado]  the temporary push rule the USER applies (H15); --estado reads whether it is on
   permisos                      the executors' permission rules (D6, F5): active or not, where the user activates them
@@ -548,7 +549,16 @@ def cmd_publica(a):
         if a.retira:
             print("Retirada de la cola." if publica.retira(pid, e) else "No estaba en la cola.")
             return 0
-        ok, code, lines = publica.pide(pid, e, gobierno.estado(pid, e))
+        wt = None
+        if getattr(a, "worktree", ""):
+            top, rama, why = publica.valida_worktree(common, a.worktree)
+            if why:
+                print("NO: --worktree: %s. Pregúntale al agente la ruta de su worktree." % why)
+                print("")
+                print("WORKTREE-AJENO")
+                return 5
+            wt = (top, rama)
+        ok, code, lines = publica.pide(pid, e, gobierno.estado(pid, e), worktree=wt)
     print("\n".join(lines))
     print("")
     print("%s" % code)
@@ -770,7 +780,7 @@ def main():
     p.add_argument("--decision", default="")
     p = sub.add_parser("publica"); p.add_argument("proyecto"); p.add_argument("agente", nargs="?")
     p.add_argument("--hecho", action="store_true"); p.add_argument("--retira", action="store_true")
-    p.add_argument("--cola", action="store_true")
+    p.add_argument("--cola", action="store_true"); p.add_argument("--worktree", default="")
     p = sub.add_parser("regla-push"); p.add_argument("proyecto"); p.add_argument("--estado", action="store_true")
     sub.add_parser("permisos")
     p = sub.add_parser("cierra"); p.add_argument("proyecto"); p.add_argument("agente")

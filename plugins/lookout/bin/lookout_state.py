@@ -71,8 +71,28 @@ def read_marker(session_id):
 
 
 def write_marker(session_id, data):
+    """0.13.6: `direcciones` keeps every supervisor address the session had, the current one last (3-tier-memory
+    2026-10-16: the supervisor moved from 2476.sock to 95700.sock and 3-tier's checkpoint-close-guard stopped counting
+    the questions already sent to the old one). `address` stays the current one, as text."""
     if not _safe_id(session_id):
         raise ValueError("session_id inválido: %r" % session_id)
+    data = dict(data)
+    if "address" in data and not isinstance(data["address"], str):
+        data["address"] = ""  # adversary r1 (codex): 3-tier reads a non-text address as unreadable and fails closed
+    old = read_json(marker_path(session_id))
+    old = old if isinstance(old, dict) else {}
+
+    def lista(v):
+        return list(v) if isinstance(v, list) else []  # a string would split into characters
+
+    vistas = lista(data.get("direcciones"))
+    if old.get("project_id") == data.get("project_id"):
+        vistas = lista(old.get("direcciones")) + [old.get("address")] + vistas
+    actual = data.get("address")
+    vistas = [d for d in vistas if isinstance(d, str) and d.strip() and d != actual]
+    if isinstance(actual, str) and actual.strip():
+        vistas.append(actual)
+    data["direcciones"] = list(dict.fromkeys(vistas))
     write_json(marker_path(session_id), data)
 
 
