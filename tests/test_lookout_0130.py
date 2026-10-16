@@ -476,6 +476,112 @@ class BarridoTest(AvisoTest):
         self.assertEqual(alta.barre(PID, [{"agent_session": {"value": "s1"}, "agent_status": "working"}]), [])
 
 
+class RetomarFilaTest(AvisoTest):
+    """0.13.3: a block nobody attended stays in «Te necesita», with what to do, in every wake (live 3-tier 2026-10-16:
+    agrupar-pendientes sat under «Trabajando» from 01:15 to 03:35Z and the supervisor never opened its modal)."""
+
+    def block(self, sid, nombre, estado, motivo="", ts=None):
+        self.agent(sid, nombre)
+        ev = {"session_id": sid, "nombre": nombre, "event": "retomar", "hook": "barrido", "ts": ts or time.time(),
+              "retomar": {"hay": True, "estado": estado, "pendientes": ["p-3f22a1cba1"], "motivo": motivo,
+                          "bloque_id": "b-" + sid}}
+        lookout_state.append_event(PID, ev)
+        return ev
+
+    def fila(self, out, nombre):
+        lines = out.splitlines()
+        grupo, fila = None, None
+        for x in lines:
+            if x.endswith(":") and not x.startswith(" "):
+                grupo = x[:-1]
+            elif x.startswith("  ") and "(%s)" % nombre in x or x.strip().startswith(nombre + " "):
+                fila = (grupo, x)
+        return fila
+
+    def test_an_unattended_ambiguo_is_te_necesita_with_its_action_every_wake(self):
+        import heuristicas
+        self.block("s1", "agrupar-pendientes", "ambiguo", "otro agente trabajó p-3f22a1cba1 después del bloque")
+        events, _ = lookout_state.read_events(PID, 0)
+        self.assertEqual(heuristicas.grupo(events, "s1", registry.load(PID)["agents"]["s1"]), "te_necesita")
+        for _ in range(2):  # the waiter's «sin cambios» must not hide it on the next wake
+            out = digest.render(PID, por_waiter=True)
+            g, row = self.fila(out, "agrupar-pendientes") or (None, out)
+            self.assertEqual(g, "Te necesita", out)
+            self.assertIn("modal", row)
+
+    def test_an_in_turn_event_after_the_block_keeps_the_action(self):
+        # advisor, 0.13.3: the row read the last event while grupo skips fallo/aprobado/crossrepo
+        self.block("s1", "agrupar-pendientes", "ambiguo", "x")
+        lookout_state.append_event(PID, {"session_id": "s1", "nombre": "agrupar-pendientes", "event": "aprobado",
+                                         "ts": time.time()})
+        g, row = self.fila(digest.render(PID), "agrupar-pendientes")
+        self.assertEqual(g, "Te necesita")
+        self.assertIn("modal", row)
+
+    def test_a_vigente_row_says_relevo(self):
+        self.block("s1", "cambio-worktrees", "vigente")
+        g, row = self.fila(digest.render(PID), "cambio-worktrees")
+        self.assertEqual(g, "Te necesita")
+        self.assertIn("lookout relevo", row)
+
+    def test_a_decision_naming_it_attends_it(self):
+        import decisiones
+        import heuristicas
+        self.block("s1", "agrupar-pendientes", "ambiguo", "x", ts=time.time() - 5)
+        decisiones.abre(PID, "¿relevo, cierro o lo dejo?", ["agrupar-pendientes"], notificar=False)
+        events, _ = lookout_state.read_events(PID, 0)
+        self.assertNotEqual(heuristicas.grupo(events, "s1", registry.load(PID)["agents"]["s1"],
+                                              decisiones.load(PID)["items"]), "te_necesita")
+        self.assertNotEqual(self.fila(digest.render(PID), "agrupar-pendientes")[0], "Te necesita")
+
+    def test_nada_is_not_te_necesita(self):
+        import heuristicas
+        self.block("s1", "uno", "nada")
+        events, _ = lookout_state.read_events(PID, 0)
+        self.assertNotEqual(heuristicas.grupo(events, "s1"), "te_necesita")
+
+    def test_the_event_line_says_what_to_do_before_the_motive(self):
+        import retomar
+        line = retomar.describe({"estado": "ambiguo", "pendientes": ["p-1"], "motivo": "otro agente trabajó p-1 " * 9})
+        self.assertIn("modal", digest.clip(line))
+        self.assertIn("lookout relevo", retomar.describe({"estado": "vigente", "pendientes": ["p-1"]}))
+        self.assertIn("cierra-pestana", retomar.describe({"estado": "ambiguo", "pendientes": [],
+                                                          "motivo": retomar.CERRADO + ": p-1"}))
+
+    def test_no_herdr_notification_for_a_block(self):
+        import heuristicas
+        import herdr_cli
+        ev = self.block("s1", "uno", "vigente")
+        calls, old = [], herdr_cli.run
+        herdr_cli.run = lambda args, **kw: calls.append(args) or (0, "", "")
+        try:
+            self.assertEqual(heuristicas.transicion(PID, ev)[1], "te_necesita")
+        finally:
+            herdr_cli.run = old
+        self.assertEqual([a for a in calls if a[:1] == ["notification"]], [])
+
+    def test_a_finished_turn_with_nada_still_notifies_listo(self):
+        # advisor, 0.13.3: every Stop carries `retomar`; muting all of them dropped «listo para revisar»
+        import heuristicas
+        import herdr_cli
+        self.agent("s1", "uno")
+        ev = {"session_id": "s1", "nombre": "uno", "event": "idle", "ts": time.time(),
+              "marcadores": ["[COMPLETION-REVIEW ok]"], "retomar": {"hay": False, "estado": "nada", "motivo": "Ninguno"}}
+        lookout_state.append_event(PID, ev)
+        calls, old = [], herdr_cli.run
+        herdr_cli.run = lambda args, **kw: calls.append(args) or (0, "", "")
+        try:
+            self.assertEqual(heuristicas.transicion(PID, ev)[1:], ("listo", True))
+        finally:
+            herdr_cli.run = old
+        self.assertEqual(len([a for a in calls if a[:1] == ["notification"]]), 1)
+
+    def test_the_close_brake_says_relevo_or_modal(self):
+        import retiro
+        self.assertIn("lookout relevo", retiro.RELEVO_NO_CIERRE)
+        self.assertIn("modal", retiro.RELEVO_NO_CIERRE)
+
+
 class CierraPestanaTest(f3.Base):
     """Fase 2: each signal and guard stops the close by itself; with everything clean it /exits and closes the tab."""
 

@@ -493,7 +493,21 @@ TITULO = {"te_necesita": "Te necesita", "listo": "Listo para revisar", "trabajan
           "pausa": "En pausa (proveedor)", "idle": "Idle"}
 
 
-def grupo(events, sid, entry=None):
+def bloque_sin_atender(ev, entry=None, decs=None):
+    """The «Como retomar» of a `retomar` or `idle` event that still needs the supervisor (vigente or ambiguo), or None.
+    A decision opened after it that names the agent attends it; a relief, a close or new work leave a later event.
+    0.13.3: the event is announced once; this keeps the agent in «Te necesita» until then (live 3-tier 2026-10-16)."""
+    r = ev.get("retomar")
+    if not isinstance(r, dict) or r.get("estado") not in ("vigente", "ambiguo"):
+        return None
+    nombre = (entry or {}).get("nombre") or ev.get("nombre")
+    for it in decs or ():
+        if nombre and nombre in (it.get("agentes") or ()) and float(it.get("desde") or 0) >= float(ev.get("ts") or 0):
+            return None
+    return r
+
+
+def grupo(events, sid, entry=None, decs=None):
     """The agent's group in the grouped view, from its last state event (fallo/aprobado/crossrepo/notification are
     in-turn noise and do not move it: a `repite` keeps it in "te necesita" while it keeps failing)."""
     entry = entry or {}
@@ -501,6 +515,10 @@ def grupo(events, sid, entry=None):
         if ev.get("session_id") != sid or ev.get("event") in NO_ESTADO:
             continue
         k = ev.get("event")
+        if k in ("idle", "retomar") and bloque_sin_atender(ev, entry, decs):
+            return "te_necesita"
+        if k == "retomar":
+            return "idle"
         if k in ("ask", "blocked", "negado", "repite", "unknown"):
             return "te_necesita"
         if k == "sin_progreso":
@@ -544,12 +562,15 @@ def transicion(project_id, ev, notificar=True):
     with mutex(project_id):
         events = _project_events(project_id)
         entry = (registry.load(project_id).get("agents") or {}).get(sid) or {}
-        new = grupo(events, sid, entry)
+        import decisiones
+        items = decisiones.load(project_id).get("items")
+        new = grupo(events, sid, entry, items)
         data = lookout_state.read_json(grupos_path(project_id)) or {}
         old = (data.get(sid) or {}).get("grupo")
         if new == old:
             return old, new, False
-        avisa = notificar and new in AVISA and ev.get("event") not in NO_AVISA_POR
+        # a block is the supervisor's (relief by default, or its modal): no herdr notification to the user for it
+        avisa = notificar and new in AVISA and ev.get("event") not in NO_AVISA_POR and not (new == "te_necesita" and bloque_sin_atender(ev, entry, items))
         data[sid] = {"grupo": new, "ts": time.time(), "por": ev.get("event"), "avisado": avisa}
         lookout_state.write_json(grupos_path(project_id), data)
     if avisa:

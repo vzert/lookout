@@ -106,6 +106,8 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
 - **`dejó un bloque para retomar (p-…, vigente|ambiguo…)`** (al terminar su turno, o `estaba quieto con un «Como
   retomar»` al registrarlo o en el barrido de cada 2 min a los agentes quietos): lookout ya miró su último turno, y
   avisa una vez por bloque mientras no cambie lo que hace con él (un ambiguo que pasa a vigente se avisa otra vez).
+  Mientras nadie lo atienda, la tabla lo deja en «Te necesita» con `bloque vigente|ambiguo … → <qué hacer>` en cada
+  despertar; sale de ahí cuando abres su modal con `--agentes <agente>`, lo relevas, se cierra o vuelve a trabajar.
   - `vigente` → `lookout relevo <project_id> <agente>` **sin preguntar**, y una línea al usuario («Relevé
     <pestaña>: sigue con p-…»). Si el relevo dice `NO: …`, pásale esa línea al usuario.
   - `ambiguo` (con su motivo) → al modal en lote con su id dN: «¿relevo, cierro o lo dejo?». No adivines. La
@@ -201,8 +203,10 @@ de «siguen abiertas» y ninguna respuesta; el usuario pidió «repite las pregu
 **En lote, en este orden:**
 1. Contesta tú, por `SendMessage`, todo lo reversible que tengas en cola. Lo que es del usuario lo juntas.
 2. `lookout decision … --abre` para cada decisión nueva (un relevo reusa el id que ya existe).
-3. Comprueba que el waiter está vivo (`lookout espera` en segundo plano). El modal te deja parado hasta que el usuario
-   conteste: los mensajes que lleguen mientras tanto esperan en cola y los atiendes después.
+3. Comprueba que el waiter está vivo (`lookout espera` en segundo plano) y, si salió, **lánzalo antes del modal**. El
+   modal te deja parado hasta que el usuario conteste: los mensajes que lleguen mientras tanto esperan en cola y los
+   atiendes después, pero sin waiter no hay altas ni barrido (3-tier-memory, 2026-10-16: 65 min sin waiter tras un
+   modal).
 4. **Un solo** `AskUserQuestion` con todas las decisiones pendientes (hasta 4 preguntas; si hay más, las 4 más
    urgentes y el resto en el siguiente modal). Ningún texto en prosa antes ni después del modal que repita las
    preguntas.

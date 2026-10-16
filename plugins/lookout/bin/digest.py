@@ -431,10 +431,13 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
     agents = reg.get("agents", {})
     quien = {s: registry.quien(e) for s, e in agents.items()}
     all_events, _ = lookout_state.read_events(project_id, 0)
-    last = {}
+    last, last_estado = {}, {}
+    import heuristicas
     for ev in all_events:
         if ev.get("event") != "notification":
             last[ev.get("session_id")] = ev
+        if ev.get("event") not in heuristicas.NO_ESTADO:  # the event grupo() reads (0.13.3: the block's row)
+            last_estado[ev.get("session_id")] = ev
     cur = lookout_state.read_json(cursor_path(project_id)) or {}
     offset = int(cur.get("offset", 0))
     desde = cur.get("desde")
@@ -458,8 +461,11 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
     revisiones = heuristicas.ultimas_revisiones(project_id)
     by_group = {}
     tabla_clave = []
+    filas_bloque = []
+    import decisiones
+    decs = decisiones.load(project_id).get("items")
     for sid, e in vivos.items():
-        by_group.setdefault(heuristicas.grupo(all_events, sid, e), []).append((sid, e))
+        by_group.setdefault(heuristicas.grupo(all_events, sid, e, decs), []).append((sid, e))
     for g in heuristicas.GRUPOS:
         if not by_group.get(g):
             continue
@@ -467,6 +473,12 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
         for sid, e in by_group[g]:
             ev = last.get(sid)
             estado = ("%s %s" % (ESTADO.get(ev.get("event"), ev.get("event")), hhmmss(ev.get("ts")))) if ev else "sin eventos"
+            ev_e = last_estado.get(sid)
+            blk = heuristicas.bloque_sin_atender(ev_e, e, decs) if ev_e and g == "te_necesita" else None
+            if blk:  # 0.13.3: the row says what to do, every wake, until it is attended
+                import retomar
+                estado = "bloque %s %s → %s" % (blk.get("estado"), hhmmss(ev_e.get("ts")), retomar.accion(blk))
+                filas_bloque.append("  " + clip("%s | %s" % (registry.quien(e), estado), MAX_COLS - 2))
             tabla_clave.append([g, registry.quien(e), e.get("branch") or "", e.get("tarea") or "", estado])
             beat = heuristicas.ultimo_real(all_events, sid)
             if beat and beat.get("event") in heuristicas.EN_TURNO:
@@ -493,6 +505,8 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
         # N3 (0.12.2): a waiter wake prints only what changed since the previous wake; `resumen` always prints it all
         head = ["Agentes (%d): sin cambios desde el despertar anterior (tabla: `lookout resumen %s --no-marcar`)." % (
             len(vivos), project_id)]
+        if filas_bloque:  # 0.13.3: a block nobody attended is repeated on every wake, not folded into «sin cambios»
+            head += ["%s:" % heuristicas.TITULO["te_necesita"]] + filas_bloque
     tail = []
     dec = decisiones.render(project_id)
     if dec:

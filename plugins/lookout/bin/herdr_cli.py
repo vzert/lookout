@@ -52,11 +52,12 @@ def own_label(tab):
     """The tab's label when someone chose it; '' for herdr's default (the tab number) or no tab.
 
     A new herdr tab is labelled with its number ("1"); `herdr tab rename` or the UI replaces it (seen 2026-10-05:
-    "Cambio DeepSeek" on tab 69, "1" on an untouched tab)."""
+    "Cambio DeepSeek" on tab 69, "1" on an untouched tab). 0.13.3: the default is the tab's place in the list, not
+    always its number (live 2026-10-16: label «12» on tab number 24), so a label of digits only is herdr's."""
     if not tab:
         return ""
     label = str(tab.get("label") or "").strip()
-    return "" if label in ("", str(tab.get("number", ""))) else label
+    return "" if label.isdigit() or label in ("", str(tab.get("number", ""))) else label
 
 
 def report_metadata(pane, estado, display=None, ttl_ms=3600000, timeout=3):

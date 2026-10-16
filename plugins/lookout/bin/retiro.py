@@ -35,6 +35,11 @@ def _turno(session_id):
     return retomar.ultimo_turno(deliver.transcript_path(session_id))
 
 
+# 0.13.3: the brake says what to do (live 3-tier 2026-10-16: the supervisor read it and did nothing with the block)
+RELEVO_NO_CIERRE = ("su último turno deja un bloque para retomar con trabajo: es un relevo, no un cierre (vigente → "
+                    "`lookout relevo`; ambiguo → modal «¿relevo, cierro o lo dejo?» con --agentes)")
+
+
 def senal_terminado(entry, motivo="", project_id=""):
     """'' if its last turn says it finished, else why not. 0.13.2: a block whose every cited pendiente is closed is
     finished too (the supervise skill recommends closing it; adversary round 2: the close refused it)."""
@@ -44,7 +49,7 @@ def senal_terminado(entry, motivo="", project_id=""):
         r = retomar.para_agente(project_id, entry["session_id"]) if project_id else None
         if r and (r.get("motivo") or "").startswith(retomar.CERRADO):
             return ""
-        return "su último turno deja un bloque para retomar con trabajo: es un relevo, no un cierre"
+        return RELEVO_NO_CIERRE
     if estado == "nada":
         return ""
     if motivo and motivo.strip() and motivo.strip() in text:  # verbatim (adversary round 1: no whitespace folding)

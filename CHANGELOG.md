@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.13.3
+
+Found by measuring 0.13.2 in the live supervision of 3-tier-memory (2026-10-16).
+
+- The alta gives a name herdr accepts. herdr labels a new tab with its place in the list («12» on tab number 24), and
+  lookout took that label for one the user chose: the agent was named «12», which herdr refuses as an agent name
+  (`[a-z][a-z0-9_-]{0,31}`), so the rename was left halfway and the session itself was renamed «12». A label of digits
+  only is now herdr's; a name that does not start with a letter gets `agente-` in front, and names stop at 32
+  characters (a folder like `3tm-utf8` failed the same way).
+- A «Como retomar» nobody attended stays in «Te necesita». The `retomar` event is announced once; the agent then sat
+  under «Trabajando» with «estaba quieto con un «Como retomar»» for two hours, and the supervisor never opened the
+  modal for its ambiguous block. The row now reads `bloque vigente|ambiguo HH:MM:SS → lookout relevo | modal «¿relevo,
+  cierro o lo dejo?» | lookout cierra-pestana (terminó)`, is repeated on every wake (the waiter's «sin cambios» no
+  longer folds it), and leaves when a decision opened with `--agentes <agente>` names it, the agent is relieved or
+  closed, or it works again. No herdr notification to the user for it.
+- The `retomar` line says what to do before the motive, which the line's width could cut; `cierra-pestana`'s brake «es
+  un relevo, no un cierre» says `lookout relevo` or the modal.
+- Supervise skill: launch the waiter before the modal when it has left (a modal open for an hour left the project
+  without altas or sweep), and the new «Te necesita» row.
+
 ## 0.13.2
 
 Found by measuring 0.13.0 in the live supervision of 3-tier-memory (2026-10-15): `cierra-pestana` could close none of

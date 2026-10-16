@@ -48,6 +48,9 @@ def git_info(cwd):
     return g("rev-parse", "--show-toplevel"), g("branch", "--show-current")
 
 
+HERDR_MAX = 32  # herdr agent names: [a-z][a-z0-9_-]{0,31}
+
+
 def propose_name(agent, worktree, taken):
     """A tab the user named, alone in its tab, gives the name (what the user sees in herdr is what lookout says).
     Otherwise: worktree folder + the session title."""
@@ -59,10 +62,15 @@ def propose_name(agent, worktree, taken):
         title = agent.get("title", "").strip()
         tail = "" if title.lower() in GENERIC_TITLES or title.startswith(base) else slug(title)
         name = slug(base, 20) + ("-" + tail if tail else "")
-    name = name[:40].rstrip("-")
+    # 0.13.3: herdr takes only [a-z][a-z0-9_-]{0,31} as an agent name; a folder like 3tm-utf8 or a long title made
+    # the alta rename halfway (live 2026-10-16)
+    if not name[:1].isalpha():
+        name = "agente-" + name
+    name = name[:HERDR_MAX].rstrip("-")
     candidate, n = name, 2
     while candidate in taken:
-        candidate = "%s-%d" % (name, n)
+        suf = "-%d" % n
+        candidate = name[:HERDR_MAX - len(suf)].rstrip("-") + suf
         n += 1
     return candidate
 

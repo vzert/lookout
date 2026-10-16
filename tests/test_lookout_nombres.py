@@ -75,6 +75,11 @@ class OwnLabelTest(unittest.TestCase):
         self.assertEqual(herdr_cli.own_label({"label": "", "number": 3}), "")
         self.assertEqual(herdr_cli.own_label(None), "")
 
+    def test_a_label_of_digits_is_herdrs_default(self):
+        # live 2026-10-16 in 3-tier: herdr labelled a new tab «12» (its place in the list) while its number was 24;
+        # lookout took «12» for a chosen name, and herdr refused it as an agent name
+        self.assertEqual(herdr_cli.own_label({"label": "12", "number": 24}), "")
+
     def test_a_chosen_label_is(self):
         self.assertEqual(herdr_cli.own_label({"label": "Cambio DeepSeek", "number": 69}), "Cambio DeepSeek")
 
@@ -101,6 +106,18 @@ class DiscoverTabTest(unittest.TestCase):
 
 
 class NamingTest(Case):
+    def test_the_name_is_one_herdr_accepts(self):
+        # herdr agent names match [a-z][a-z0-9_-]{0,31}: a folder or a tab that starts with a digit, or a long title,
+        # must still give a name herdr takes (otherwise the alta renames only halfway)
+        ok = __import__("re").compile(r"^[a-z][a-z0-9_-]{0,31}$")
+        for agent, wt in (({"pestana_propia": "3tm extras", "pestana_panes": 1}, "/x/3tm-utf8"),
+                          ({"title": "Telemetría SQL-LIVE del snapshot semanal de cada viernes"}, "/x/3tm-utf8"),
+                          ({"title": "Una tarea con un título muy largo de verdad"}, "/x/cloudflare-expert-workers")):
+            name = registry.propose_name(agent, wt, set())
+            self.assertRegex(name, ok)
+            taken = {name}
+            self.assertRegex(registry.propose_name(agent, wt, taken), ok)
+
     def test_a_tab_the_user_named_gives_the_name(self):
         reg = registry.register("pA", {"nombre": "sup", "address": "uds:/x"}, [
             {"session_id": "s1", "kind": "claude", "cwd": "/nope", "title": "Migración a DeepSeek",

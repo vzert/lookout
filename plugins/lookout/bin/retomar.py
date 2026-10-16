@@ -288,8 +288,19 @@ def describe(r):
     if r.get("estado") == "nada":
         return "terminó: su «Como retomar» dice que no queda nada (%s)" % r.get("motivo", "")[:100]
     pend = ", ".join(r.get("pendientes") or []) or "sin pendiente"
-    return "dejó un bloque para retomar (%s, %s%s)" % (pend, r.get("estado"),
-                                                         ": " + r["motivo"] if r.get("motivo") else "")
+    # 0.13.3: what to do goes before the motive, which clip() may cut (live 3-tier 2026-10-16: «ambiguo: otro agente
+    # trabajó…» and no modal); the motive closes the line
+    return "dejó un bloque para retomar (%s, %s) → %s%s" % (pend, r.get("estado"), accion(r),
+                                                              ": " + r["motivo"] if r.get("motivo") else "")
+
+
+def accion(r):
+    """What the supervisor does with a block (the supervise skill's rule, in the line it reads)."""
+    if (r or {}).get("estado") == "vigente":
+        return "lookout relevo"
+    if ((r or {}).get("motivo") or "").startswith(CERRADO):
+        return "lookout cierra-pestana (terminó)"
+    return "modal «¿relevo, cierro o lo dejo?»"
 
 
 def firma(r):
