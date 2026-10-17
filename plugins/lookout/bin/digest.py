@@ -167,6 +167,15 @@ def hhmmss(ts):
     return time.strftime("%H:%M:%S" if t[:3] == time.localtime()[:3] else "%d-%m %H:%M:%S", t)
 
 
+def espera_pane_txt(ev):
+    """0.13.7: the user answers in your modal and you type it; the user never goes to the agent's pane."""
+    p = ev.get("espera_pane")
+    if not p:
+        return ""
+    return ("ESPERA ALGO TECLEADO EN SU PANE (%s): «%s» → al modal con dN y --agentes; con su sí, "
+            "`lookout envia <proyecto> <agente> --usuario-confirmo dN --texto \"<texto>\"`. " % (p.get("motivo"), p.get("cita")))
+
+
 def describe(ev, quien=None):
     """One line per event. `quien`: session_id -> how to name the agent to the user (its herdr tab, registry.quien)."""
     kind = ev.get("event", "")
@@ -186,7 +195,8 @@ def describe(ev, quien=None):
     if kind == "bg_wait":
         # 0.12.2: the description first; a command is often a long scratchpad path
         cmds = [t.get("description") or t.get("command") or t.get("type", "") for t in ev.get("tareas", [])]
-        return head + ": " + "; ".join(c for c in cmds if c) + (" — " + ev.get("ultima", "") if ev.get("ultima") else "")
+        return head + ": " + espera_pane_txt(ev) + "; ".join(c for c in cmds if c) + (
+            " — " + ev.get("ultima", "") if ev.get("ultima") else "")
     if kind == "nuevo":  # 0.13.0 (Fase 3); 0.13.1: the alta renamed it itself, or says why not
         r = ev.get("renombre") or ""
         ren = ("renombrado" if r == "hecho" else "renombrado " + r if r.startswith("a medias") else
@@ -202,6 +212,7 @@ def describe(ev, quien=None):
             extra = ("(ya te reportó) " if ev.get("reporto") else "") + retomar.describe(ev["retomar"])
         else:
             extra = ("(ya te reportó) " if ev.get("reporto") else "") + ev.get("ultima", "")
+        extra = espera_pane_txt(ev) + extra
         if ev.get("marcadores"):
             extra += " " + " ".join(ev["marcadores"])
         for b in ev.get("bloqueos_hook") or []:  # Fase 9 E8: a plugin's hook, not the user

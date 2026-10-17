@@ -47,7 +47,9 @@ def main():
         "Sesión supervisada (lookout). No uses AskUserQuestion. "
         "Manda esta pregunta con la herramienta SendMessage (cárgala con ToolSearch si hace falta) "
         f"con to=\"{address}\" (cópialo tal cual; no uses un nombre): máximo 6 líneas con contexto, "
-        "opciones y tu recomendación. Luego termina tu turno; la respuesta llega como mensaje."
+        "opciones y tu recomendación. Luego termina tu turno; la respuesta llega como mensaje. "
+        "Si tu gate necesita la respuesta tecleada en tu pane (p. ej. ratificar un spec de goalspec), dilo con el "
+        "texto exacto: lookout se la pregunta al usuario y la teclea en tu pane. No mandes al usuario a tu pane."
     )
     json.dump({
         "hookSpecificOutput": {

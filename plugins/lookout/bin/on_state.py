@@ -58,6 +58,25 @@ def goal_markers(text):
     return found
 
 
+# 0.13.7 (p-5ef58b9041): an agent that waits for something the user must type in ITS pane. 3-tier-memory 2026-10-16,
+# decisiones-pendientes-bloqueadas: «Sigo esperando a que Víctor escriba «aprobado» en este pane» — goalspec's ratify
+# brake is released only by a prompt typed in the session, never by the supervisor's SendMessage. Also an agent that
+# hands the user a `! comando` to run there. A false wake is the safe side, as for a question.
+PIDE_PANE = re.compile(r"\b(?:en|desde|in|from)\s+(?:este|mi|su|tu|this|my|your)\s+pane\b"
+                       r"|\bescrib\w*\s+[«\"“'`]?aprobad|(?:^|[\s`«“‘\"'])!\s?[\w./~$]", re.I | re.M)
+RATIFICA = "goalspec: this session posted its ## Goal-spec"
+
+
+def espera_pane(msg, bloqueos=()):
+    """{"motivo", "cita"} when the agent's turn ended waiting for a text typed in its own pane, else None."""
+    if any((b.get("motivo") or "").startswith(RATIFICA) for b in bloqueos or ()):
+        return {"motivo": "ratificar su spec de goalspec", "cita": last_line(msg)}
+    for line in (msg or "").splitlines():
+        if PIDE_PANE.search(line):
+            return {"motivo": "pide algo tecleado en su pane", "cita": line.strip()[:200]}
+    return None
+
+
 HOOK_BLOQUEO = re.compile(r"^(?:Error: )?PreToolUse:(\w+) hook error: (.*)", re.S)
 
 
@@ -276,8 +295,14 @@ def build(data, marker):
             ev.update(event="bg_wait", tareas=running)
             if pregunta(msg):
                 ev.update(pregunta=True)  # 0.12.2: a question wakes the supervisor even while a task of its own runs
+            pane = espera_pane(msg, bloqueos)
+            if pane:
+                ev.update(espera_pane=pane)
             return ev, "fondo", []
         ev.update(event="idle")
+        pane = espera_pane(msg, bloqueos)
+        if pane:
+            ev.update(espera_pane=pane)
         if reported_this_turn(data.get("transcript_path"), marker.get("address")):
             ev.update(reporto=True)
         try:

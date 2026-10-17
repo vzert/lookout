@@ -17,6 +17,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import signal
 import sys
 import time
@@ -34,6 +35,15 @@ PROMPT_KEEP = 120  # on_state.py keeps prompt[:120] in the `working` event
 
 def norm(text):
     return "".join((text or "").split())
+
+
+BASH_INPUT = re.compile(r"^<bash-input>(.*)</bash-input>$", re.S)
+
+
+def es_comando(text):
+    """0.13.7: «! cmd» typed into a Claude box runs in its shell mode. Measured 2026-10-16 with a throwaway Claude through
+    `herdr agent prompt`: it runs, fires no UserPromptSubmit, and lands in the transcript as <bash-input> cmd</bash-input>."""
+    return (text or "").lstrip().startswith("!")
 
 
 def ledger_path(project_id):
@@ -97,7 +107,13 @@ def count_in_transcript(session_id, text, projects_dir=None):
     """How many user messages of the session are exactly this prompt (whitespace ignored)."""
     path = transcript_path(session_id, projects_dir)
     want = norm(text)
-    return sum(1 for t in user_texts(path) if norm(t) == want) if path else 0
+    if not path:
+        return 0
+    n = 0
+    for t in user_texts(path):
+        m = BASH_INPUT.match(t.strip())
+        n += norm("!" + m.group(1) if m else t) == want
+    return n
 
 
 def wait_prompt_event(project_id, session_id, offset, timeout, text=None):
@@ -181,7 +197,8 @@ def _deliver(project_id, entry, key, text, confirmar, max_intentos, projects_dir
 
     # 1. Read before retrying: did an earlier attempt land after all? (6.2.5)
     if rec["intentos"] > 0:
-        if seen_in_events(project_id, sid, text, rec["offset"] or 0) or count_in_transcript(sid, text, projects_dir):
+        if (seen_in_events(project_id, sid, text, rec["offset"] or 0)
+                or count_in_transcript(sid, text, projects_dir) > rec.get("previas", 0)):
             rec["estado"] = "confirmada"
             note("confirmada al releer: el intento anterior sí llegó")
             save_record(project_id, key, rec)
@@ -213,7 +230,7 @@ def _deliver(project_id, entry, key, text, confirmar, max_intentos, projects_dir
             note("el texto seguía en la caja: Enter")
             save_record(project_id, key, rec)
             herdr_cli.run(["agent", "send-keys", pane, "enter"])
-            return finish(project_id, key, rec, sid, text, offset, confirmar, note)
+            return finish(project_id, key, rec, sid, text, offset, confirmar, note, projects_dir)
         return 4, ("NO ENTREGADO: la caja de entrada de %s tiene un borrador (%r). No escribo encima; "
                    "avisa al usuario." % (entry.get("nombre"), caja[:60]))
     if clase == "desconocida":
@@ -231,6 +248,8 @@ def _deliver(project_id, entry, key, text, confirmar, max_intentos, projects_dir
 
     # 5. Send once, recorded BEFORE sending so a crash mid-send still counts as an attempt.
     offset = events_size(project_id)
+    if es_comando(text) and rec["intentos"] == 0:
+        rec["previas"] = count_in_transcript(sid, text, projects_dir)  # the same command run before is not this one
     rec["intentos"] += 1
     rec["offset"] = offset
     rec["estado"] = "enviada"
@@ -240,11 +259,20 @@ def _deliver(project_id, entry, key, text, confirmar, max_intentos, projects_dir
     if code != 0:
         note("agent prompt rc=%s: %s" % (code, (err or "").strip()[:120]))
         save_record(project_id, key, rec)
-    return finish(project_id, key, rec, sid, text, offset, confirmar, note)
+    return finish(project_id, key, rec, sid, text, offset, confirmar, note, projects_dir)
 
 
-def finish(project_id, key, rec, sid, text, offset, confirmar, note):
-    if wait_prompt_event(project_id, sid, offset, confirmar, text):
+def finish(project_id, key, rec, sid, text, offset, confirmar, note, projects_dir=None):
+    if es_comando(text):
+        # no UserPromptSubmit for a shell-mode command: its turn end, then the transcript, says it ran
+        wait_event(project_id, offset, confirmar, lambda ev: ev.get("session_id") == sid
+                   and ev.get("event") in ("idle", "bg_wait"))
+        if count_in_transcript(sid, text, projects_dir) > rec.get("previas", 0):
+            rec["estado"] = "confirmada"
+            note("confirmada en el transcript (<bash-input>)")
+            save_record(project_id, key, rec)
+            return 0, "entregada y confirmada (el comando está en su transcript)"
+    elif wait_prompt_event(project_id, sid, offset, confirmar, text):
         rec["estado"] = "confirmada"
         note("confirmada por UserPromptSubmit")
         save_record(project_id, key, rec)
@@ -265,6 +293,11 @@ def main():
     ap.add_argument("--confirmar", type=float, default=30.0)
     ap.add_argument("--max-intentos", type=int, default=MAX_INTENTOS)
     a = ap.parse_args()
+    if any(es_comando(line) for line in a.texto.splitlines()):
+        # adversary r2 (codex): this helper typed «! cmd» with no decision; a command goes only through
+        # `lookout envia --usuario-confirmo dN`, which checks the user's yes and the text they saw
+        print("NO ENTREGADO: un «! comando» solo se teclea con `lookout envia … --usuario-confirmo dN`.")
+        return 4
     entry = registry.find(registry.load(a.proyecto), a.agente)
     if not entry:
         print("agente %r no registrado en %s" % (a.agente, a.proyecto))

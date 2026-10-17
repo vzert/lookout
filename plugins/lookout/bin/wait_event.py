@@ -218,9 +218,10 @@ def wait(path, offset=0, types="", timeout=0, pidfile="", cursor="", owner=None,
                 continue
             if wanted and event.get("event") not in wanted:
                 continue
-            if event.get("event") == "idle" and event.get("reporto") and not event.get("retomar"):
-                continue  # its report already woke the supervisor by SendMessage (Fase 4); a «Como retomar» still wakes
-            if event.get("event") == "bg_wait" and not event.get("pregunta"):
+            if (event.get("event") == "idle" and event.get("reporto") and not event.get("retomar")
+                    and not event.get("espera_pane")):
+                continue  # its report already woke the supervisor (Fase 4); a «Como retomar» or a wait on its pane still wakes
+            if event.get("event") == "bg_wait" and not event.get("pregunta") and not event.get("espera_pane"):
                 continue  # 0.12.2: waiting for its own task, nothing asked; it stays in the next digest
             if pos <= handled_offset(cursor):
                 continue

@@ -48,6 +48,7 @@ Subcommands (PROYECTO = a path inside the repo, or its project_id):
 import argparse
 import json
 import os
+import re
 import signal
 import sys
 import time
@@ -482,8 +483,49 @@ def plan_limpieza(e):
     return "\n".join(out)
 
 
+CITA = re.compile(r"«([^«»\n]+)»|`([^`\n]+)`|\"([^\"\n]+)\"|“([^“”\n]+)”")
+
+
+def visto_por_usuario(d):
+    """The texts the user saw whole: their own answer, and every quoted span of the modal's question."""
+    out = {str(d.get("respuesta_usuario") or "").strip()}
+    for m in CITA.finditer(str(d.get("pregunta") or "")):
+        out.add(next(g for g in m.groups() if g is not None).strip())
+    return out - {""}
+
+
+def texto_del_usuario(pid, e, did, texto):
+    """0.13.7 (p-5ef58b9041): what the user decided, typed into the agent's pane by the supervisor, so the user never has
+    to find the agent (a goalspec spec waiting for «aprobado» in the agent's own pane, 3-tier-memory 2026-10-16; a
+    `! comando` the agent asked the user to run). Only with decision `did` answered YES by the user, about this agent,
+    and with `texto` written in that decision's question or in the user's answer: the supervisor never types what the
+    user did not see. Returns (key, text to type, None) or (None, None, why not)."""
+    d = decisiones.respondida(pid, did)
+    if not d:
+        return None, None, ("hace falta --usuario-confirmo dN de una decisión que el usuario contestó con sí "
+                            "(`lookout decision … --cierra dN … --si`); %s no lo es." % (did or "sin dN"))
+    if e["nombre"] not in (d.get("agentes") or []):
+        return None, None, "la decisión %s no es sobre %s (ábrela con --agentes %s)." % (did, e["nombre"], e["nombre"])
+    if not d.get("respuesta_usuario"):
+        return None, None, ("%s no tiene respuesta del usuario anotada por el modal o el chat: pregúntaselo en el "
+                            "modal antes de teclear nada." % did)
+    # Only what the hooks wrote down: the modal's question and the user's literal answer (adversary r1: the --abre
+    # text and the --respuesta of --cierra are the supervisor's own words). And the WHOLE text, spaces included: the
+    # user's entire answer, or a quoted span of the question (adversary r2: a whitespace-free substring let through
+    # «! rm -rf /» out of an approved «! rm -rf /tmp/x/old», and a moved space that splits an argument).
+    texto = (texto or "").strip()
+    if not texto or "\n" in texto or texto not in visto_por_usuario(d):
+        return None, None, ("«%s» no es la respuesta entera del usuario en %s ni va completo entre «», `` o \"\" en la "
+                            "pregunta del modal: pon ahí el texto exacto que se teclea (una línea), o que lo escriba él "
+                            "en Other." % (texto, did))
+    if not deliver.es_comando(texto) and not texto.lstrip().startswith("/"):
+        texto = "%s (%s)" % (texto.strip(), did)  # the agent sees whose decision it is
+    return "usuario:" + did, texto, None
+
+
 def cmd_envia(a):
     pid, _ = project(a.proyecto)
+    uc = getattr(a, "usuario_confirmo", "") or ""
     e = registry.find(registry.load(pid), a.agente)
     if not e:
         sys.exit("agente %r no registrado" % a.agente)
@@ -491,14 +533,21 @@ def cmd_envia(a):
         if not e.get("tarea"):
             sys.exit("agente %r sin tarea registrada" % a.agente)
         clave, texto = "tarea:" + e["tarea"], lote.TRIGGER.format(id=e["tarea"])
+    elif uc or any(deliver.es_comando(l) for l in (a.texto or "").splitlines()):
+        clave, texto, motivo = texto_del_usuario(pid, e, uc, a.texto or "")
+        if motivo:
+            print("NO TECLEADO: " + motivo)
+            return 5
     elif a.clave and a.texto:
         clave, texto = a.clave, a.texto
     else:
-        sys.exit("usa --tarea, o --clave y --texto")
+        sys.exit("usa --tarea, --usuario-confirmo dN y --texto, o --clave y --texto")
     code, msg = deliver.deliver(pid, e, clave, texto, a.confirmar)
     if code == 0 and not a.tarea:
         # an answer typed into the agent's box is a decision too: log it like a SendMessage (Fase 4, relief)
-        supervisor_md.log(pid, {"tipo": "respuesta", "to": e["nombre"], "via": "envia", "texto": supervisor_md.one_line(texto, 600)})
+        supervisor_md.log(pid, dict({"tipo": "respuesta", "to": e["nombre"], "via": "envia",
+                                     "texto": supervisor_md.one_line(texto, 600)},
+                                    **({"decision": uc} if uc else {})))
         supervisor_md.write(pid)
     if code == 0 and a.tarea and e.get("tarea_estado") in ("lanzando", "sin-confirmar"):
         lote.set_estado(pid, e["session_id"], "trabajando", hooks="ok")
@@ -774,6 +823,8 @@ def main():
     p.add_argument("--usuario-confirmo", metavar="DECISION_ID", default="")
     p = sub.add_parser("envia"); p.add_argument("proyecto"); p.add_argument("agente")
     p.add_argument("--clave"); p.add_argument("--texto"); p.add_argument("--tarea", action="store_true")
+    p.add_argument("--usuario-confirmo", metavar="DECISION_ID", default="",
+                   help="dN con el sí del usuario: teclea en su pane lo que el usuario decidió (obligatorio para «! comando»)")
     p.add_argument("--confirmar", type=float, default=30)
     p = sub.add_parser("gobierno"); p.add_argument("proyecto"); p.add_argument("agente")
     p.add_argument("--para", choices=["push", "ronda"], default="push"); p.add_argument("--usuario-amplia", type=int)

@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.13.7
+
+- The supervisor is the user's only channel to its agents: what an agent needs typed in its own pane is asked in the
+  supervisor's modal and typed there by the supervisor. goalspec's ratify brake is released only by a prompt typed in
+  the agent's session, never by the supervisor's SendMessage; the supervisor told the user to go and type «aprobado»
+  in the agent's pane, and the agent sat idle until the user found it (3-tier-memory, 2026-10-16). The same held for a
+  `! comando` an agent handed the user to run there.
+  - `lookout envia <proyecto> <agente> --usuario-confirmo dN --texto "<texto>"` types the user's decision into the
+    agent's pane. It refuses (exit 5, nothing typed) unless decision dN was answered yes by the user, names this agent
+    (`--agentes`), and the text (one line, ends trimmed, spaces inside as they are) is either the user's whole
+    literal answer or a whole quoted span («…», `…`, "…") of the modal's question, as the supervisor's own hooks wrote
+    them down (never the supervisor's `--abre` or `--respuesta` text; a decision with no answer of the user on record
+    types nothing). A prefix of the approved command or the same characters with a moved space do not pass: a
+    supervisor cannot type what the user did not see. A text gets ` (dN)` appended; a command (`!`) or a slash command goes as is. Each
+    decision types once (key `usuario:dN`). A text with a `!` command on any line always needs `--usuario-confirmo`. `deliver.py` run by hand refuses
+    such a text (exit 4): a command reaches an agent only through `lookout envia --usuario-confirmo`. A supervisor that
+    calls `herdr agent prompt` itself is outside what lookout can stop; the skill forbids it.
+  - A `! comando` delivered this way runs in the agent's shell mode and fires no UserPromptSubmit (measured
+    2026-10-16 with a throwaway Claude through `herdr agent prompt`); delivery confirms it from the agent's transcript
+    (`<bash-input>`), counting only runs after the send, so the same command run earlier never confirms it.
+  - The agent's end of turn marks `espera_pane` when its last message waits for something typed in its pane («… en
+    este pane», «escriba aprobado», a `! comando` for the user) or goalspec's ratify brake held a tool this turn, also while a
+    task of its own runs. That end of turn wakes the supervisor even after a report, and the digest says what to do. A false wake is the safe
+    side, as for a question. The phrase detection is approximate: a wait worded otherwise is missed, and then only an
+    end of turn without a report wakes the supervisor (as before 0.13.7).
+  - The supervisor skill drops «give the user the exact command to run in the agent's pane»; the deny of
+    AskUserQuestion tells the agent to ask for the typed text by SendMessage and never send the user to its pane.
+
 ## 0.13.6
 
 - An agent's marker keeps every address its supervisor had. After a relief of the supervisor the markers
