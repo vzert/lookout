@@ -239,8 +239,9 @@ de «siguen abiertas» y ninguna respuesta; el usuario pidió «repite las pregu
    va a autorizar algo.
 3. Comprueba que el waiter está vivo (`lookout espera` en segundo plano) y, si salió, **lánzalo antes del modal**. El
    modal te deja parado hasta que el usuario conteste: los mensajes que lleguen mientras tanto esperan en cola y los
-   atiendes después, pero sin waiter no hay altas ni barrido (3-tier-memory, 2026-10-16: 65 min sin waiter tras un
-   modal).
+   atiendes después. Las altas y el barrido siguen solos: desde 0.13.11 el hook de tu `AskUserQuestion` deja un vigía
+   que hace la pasada del waiter mientras no haya uno vivo, y se va cuando el modal termina (3-tier-memory, 2026-10-16:
+   65 min sin altas ni barrido tras un modal, porque el waiter despertó por eventos del turno y salió).
 4. **Un solo** `AskUserQuestion` con todas las decisiones pendientes (hasta 4 preguntas; si hay más, las 4 más
    urgentes y el resto en el siguiente modal). Ningún texto en prosa antes ni después del modal que repita las
    preguntas.

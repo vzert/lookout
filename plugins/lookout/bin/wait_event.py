@@ -124,20 +124,15 @@ def revisor(project_id, every, para):
     supervisor itself never polls. Only does work while some agent's hooks went quiet; what it decides is appended to
     events.jsonl, where the tail below picks it up like any other event. It ends when its wait() returns (`para`):
     0.13.1, a thread left behind by an in-process wait() kept writing state after LOOKOUT_STATE_DIR changed."""
-    import alta
-    import heuristicas
+    import vigia
     while not para.wait(every):
         with _REVISANDO:
             try:
-                if heuristicas.alguien_callado(project_id):
-                    heuristicas.revisa(project_id)
+                # 0.13.0 alta (Fase 3); 0.13.2 sweep of quiet agents with a block; 0.13.11 one pass at a time with the
+                # vigía of an open modal (vigia.pasada_exclusiva)
+                vigia.revisa(project_id)
             except Exception:
                 pass  # a failed check must never take the waiter down
-            try:
-                if alta.toca(project_id):
-                    alta.pasada(project_id)  # 0.13.0 alta (Fase 3); 0.13.2 sweep of quiet agents with a block
-            except Exception:
-                pass
 
 
 def pass_budget(project_id):

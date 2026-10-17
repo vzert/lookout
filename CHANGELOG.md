@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.13.11
+
+- The alta and the sweep go on while the supervisor's modal is open. Only the waiter's checker thread ran them, and
+  AskUserQuestion holds the supervisor's turn until the user answers: in 3-tier-memory (2026-10-16) the waiter launched
+  before a modal woke at once on 11 events that had arrived during the turn and exited, and the project went 65 min
+  with no alta and no sweep. Now the supervisor's own PreToolUse[AskUserQuestion] hook starts a vigía (`bin/vigia.py`),
+  a process detached from the hook with its own pidfile (never the waiter's, which the Stop check reads as «waiter
+  alive»). While no waiter of the supervisor is alive it runs the waiter's checker pass every `LOOKOUT_REVISA_CADA`
+  seconds; a lock (`revisor.lock`) keeps one pass at a time between the vigía and a waiter. It leaves when the modal
+  ends (its answer, a failed modal, a prompt, a Stop or a SessionStart of the supervisor), when its supervisor no
+  longer supervises, or after `LOOKOUT_VIGIA_HORAS` (12). A late answer of an older modal leaves the open one watched.
+  What a pass finds goes to events.jsonl as before, and the supervisor reads it when the modal ends.
+
 ## 0.13.10
 
 - An agent with a live background shell can take input again. A shell keeps herdr «working» after the turn ended

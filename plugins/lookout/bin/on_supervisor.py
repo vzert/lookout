@@ -43,7 +43,11 @@ def handle(data, via_async=False):
                                 "preguntas": preguntas})
         # 0.12.0: the full text, never the 300-char line: the decision id goes at the end (adversary round 2)
         decisiones.registra_pregunta(pid, data.get("tool_use_id", ""), completas)  # Fase 9 C4
+        import vigia
+        vigia.abre(pid, sid, data.get("tool_use_id", ""))  # 0.13.11: alta and sweep go on while the user decides
     elif ev == "PostToolUse" and tool == "AskUserQuestion":
+        import vigia
+        vigia.cierra(pid, data.get("tool_use_id", ""))
         tr = data.get("tool_response") or {}
         answers = tr.get("answers") if isinstance(tr, dict) else None
         answers = answers or ti.get("answers") or {}
@@ -53,16 +57,26 @@ def handle(data, via_async=False):
             "%s = %s" % (supervisor_md.one_line(q, 80), supervisor_md.one_line(a, 200)) for q, a in answers.items())
             if isinstance(answers, dict) else supervisor_md.one_line(str(answers), 300),
             por_pregunta=answers if isinstance(answers, dict) else None)
+    elif ev == "PostToolUseFailure" and tool == "AskUserQuestion":
+        import vigia
+        vigia.cierra(pid, data.get("tool_use_id", ""))
+        return ""
     elif ev == "UserPromptSubmit":
+        import vigia
+        vigia.cierra(pid)  # the turn that held the modal is over
         if not respuesta_en_chat(pid, sid, data.get("prompt") or ""):
             return ""
     elif ev == "Stop":
+        import vigia
+        vigia.cierra(pid)
         return "" if via_async else stop_check(data, pid, sid)
     elif ev == "PreCompact":
         supervisor_md.log(pid, {"tipo": "precompact", "session_id": sid, "trigger": data.get("trigger", "")})
         import digest
         digest.olvida_vistos(pid)  # 0.12.2: the summarized context lost the table the next wake would call unchanged
     elif ev == "SessionStart":
+        import vigia
+        vigia.cierra(pid)
         supervisor_md.write(pid)
         return ("lookout: tu contexto se acaba de compactar. Eres el supervisor del proyecto %s; tu estado está en %s.\n%s\n"
                 % (pid, supervisor_md.path(pid), supervisor_md.retomar_block(pid)))
@@ -144,7 +158,8 @@ def stop_check(data, pid, sid, grace=1.5):
                      "la %s, pide al usuario /reload-plugins." % (cargada, instalada, cargada))
         aviso.append("skill supervisa %s cargada, %s instalada: la recargo" % (cargada, instalada))
     if sin_waiter and pendientes:
-        pasos[0] += " Hazlo ANTES del modal: el modal te deja parado hasta que el usuario conteste."
+        pasos[0] += (" Hazlo ANTES del modal: el modal te deja parado hasta que el usuario conteste (las altas y el barrido "
+                     "los sigue el vigía del modal; lo que te despierta, solo el waiter).")
     detalle = " ".join("%d) %s" % (i + 1, t) for i, t in enumerate(pasos)) if len(pasos) > 1 else pasos[0]
     return json.dumps({"systemMessage": "lookout: " + "; ".join(aviso) + ".",
                        "hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": "lookout: " + detalle}},
