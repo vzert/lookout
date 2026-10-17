@@ -42,6 +42,7 @@ SPLIT_OPS = re.compile(r"&&|\|\||[;&|\n]")
 FILE_KEY = {"NotebookEdit": "notebook_path"}
 GLOB_CHARS = re.compile(r"[*?\[]")
 # [usuario] of the template, used when the rules lack it (template unreadable): the forced dialog fails closed.
+VERSION = lookout_state.plugin_version()
 DEFAULT_USUARIO = {"bash_empieza": ["git push", "git merge", "gh pr merge", "gh release", "gh workflow run", "gh repo delete", "gh repo archive", "npm publish"],
                    "borrar_fuera": ["rm", "rmdir", "mv"]}
 
@@ -585,6 +586,7 @@ def notify(title, body):
 
 def emit(marker, ev):
     pid = marker.get("project_id", "unknown")
+    ev = dict(ev, v=VERSION)  # 0.13.8: which lookout's hooks wrote it (versiones.viejos)
     lookout_state.append_event(pid, ev)
     try:
         import heuristicas

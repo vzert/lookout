@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.13.8
+
+Three agents of 3-tier-memory sat unseen for hours on 2026-10-16 while the digest called them «terminó su turno» or
+«espera tarea de fondo».
+
+- A wait for something typed in the agent's pane now holds until something releases it. pendientes-en-sessionstart
+  asked for «aprobado» in two turns, then ended five more with «Sigo esperando tu «aprobado» en esta ventana» or
+  «… aquí», which 0.13.7 did not read as a wait; the wait vanished and the agent sat 7 hours. At each end of turn
+  the agent's hook reads its transcript tail: a wait starts with an assistant text read as one, or with goalspec's
+  ratify brake denying a tool; it ends with a Bash, Edit, Write, MultiEdit or NotebookEdit that ran, a `!` typed in
+  the pane (`<bash-input>`), or a prompt typed there that is not a peer or system message (`isMeta`, a harness tag)
+  nor lookout's own report note. The phrases also read a quoted «aprobado» someone waits for and «aquí» / «esta
+  ventana» after a verb of typing (no false wait over the 81 turn endings of the two sessions measured). The
+  agent goes to «Te necesita», and the digest prints `↳ ESPERA ALGO TECLEADO EN SU PANE …` under its row on every
+  wake. The phrase reading is still approximate; the brake and the hold are not.
+- Hooks older than the installed plugins are named. An agent opened before `claude plugin update` keeps its old hooks
+  until /reload-plugins in its own session: prompts-repetidos ran 3-tier-memory 2.62.0 with 2.62.6 installed (its
+  close guard looped over a bug fixed in 2.62.3), 3tier-snippet-linea-extras lookout 0.12.1 (no `retomar`, so its
+  «Como retomar: Ninguno» never closed its tab), pendientes-en-sessionstart lookout 0.13.5 (no `espera_pane`).
+  - Every event the agent's lookout hooks write (`on_state.py`, `on_ask.py`, `permisos.py`) carries `v`, the hooks'
+    version. With 0.13.8 or later installed, an agent whose last event from a Claude hook (`hook` = Stop,
+    UserPromptSubmit, PermissionRequest…; not the supervisor's own `descubre` / `registro` / `barrido`) has no `v` or
+    an older one runs old lookout hooks.
+  - For any other plugin, the version in `…/plugins/cache/<marketplace>/<plugin>/<version>/` printed inside a hook
+    attachment of the agent's transcript (3-tier-memory's recall prints its own path), against
+    `installed_plugins.json`. A path the agent read or ran itself does not count.
+  - The digest prints `↳ hooks viejos: <plugin> <version> (instalada <version>) → lookout recarga <proyecto> <agente>`
+    under the agent's row. New `lookout recarga`: types /reload-plugins only into an idle agent with an empty box
+    (a suggestion counts as empty, a draft never), confirms it by a new «Reloaded:» on its screen, and records the
+    installed versions in the registry (`recargado`), which clears the line until the next update. Unconfirmed, it
+    says so and records nothing.
+- A background task that keeps an agent waiting warns again: at 1×, 2×, 4×… `LOOKOUT_LARGO_S` (1 h), not once.
+  3tier-snippet-linea-extras had a shell alive 24 h after its single warning. The event carries the task and
+  `reservada` (what D6 reserves to the user in its command, `permisos.reserved`); the digest says to ask the agent
+  by SendMessage whether it still needs it and to stop it with TaskStop, or, when it is reserved, to ask the user.
+  lookout never kills a process.
+- The supervisor skill says what to do with each of the three lines.
+
 ## 0.13.7
 
 - The supervisor is the user's only channel to its agents: what an agent needs typed in its own pane is asked in the

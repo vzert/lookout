@@ -25,6 +25,16 @@ def state_root():
     return os.path.join(os.path.expanduser("~"), ".local", "state", "lookout")
 
 
+def plugin_version():
+    """This copy of lookout's version (its .claude-plugin/plugin.json), or "" if unreadable."""
+    try:
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".claude-plugin",
+                               "plugin.json"), encoding="utf-8") as fh:
+            return json.load(fh).get("version") or ""
+    except (OSError, ValueError):
+        return ""
+
+
 def _safe_id(value):
     return bool(value) and "/" not in value and not value.startswith(".")
 

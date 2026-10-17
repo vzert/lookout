@@ -29,6 +29,7 @@ def main():
     questions = (data.get("tool_input") or {}).get("questions") or []
     lookout_state.append_event(marker.get("project_id", "unknown"), {
         "event": "ask",
+        "v": lookout_state.plugin_version(),  # 0.13.8: which lookout's hooks wrote it
         "session_id": session_id,
         "nombre": marker.get("nombre", ""),
         "pane": pane,

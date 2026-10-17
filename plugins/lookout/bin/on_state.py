@@ -16,6 +16,7 @@ import heuristicas  # noqa: E402
 import lookout_state  # noqa: E402
 
 MARKERS = ("[ADVERSARY-VERDICT", "[ADVERSARY-MODEL", "[COMPLETION-REVIEW")
+VERSION = lookout_state.plugin_version()
 
 
 
@@ -62,9 +63,23 @@ def goal_markers(text):
 # decisiones-pendientes-bloqueadas: «Sigo esperando a que Víctor escriba «aprobado» en este pane» — goalspec's ratify
 # brake is released only by a prompt typed in the session, never by the supervisor's SendMessage. Also an agent that
 # hands the user a `! comando` to run there. A false wake is the safe side, as for a question.
+# 0.13.8: pendientes-en-sessionstart (3-tier-memory, 2026-10-16) ended its last turns with «Sigo esperando tu «aprobado»
+# en esta ventana» and «… aquí»: a quoted «aprobado» someone is waiting for, and «aquí» / «esta ventana» after a verb of
+# typing. «aquí» alone is not enough (it is in many endings); 0 false waits over the 81 endings of its two sessions.
+_Q = r"[«\"“'`]"
 PIDE_PANE = re.compile(r"\b(?:en|desde|in|from)\s+(?:este|mi|su|tu|this|my|your)\s+pane\b"
-                       r"|\bescrib\w*\s+[«\"“'`]?aprobad|(?:^|[\s`«“‘\"'])!\s?[\w./~$]", re.I | re.M)
+                       r"|\bescrib\w*\s+[«\"“'`]?aprobad|(?:^|[\s`«“‘\"'])!\s?[\w./~$]"
+                       r"|\b(?:esper\w*|necesit\w*|falta\w*|waiting\s+for|need)\b[^.\n]{0,40}" + _Q + r"(?:aprobad|approved)"
+                       r"|\b(?:escrib\w*|teclea\w*|type|write)\b[^.\n]{0,60}\b(?:aqu[ií]|en\s+esta\s+(?:ventana|pesta[nñ]a|"
+                       r"sesi[oó]n)|here|in\s+this\s+(?:window|tab|session))\b"
+                       r"|\b(?:aqu[ií]|en\s+esta\s+(?:ventana|pesta[nñ]a|sesi[oó]n))\b[^.\n]{0,40}" + _Q + r"aprobad",
+                       re.I | re.M)
 RATIFICA = "goalspec: this session posted its ## Goal-spec"
+# The first words of the report note lookout types into a new agent (skills/supervisa/references/nota-reporte.md):
+# goalspec counts it as a typed prompt, but it is no answer to what the agent waits for.
+NOTA_LOOKOUT = "Nota del supervisor lookout"
+# Tools whose success proves the agent went on (goalspec's ratify brake holds exactly these)
+MUTA = ("Bash", "Edit", "Write", "MultiEdit", "NotebookEdit")
 
 
 def espera_pane(msg, bloqueos=()):
@@ -75,6 +90,69 @@ def espera_pane(msg, bloqueos=()):
         if PIDE_PANE.search(line):
             return {"motivo": "pide algo tecleado en su pane", "cita": line.strip()[:200]}
     return None
+
+
+def espera_previa(transcript_path, max_bytes=300000):
+    """0.13.8: a wait for something typed in the pane that an earlier turn started and nothing has released yet, or
+    None. It starts with an assistant text espera_pane() reads as a wait, or with goalspec's ratify brake denying a
+    tool. It ends with what shows the agent got its answer or went on: a Bash, Edit or Write that ran, a `!` typed in
+    its pane (<bash-input>), or a prompt typed there that is neither a system or peer message nor lookout's own note.
+    Live 3-tier 2026-10-16: the agent repeated the request only in some turns, and the wait vanished from the digest."""
+    if not transcript_path:
+        return None
+    try:
+        with open(transcript_path, "rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - max_bytes))
+            lines = fh.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return None
+    wait, usos = None, {}
+    for line in lines:
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        content = (d.get("message") or {}).get("content")
+        if d.get("type") == "assistant" and isinstance(content, list):
+            for b in content:
+                if not isinstance(b, dict):
+                    continue
+                if b.get("type") == "tool_use":
+                    usos[b.get("id")] = b.get("name")
+                elif b.get("type") == "text":
+                    w = espera_pane(b.get("text"))
+                    if w:
+                        wait = w
+        elif d.get("type") == "user":
+            if isinstance(content, str) or any(isinstance(b, dict) and b.get("type") == "text" for b in content or []):
+                p = (content if isinstance(content, str) else "\n".join(
+                    b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")).lstrip()
+                m = PEGADO.match(p)
+                if p.startswith("<bash-input"):
+                    wait = None
+                # a peer's SendMessage arrives as isMeta «Another Claude session sent a message: <cross-session-message»
+                elif not (d.get("isMeta") or ETIQUETA_SISTEMA.match(p)
+                          or (m.group(1) if m else p).startswith(NOTA_LOOKOUT)):
+                    wait = None
+            for b in content if isinstance(content, list) else []:
+                if not (isinstance(b, dict) and b.get("type") == "tool_result"):
+                    continue
+                text = b.get("content") if isinstance(b.get("content"), str) else json.dumps(b.get("content"))
+                if b.get("is_error"):
+                    m = HOOK_BLOQUEO.match(text or "")
+                    if m and m.group(2).startswith(RATIFICA):
+                        wait = {"motivo": "ratificar su spec de goalspec", "cita": " ".join(m.group(2).split())[:200]}
+                elif usos.get(b.get("tool_use_id")) in MUTA:
+                    wait = None
+    return wait
+
+
+def espera(msg, bloqueos, transcript_path):
+    """The wait at the end of this turn. Its last message speaks last; otherwise the transcript says, in order, whether
+    a wait (a phrase, or the ratify brake) came after the last thing that released one. The brake of this turn alone
+    counts only with no transcript to read: a tool that ran after it in the same turn releases it (adversary r1)."""
+    return espera_pane(msg) or (espera_previa(transcript_path) if transcript_path else espera_pane(msg, bloqueos))
 
 
 HOOK_BLOQUEO = re.compile(r"^(?:Error: )?PreToolUse:(\w+) hook error: (.*)", re.S)
@@ -252,6 +330,7 @@ def build(data, marker):
         "nombre": marker.get("nombre", ""),
         "pane": os.environ.get("HERDR_PANE_ID", ""),
         "hook": name,
+        "v": VERSION,  # 0.13.8: which lookout's hooks wrote it (live 3-tier 2026-10-16: agents ran 0.12.1 and 0.13.5)
     }
     pid = os.environ.get("CLAUDE_PID", "")
     if pid.isdigit() and name in ("UserPromptSubmit", "SessionStart"):
@@ -295,12 +374,12 @@ def build(data, marker):
             ev.update(event="bg_wait", tareas=running)
             if pregunta(msg):
                 ev.update(pregunta=True)  # 0.12.2: a question wakes the supervisor even while a task of its own runs
-            pane = espera_pane(msg, bloqueos)
+            pane = espera(msg, bloqueos, data.get("transcript_path"))
             if pane:
                 ev.update(espera_pane=pane)
             return ev, "fondo", []
         ev.update(event="idle")
-        pane = espera_pane(msg, bloqueos)
+        pane = espera(msg, bloqueos, data.get("transcript_path"))
         if pane:
             ev.update(espera_pane=pane)
         if reported_this_turn(data.get("transcript_path"), marker.get("address")):

@@ -367,6 +367,31 @@ def ultimo_real(events, sid):
     return None
 
 
+def vez_larga(age, largo):
+    """"" for the first warning (as before 0.13.8), then "x2", "x4", … for each doubling of the threshold."""
+    k = 1
+    while largo > 0 and age >= 2 * k * largo:
+        k *= 2
+    return "" if k == 1 else "x%d" % k
+
+
+def tareas_fondo(tareas, entry):
+    """The background tasks of a long wait, each with `reservada`: what D6 reserves to the user in its command
+    (permisos.reserved: a push, a merge, a delete outside the worktree…), "" when nothing is."""
+    import permisos
+    rules = permisos.load_rules()
+    wt = entry.get("worktree") or entry.get("cwd") or ""
+    out = []
+    for t in tareas or []:
+        cmd = t.get("command") or ""
+        try:
+            res = permisos.reserved(cmd, wt, wt, rules) if cmd else ""
+        except Exception:  # noqa: BLE001 — unreadable: the user decides
+            res = "no se pudo leer la orden"
+        out.append(dict(t, reservada=res or ""))
+    return out
+
+
 def ya_avisado(events, sid, kind, nivel, desde):
     return any(ev.get("session_id") == sid and ev.get("event") == kind and ev.get("nivel", "") == nivel
                and ev.get("desde") == desde for ev in events)
@@ -417,11 +442,16 @@ def revisa(project_id, now=None, agents=None, proceso=estado_proceso, reciente=w
                 continue
             last = ultimo_real(events, sid)
             if last and last.get("event") == "bg_wait":
-                # 0.12.2: bg_wait no longer wakes the supervisor; a wait past the "largo" threshold does, once
+                # 0.12.2: bg_wait no longer wakes the supervisor; a wait past the "largo" threshold does
                 age = now - float(last.get("ts") or now)
-                if age >= largo and not ya_avisado(events, sid, "largo", "", last.get("ts")):
-                    out.append({"session_id": sid, "nombre": entry.get("nombre", ""), "pane": entry.get("pane_id", ""),
-                                "desde": last.get("ts"), "hace_s": int(age), "event": "largo", "fondo": True})
+                # 0.13.8: once per doubling (1x, 2x, 4x… the threshold), not once: live 3-tier 2026-10-16, a shell of
+                # 3tier-snippet-linea-extras stayed alive 24 h after its single warning
+                nivel = vez_larga(age, largo)
+                if age >= largo and not ya_avisado(events, sid, "largo", nivel, last.get("ts")):
+                    out.append(dict({"session_id": sid, "nombre": entry.get("nombre", ""), "pane": entry.get("pane_id", ""),
+                                     "desde": last.get("ts"), "hace_s": int(age), "event": "largo", "fondo": True,
+                                     "tareas": tareas_fondo(last.get("tareas"), entry)},
+                                    **({"nivel": nivel} if nivel else {})))
                     revisa_log(project_id, {"session_id": sid, "nombre": entry.get("nombre", ""), "hace_s": int(age),
                                             "decision": "largo (espera tarea de fondo)"})
                 continue
@@ -517,6 +547,8 @@ def grupo(events, sid, entry=None, decs=None):
         if ev.get("session_id") != sid or ev.get("event") in NO_ESTADO:
             continue
         k = ev.get("event")
+        if k in ("idle", "bg_wait") and ev.get("espera_pane"):
+            return "te_necesita"  # 0.13.8: it waits for the user's answer, which only the supervisor's modal gets
         if k in ("idle", "retomar") and bloque_sin_atender(ev, entry, decs):
             return "te_necesita"
         if k == "retomar":

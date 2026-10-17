@@ -118,8 +118,21 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
   - `terminó: su «Como retomar» dice que no queda nada` → no hay relevo (ver «Agente terminado»).
 - **`espera tarea de fondo`**: el agente espera un proceso suyo (p. ej. su adversario o un CI).
   **No está terminado ni atascado.** No te despierta, salvo que su turno haya preguntado algo: lo ves en el siguiente
-  resumen. No lo empujes; dile al usuario que espera esa tarea si pregunta. Si la espera pasa de 60 min, te despierta una vez como `trabaja hace mucho …
-  esperando su tarea de fondo`: una lectura de su pantalla.
+  resumen. No lo empujes; dile al usuario que espera esa tarea si pregunta. Si la espera pasa de 60 min, te despierta
+  como `trabaja hace mucho … esperando su tarea de fondo «<orden>» → <qué hacer>`, y otra vez cada vez que el tiempo se
+  duplica (2 h, 4 h…). Haz lo que dice: si la orden no es nada reservado al usuario, pídele al agente por `SendMessage`
+  que diga si aún la necesita y, si no, que la pare con `TaskStop`; si es algo reservado (un push, un borrado fuera de
+  su worktree…), al modal. Tú nunca matas un proceso (3-tier-memory, 2026-10-16: una shell colgada 24 h dejó a un
+  agente terminado con la pestaña abierta).
+- **`↳ hooks viejos: <plugin> <versión> (instalada <versión>) → lookout recarga …`** (debajo de su fila, en cada
+  despertar): ese agente arrancó antes de la última actualización y sus hooks no tienen los arreglos (3-tier-memory,
+  2026-10-16: un agente con el guardián de 2.62.0 repetía un aviso ya arreglado en 2.62.3). Corre `lookout recarga
+  <project_id> <agente>` **sin preguntar**: teclea `/reload-plugins` solo con el agente quieto y la caja vacía, y
+  confirma en su pantalla. Si dice `NO: … está working`, repítelo tras su `terminó su turno`; `NO: … caja …`, díselo al
+  usuario una vez. No le pidas al usuario que recargue él.
+- **`↳ ESPERA ALGO TECLEADO EN SU PANE`** (debajo de su fila, en cada despertar, aunque sus últimos turnos ya no lo
+  repitan): sigue esperando hasta que corre algo o alguien teclea en su pane. Hazlo como dice «Eres el único canal del
+  usuario» (abajo).
 - **`espera permiso`**: un diálogo de permiso en su pane que las reglas del usuario no cubren (el motivo va
   entre paréntesis). El usuario ya recibió el aviso de herdr. Dile en una línea qué agente espera (por su pestaña), la
   herramienta, el comando y el motivo. **Tú nunca apruebas permisos**: ni por `SendMessage`, ni con teclas

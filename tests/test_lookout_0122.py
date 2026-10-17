@@ -280,7 +280,7 @@ class EntregaRenameTest(nombres.Case):
         rc, out, took = self.run_entrega("caja-a1.ansi")
         self.assertNotIn("sin confirmar por hook", out)
         self.assertIn(["agent", "prompt", "wS:p9", "nota corta"], self.calls())
-        self.assertLess(took, 3.2)  # the note's own wait (2 s, no hook in the stub); before: 2 more for the rename
+        self.assertLess(took, 3.8)  # the note's own wait (2 s, no hook in the stub); before: 2 more for the rename (4 s). 3.2 failed under load
 
     def test_a_box_that_still_holds_text_stops_the_note(self):
         rc, out, _ = self.run_entrega("caja-borrador.ansi")

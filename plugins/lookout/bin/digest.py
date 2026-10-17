@@ -243,7 +243,16 @@ def describe(ev, quien=None):
         return head + " hace %dm (%s): %s → %s" % (ev.get("hace_s", 0) // 60, ev.get("nivel", ""),
                                                   "; ".join(ev.get("fuentes") or []), accion)
     if kind == "largo" and ev.get("fondo"):
-        return head + ": %dm esperando su tarea de fondo → una lectura de su pantalla" % (ev.get("hace_s", 0) // 60)
+        tareas = ev.get("tareas") or []
+        if not tareas:
+            return head + ": %dm esperando su tarea de fondo → una lectura de su pantalla" % (ev.get("hace_s", 0) // 60)
+        # 0.13.8: what it waits on and who may stop it; lookout never kills a process
+        res = [t.get("reservada") for t in tareas if t.get("reservada")]
+        accion = ("es algo reservado al usuario (%s): pregunta al usuario si la para" % "; ".join(res) if res else
+                  "pídele por SendMessage que diga si aún la necesita y, si no, que la pare con TaskStop")
+        return head + ": %dh%02dm esperando su tarea de fondo «%s» → %s" % (
+            ev.get("hace_s", 0) // 3600, ev.get("hace_s", 0) // 60 % 60,
+            " | ".join(" ".join((t.get("description") or t.get("command") or "")[:120].split()) for t in tareas), accion)
     if kind == "largo":
         return head + ": %dm sin eventos, pero vivo (herdr working, proceso vivo) → una lectura de su pantalla" % (
             ev.get("hace_s", 0) // 60)
@@ -489,6 +498,7 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
             estado = ("%s %s" % (ESTADO.get(ev.get("event"), ev.get("event")), hhmmss(ev.get("ts")))) if ev else "sin eventos"
             ev_e = last_estado.get(sid)
             blk = heuristicas.bloque_sin_atender(ev_e, e, decs) if ev_e and g == "te_necesita" else None
+            n0 = len(filas_bloque)
             if e.get("tarea_estado") == "relevo-fallido":  # 0.13.4: every wake, like a block, until attended
                 estado = "relevo fallido → díselo al usuario; `lookout relevo` otra vez, o con su sí `lookout cierra-pestana … --usuario-confirmo <id>` (%s)" % (
                     e.get("tarea_motivo") or "?")
@@ -497,7 +507,19 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
                 import retomar
                 estado = "bloque %s %s → %s" % (blk.get("estado"), hhmmss(ev_e.get("ts")), retomar.accion(blk))
                 filas_bloque.append("  " + clip("%s | %s" % (registry.quien(e), estado), MAX_COLS - 2))
-            tabla_clave.append([g, registry.quien(e), e.get("branch") or "", e.get("tarea") or "", estado])
+            # 0.13.8: what the supervisor must do for this agent goes under its row, on every wake (a wait in its pane,
+            # hooks older than the installed plugins); live 3-tier 2026-10-16, both sat unseen for hours
+            extra = []
+            if ev_e and ev_e.get("event") in ("idle", "bg_wait") and ev_e.get("espera_pane") and not blk:
+                extra.append(espera_pane_txt(ev_e).strip())
+            import deliver
+            import versiones
+            viejo = versiones.viejos(e, all_events, deliver.transcript_path(sid))
+            if viejo:
+                extra.append("hooks viejos: %s → `lookout recarga %s %s` (lo hace con el agente quieto y la caja vacía; "
+                             "si no, tras su turno)" % (versiones.texto(viejo), project_id, e.get("nombre")))
+            filas_bloque[n0:n0] = ["  " + clip("%s | %s" % (registry.quien(e), x), MAX_COLS - 2) for x in extra]
+            tabla_clave.append([g, registry.quien(e), e.get("branch") or "", e.get("tarea") or "", estado] + extra)
             beat = heuristicas.ultimo_real(all_events, sid)
             if beat and beat.get("event") in heuristicas.EN_TURNO:
                 rv = revisiones.get(sid) or {}
@@ -510,6 +532,7 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
             # Fase 9 E1: the indent goes on after clip(), which collapses spaces; the hidden-agents count relies on it
             head.append("  " + clip("%s | %s | %s | %s" % (registry.quien(e), e.get("branch") or "-", e.get("tarea") or "-",
                                                           estado), MAX_COLS - 2))
+            head += ["    ↳ " + clip(x, MAX_COLS - 6) for x in extra]
     import decisiones
     import publica
     # what the previous wake printed counts only for the same supervisor session, and never after a compaction
@@ -564,7 +587,7 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
     room = maxl - len(head) - len(tail) - 2
     if len(head) - 1 > max(3, room // 2):  # many agents: keep the table from eating the events
         keep = max(3, room // 2)
-        hidden = sum(1 for x in head[1 + keep:] if x.startswith("  "))
+        hidden = sum(1 for x in head[1 + keep:] if x.startswith("  ") and not x.startswith("    ↳"))
         head = head[:1 + keep] + ["(+%d agentes más: `lookout resumen %s --todo`)" % (hidden, project_id)]
         room = maxl - len(head) - len(tail) - 2
     body = []
