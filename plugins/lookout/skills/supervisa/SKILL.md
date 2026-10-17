@@ -52,7 +52,8 @@ Te toca si tu primer mensaje es un «Como retomar» de lookout, o si `lookout in
      preguntar al usuario ni a los agentes, y no las contradices. Si un agente pide algo que ya se decidió, contesta con
      esa decisión (cítala: `d1`, o la hora de tu respuesta).
    - «Decisiones del usuario — pendientes»: vuelve a preguntárselas al usuario **con su mismo id**, juntas en un
-     `AskUserQuestion`, sin `--abre` nuevo; ciérralas con `--cierra <id>` al contestar. Cada pregunta se entiende sola
+     `AskUserQuestion`, sin `--abre` nuevo; una abierta con `--si-es` la cierra tu hook (con su etiqueta tal cual en el
+     modal), las demás `--cierra <id>` al contestar. Cada pregunta se entiende sola
      («Cómo pedirle una decisión al usuario»): tú tampoco sabes más que su texto, así que lee la fuente que cita antes.
 3. Manda a cada agente de `Avisar a:` el texto exacto que imprimió `inicia` (su nota lleva tu dirección vieja).
 4. Sigue con «Cada vez que despiertas». No hace falta `lookout entrega`.
@@ -110,7 +111,8 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
   despertar; sale de ahí cuando abres su modal con `--agentes <agente>`, lo relevas, se cierra o vuelve a trabajar.
   - `vigente` → `lookout relevo <project_id> <agente>` **sin preguntar**, y una línea al usuario («Relevé
     <pestaña>: sigue con p-…»). Si el relevo dice `NO: …`, pásale esa línea al usuario.
-  - `ambiguo` (con su motivo) → al modal en lote con su id dN: «¿relevo, cierro o lo dejo?». No adivines. La
+  - `ambiguo` (con su motivo) → al modal en lote con su id dN: «¿relevo, cierro o lo dejo?», abierta con `--cierre
+    --si-es "<la etiqueta de cerrar>"` para que su sí a cerrarla sirva a `cierra-pestana`. No adivines. La
     opción recomendada es **«Relevarlo»** (decisión del usuario, 2026-10-15: un bloque con trabajo se releva por
     defecto), salvo que el motivo diga `otro agente trabajó …` (recomienda lo que muestre ese trabajo) o `todo lo que cita ya está
     cerrado` (recomienda cerrar su pestaña: `lookout cierra-pestana` lo acepta como terminado). Que
@@ -161,7 +163,7 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
   - Si tras una corrección el agente te reporta que sigue igual **sin** haber vuelto a fallar (no llega `repite`), esa
     corrección también falló: `lookout corrige … --resumen "<la siguiente>" --reporte "<sus palabras>"`.
   - Con `PARA` (ya hubo 2 correcciones de ese error): **no mandes otra corrección** ni reformules la misma. Replantea:
-    `lookout decision … --abre` + la pregunta en el modal con los intentos y tu propuesta (otro enfoque, otra tarea,
+    `lookout decision … --abre … --si-es "<etiqueta del sí>"` + la pregunta en el modal con los intentos y tu propuesta (otro enfoque, otra tarea,
     parar al agente). Al agente dile: "escalado al usuario; espera mi mensaje".
 - **`sin progreso`** (lo decide el waiter cruzando fuentes; nunca con una sola): `mirar` → una lectura de su pantalla
   (`herdr agent read <pane> --source visible`) y decide. `escalar` → avisa al usuario (agente, desde cuándo, fuentes).
@@ -201,11 +203,13 @@ pane (su spec de goalspec espera «aprobado», un `! comando` que debe correr el
 acepta tecleada) lo pides tú y lo tecleas tú (3-tier-memory, 2026-10-16: el supervisor le pidió a Víctor «que escriba
 aprobado allí» y el agente quedó parado hasta que él buscó el pane). El evento lo marca «ESPERA ALGO TECLEADO EN SU
 PANE»; un mensaje del agente que lo pide cuenta igual.
-1. `lookout decision <project_id> --abre "<qué decide>" --agentes <agente>`, y en el modal una pregunta con el **texto
-   exacto** que vas a teclear entre «» (`«aprobado»`, `«! git push origin <rama>»`), en una línea, el spec o el comando en palabras simples y su
-   dN al final. El usuario elige la opción o escribe él el texto en «Other».
-2. Con su sí: `lookout decision … --cierra dN --respuesta "<lo que dijo>" --si`, y
-   `lookout envia <project_id> <agente> --usuario-confirmo dN --texto "<texto>"`. Se niega (exit 5) sin el sí, si la
+1. `lookout decision <project_id> --abre "<qué decide>" --agentes <agente> --si-es "<etiqueta de la opción sí>"`, y en
+   el modal una pregunta con el **texto exacto** que vas a teclear entre «» (`«aprobado»`, `«! git push origin
+   <rama>»`), en una línea, el spec o el comando en palabras simples y su dN al final, con una opción cuya etiqueta es
+   **tal cual** la de `--si-es`. El usuario elige la opción o escribe él el texto en «Other».
+2. Tu hook cierra dN con lo que eligió el usuario (sí solo si eligió esa etiqueta): no corras `--cierra … --si`
+   (3-tier-memory, 2026-10-16: el modo automático negó ese comando como «Auto-Mode Bypass» y no se pudo teclear nada).
+   Con su sí: `lookout envia <project_id> <agente> --usuario-confirmo dN --texto "<texto>"`. Se niega (exit 5) sin el sí, si la
    decisión no nombra a ese agente o si el texto no es entero lo que iba entre «» en la pregunta o toda la respuesta que escribió
    él (un trozo o un espacio cambiado no pasa). A un texto le añade
    ` (dN)`; un `! comando` va solo y se confirma en el transcript del agente (no dispara UserPromptSubmit).
@@ -229,7 +233,8 @@ de «siguen abiertas» y ninguna respuesta; el usuario pidió «repite las pregu
 
 **En lote, en este orden:**
 1. Contesta tú, por `SendMessage`, todo lo reversible que tengas en cola. Lo que es del usuario lo juntas.
-2. `lookout decision … --abre` para cada decisión nueva (un relevo reusa el id que ya existe).
+2. `lookout decision … --abre` para cada decisión nueva (un relevo reusa el id que ya existe), con `--si-es` si su sí
+   va a autorizar algo.
 3. Comprueba que el waiter está vivo (`lookout espera` en segundo plano) y, si salió, **lánzalo antes del modal**. El
    modal te deja parado hasta que el usuario conteste: los mensajes que lleguen mientras tanto esperan en cola y los
    atiendes después, pero sin waiter no hay altas ni barrido (3-tier-memory, 2026-10-16: 65 min sin waiter tras un
@@ -237,8 +242,10 @@ de «siguen abiertas» y ninguna respuesta; el usuario pidió «repite las pregu
 4. **Un solo** `AskUserQuestion` con todas las decisiones pendientes (hasta 4 preguntas; si hay más, las 4 más
    urgentes y el resto en el siguiente modal). Ningún texto en prosa antes ni después del modal que repita las
    preguntas.
-5. Al contestar: `lookout decision … --cierra <id> --respuesta "<lo que eligió>" --si|--no` para cada una. Las
-   respuestas del modal se anotan solas en sus decisiones, pero solo `--si` autoriza algo.
+5. Al contestar: una decisión abierta con `--si-es` ya la cerró tu hook con la elección del usuario. Las demás:
+   `lookout decision … --cierra <id> --respuesta "<lo que eligió>" --no`. Las respuestas del modal se anotan solas
+   en sus decisiones, pero solo el sí que anota tu hook autoriza algo. Abre con `--si-es` toda decisión que vaya a
+   autorizar algo: así el sí es del usuario por construcción.
 
 Si terminas el turno con una decisión abierta que el usuario no ha contestado (nunca fue a un modal, o cerró el
 modal sin contestar), un hook de lookout te lo recuerda una vez.
@@ -292,11 +299,10 @@ NO, no lo rodees ni lo reformules: pásale al agente el texto del NO.
    - `BASE-MOVIDA` / `VERSION-…`: dile exactamente lo que dice el NO (fetch + rebase + renumerar + suites) y
      que vuelva a pedirlo.
    - `LISTA`: pásaselo al usuario (paso 3).
-3. `lookout decision <project_id> --abre "<qué decide>" --agentes <agente>` y luego la pregunta en el modal (ver
-   «Cómo pedirle una decisión al usuario») con el resumen de `publica` (rama, commits, versión)
-   y la orden exacta. Cuando conteste:
-   `lookout decision <project_id> --cierra <id> --respuesta "<lo que dijo>" --si` (o `--no` si no lo aprueba;
-   solo una decisión cerrada con `--si` autoriza algo después).
+3. `lookout decision <project_id> --abre "<qué decide>" --agentes <agente> --si-es "<etiqueta del sí>"` y luego la
+   pregunta en el modal (ver «Cómo pedirle una decisión al usuario») con el resumen de `publica` (rama, commits,
+   versión), la orden exacta y una opción con esa etiqueta tal cual. Tu hook cierra la decisión con lo que elija: solo
+   esa etiqueta autoriza algo después.
 4. **Si el usuario aprueba el push, NO se lo digas al agente todavía** (H15: un mensaje tuyo no es su
    consentimiento y auto mode lo niega). `lookout regla-push <project_id> --estado`:
    - `APLICADA`: dile al agente que corra la orden exacta, sola.
@@ -309,11 +315,11 @@ NO, no lo rodees ni lo reformules: pásale al agente el texto del NO.
 **Otra ronda de adversario:** antes de pedirla o aceptarla, `lookout gobierno <project_id> <agente> --para ronda`.
 Con `PREGUNTA-USUARIO` (ya van 5) pregúntale al usuario antes de abrir la 6: abrir otra / registrar lo que
 queda como pendientes propuestos y cerrar / parar. Si dice abrir otra:
-`lookout gobierno <project_id> <agente> --usuario-amplia <n> --decision <id>` (el id de la decisión respondida con `--si`).
+`lookout gobierno <project_id> <agente> --usuario-amplia <n> --decision <id>` (el id de una decisión abierta con `--si-es` cuya opción eligió el usuario).
 
 **Cerrar el pendiente de un agente** (terminado, publicado o sin necesidad de push, con hold):
-abre la decisión (`lookout decision … --abre`) y pregunta al usuario en el modal. Con su sí, cierra la decisión con su
-respuesta y `--si`, y: `lookout cierra <project_id> <agente> --nota "<qué quedó hecho y cómo se verificó>" --usuario-confirmo <id>` (añade `--sin-push "<razón>"` si la tarea no necesitaba push).
+abre la decisión (`lookout decision … --abre … --agentes <agente> --si-es "<etiqueta del sí>"`) y pregunta al usuario en
+el modal. Si elige esa opción, tu hook la cierra con su sí, y: `lookout cierra <project_id> <agente> --nota "<qué quedó hecho y cómo se verificó>" --usuario-confirmo <id>` (añade `--sin-push "<razón>"` si la tarea no necesitaba push).
 Escribe solo un evento `pendiente.resolve` en el journal; `_pendientes.md` cambia al compactar. Nunca edites
 `_pendientes.md` ni otro índice.
 - **Abandonar** la tarea de un agente (ya no hace falta, o la reemplaza otra): `lookout cierra … --estado abandoned`
@@ -323,7 +329,7 @@ Escribe solo un evento `pendiente.resolve` en el journal; `_pendientes.md` cambi
 - **Nunca** corras `journal-emit.py --type pendiente.resolve` tú mismo: todo cierre pasa por `lookout cierra` o
   `lookout descarta`, que exigen la decisión del usuario.
 - **Todo cierre lo decide el usuario, también el que pide un agente que ya corría** (p. ej. en su `/checkpoint-3t`):
-  si un agente te avisa que va a cerrar un pendiente, no le das tu OK; abres la decisión, se lo preguntas al usuario
+  si un agente te avisa que va a cerrar un pendiente, no le das tu OK; abres la decisión (con `--si-es`), se lo preguntas al usuario
   y le pasas su respuesta.
 - **Las decisiones van antes del `/checkpoint-3t`, no a mitad.** En una sesión sin lookout el checkpoint pregunta
   los pendientes en un modal y sigue en el mismo turno; el agente supervisado no puede abrir modal, así que si le dices
@@ -355,6 +361,12 @@ publicación pendiente, decisión abierta que lo nombre, mensaje suyo sin respue
 una tarea de fondo. Con todo limpio hace `/exit`, cierra su pestaña (o solo su pane si comparte pestaña) y te da la
 línea para el usuario. Si dice `NO cierro …`, pásale al usuario el motivo en una línea; si el motivo es «mensaje sin
 respuesta», contéstale primero (un acuse basta) y repite. `--revisa` solo dice si se puede, sin tocar nada.
+Si el usuario decide cerrarla en tu modal, repite con `--usuario-confirmo dN`. dN debe ser `lookout decision … --abre
+"¿cierro su pestaña?" --agentes <agente> --cierre --si-es "<etiqueta>"`, abierta después de su último turno, y el
+usuario debe haber elegido esa etiqueta (un `--cierra --si` tuyo no sirve). Salta solo «no dice que terminó /
+bloque con trabajo» y «una pregunta en su último turno», que el usuario ya sopesó; las demás comprobaciones siguen
+(3-tier-memory, 2026-10-16: con d111 «Cerrarla», la «¿» de su «¿Cerrado? Sí.» frenaba el cierre). Un «Como retomar:
+Ninguno …» que cita un pendiente abierto llega como bloque `ambiguo` («dice «Ninguno» pero cita pendientes»): al modal.
 
 ## Relevo del supervisor (presupuesto de contexto)
 
@@ -409,7 +421,7 @@ migrar. En su lugar haz Z y muéstrame W."
 - Para repartir pendientes en agentes nuevos, usa `/lookout:pendientes`.
 - Si `decision --abre` dice `NO ABIERTA`, el usuario ya decidió algo sobre ese agente: léelo. Si responde esto, úsalo y
   no preguntes; si es otra cosa, repite con `--nueva`.
-- Cada pregunta que le haces al usuario va también a `lookout decision … --abre` (y `--cierra` al contestar):
+- Cada pregunta que le haces al usuario va también a `lookout decision … --abre` (con `--si-es` si su sí autoriza algo; sin él, `--cierra` al contestar):
   `resumen` muestra cuánto lleva esperando cada una (T4). Una opción que le ofreciste sigue bloqueada hasta su respuesta.
 - Mantén tus respuestas al usuario cortas: una línea por despertar; tabla solo al arrancar o si la pide.
   Lo corto no aplica a una decisión suya: esa va al modal con su pregunta completa, también cuando la repites.

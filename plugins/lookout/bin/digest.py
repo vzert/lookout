@@ -172,7 +172,7 @@ def espera_pane_txt(ev):
     p = ev.get("espera_pane")
     if not p:
         return ""
-    return ("ESPERA ALGO TECLEADO EN SU PANE (%s): «%s» → al modal con dN y --agentes; con su sí, "
+    return ("ESPERA ALGO TECLEADO EN SU PANE (%s): «%s» → al modal con dN, --agentes y --si-es; con su sí, "
             "`lookout envia <proyecto> <agente> --usuario-confirmo dN --texto \"<texto>\"`. " % (p.get("motivo"), p.get("cita")))
 
 
@@ -500,7 +500,7 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
             blk = heuristicas.bloque_sin_atender(ev_e, e, decs) if ev_e and g == "te_necesita" else None
             n0 = len(filas_bloque)
             if e.get("tarea_estado") == "relevo-fallido":  # 0.13.4: every wake, like a block, until attended
-                estado = "relevo fallido → díselo al usuario; `lookout relevo` otra vez, o con su sí `lookout cierra-pestana … --usuario-confirmo <id>` (%s)" % (
+                estado = "relevo fallido → díselo al usuario; `lookout relevo` otra vez, o una decisión --cierre --si-es y con su sí `lookout cierra-pestana … --usuario-confirmo <id>` (%s)" % (
                     e.get("tarea_motivo") or "?")
                 filas_bloque.append("  " + clip("%s | %s" % (registry.quien(e), estado), MAX_COLS - 2))
             elif blk:  # 0.13.3: the row says what to do, every wake, until it is attended

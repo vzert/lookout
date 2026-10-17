@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.13.9
+
+- The user's yes is written by the modal's hook, not by the supervisor. `lookout decision … --abre … --si-es "<label>"`:
+  when the user answers that decision in the supervisor's modal, the hook closes it, yes only if the user picked that
+  exact label (`por_hook`). No `--cierra … --si` is needed. 3-tier-memory 2026-10-16: auto mode denied the
+  supervisor's `lookout decision --cierra d113 … --si` as «Auto-Mode Bypass», so `lookout envia --usuario-confirmo
+  d113` refused and the user had to open the PR himself. `--cierra` on a decision the hook already closed says so and
+  changes nothing. Every flow where a yes authorizes something (typing in an agent's pane, a push, one more adversary
+  round, closing, discarding or freeing a pendiente) now tells the supervisor to open the decision with `--si-es`:
+  both SKILLs, every refusal that asks for `--usuario-confirmo`, the next step of `publica`, the digest line of
+  an agent waiting for typed text, the escalation after two failed corrections, and the message of a `decision --abre` without it. The user's choice must be the label exactly, spaces included, and the label is kept as given (adversary
+  rounds 7 and 10: « Cerrar » counted as «Cerrar», and a label « Cerrar » never matched).
+- A «Como retomar» that opens with «Ninguno», «Ninguna», «Nada», «None» or «Nothing», whatever punctuation or
+  formatting follows, and cites a pendiente still open is `ambiguo` («dice «Ninguno» pero cita pendientes»): the
+  supervisor asks the user whether to close or relieve it. It is never `vigente` (relieved without asking) nor
+  `nada`. Same day, «Corrección snipet de cierre»: «Ninguno — … (p-f8df9ea916) espera a que se acumulen cierres, con
+  recordatorio el 2026-10-22» was relieved as `vigente`. lookout does not read the words after «Ninguno» (two
+  earlier tries at that let through wordings with work left, adversary rounds 3-4). The words after «Como retomar»
+  count after any colon, dash or formatting (underscores too), and a «Ninguno» counts as finished only when nothing
+  after it in the turn cites a pendiente (adversary round 5: «Ninguno.» with the pendiente on the next line closed
+  the tab on its own, as it did since 0.13.0). A «Ninguno» whose cited pendientes are all closed is still finished.
+- `lookout cierra-pestana … --usuario-confirmo dN` closes a tab the user decided to close. dN must be a close decision
+  (`--abre … --agentes <agente> --cierre --si-es "<label>"`), approved by the hook from the user's own choice, and
+  opened after the agent's last turn. It skips only the checks that read the agent's own words (finished? a question
+  in its last turn?); the screen, git, a pending publication, an open decision, an unanswered message and a
+  background task still stop it. A yes to something else, an older one, or a `--cierra --si` of the supervisor closes
+  nothing. The close of a failed relief takes the same kind of decision, opened strictly after the failure.
+
 ## 0.13.8
 
 Three agents of 3-tier-memory sat unseen for hours on 2026-10-16 while the digest called them «terminó su turno» or

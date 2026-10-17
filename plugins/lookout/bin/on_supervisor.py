@@ -76,7 +76,7 @@ def respuesta_en_chat(pid, sid, prompt):
     """Fase 9 F2: the user may answer in the chat (0.12.0: the supervisor asks in a modal, but a typed answer still
     counts), so the answer arrives as a prompt of its own session. The user's own text (not a peer's message,
     a waiter's notification or a /rename lookout typed) is the answer to the most recent open decision; it is written
-    down as given and never counts as a yes (only `decision --cierra … --si` authorizes)."""
+    down as given and never counts as a yes (only a --si-es choice in the modal, or `decision --cierra … --si`, authorizes)."""
     import on_state
     p = prompt.lstrip()
     if not p or on_state.ETIQUETA_SISTEMA.match(p) or p.startswith(on_state.LOOKOUT_TECLEA):

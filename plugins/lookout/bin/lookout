@@ -38,8 +38,9 @@ Subcommands (PROYECTO = a path inside the repo, or its project_id):
                                 close the agent's pendiente by journal (pendiente.resolve), never by editing
   relevo PROYECTO AGENTE [--retomar ARCHIVO] [--modelo M]
                                 /exit + a new session on the same task with its "Como retomar" (F3)
-  decision PROYECTO (--abre TEXTO [--agentes A,B] | --cierra ID --respuesta R (--si|--no) | --lista)
-                                the user's pending decisions (T4): shown in `resumen` with their age
+  decision PROYECTO (--abre TEXTO [--agentes A,B] [--si-es ETIQUETA] [--cierre] | --cierra ID --respuesta R (--si|--no) | --lista)
+                                the user's pending decisions (T4): shown in `resumen` with their age; with --si-es
+                                the modal's hook closes it from the user's own choice (0.13.9)
   corrige PROYECTO AGENTE --resumen R [--firma F] [--reporte CITA]
                                 record a correction for the agent's repeated error (Fase 6) and print the message to
                                 send it; after 2 corrections of the same error: PARA (exit 5), escalate instead
@@ -503,7 +504,8 @@ def texto_del_usuario(pid, e, did, texto):
     d = decisiones.respondida(pid, did)
     if not d:
         return None, None, ("hace falta --usuario-confirmo dN de una decisión que el usuario contestó con sí "
-                            "(`lookout decision … --cierra dN … --si`); %s no lo es." % (did or "sin dN"))
+                            "(ábrela con `lookout decision … --abre … --agentes <agente> --si-es \"<etiqueta del sí>\"` y tu hook la cierra "
+                            "con lo que elija en tu modal); %s no lo es." % (did or "sin dN"))
     if e["nombre"] not in (d.get("agentes") or []):
         return None, None, "la decisión %s no es sobre %s (ábrela con --agentes %s)." % (did, e["nombre"], e["nombre"])
     if not d.get("respuesta_usuario"):
@@ -569,7 +571,8 @@ def cmd_gobierno(a):
         d = decisiones.respondida(pid, a.decision or "")
         if not d:
             print("NO: --usuario-amplia necesita --decision <id> de una decisión que el usuario respondió con un sí "
-                  "(`lookout decision %s --abre …`, pregúntale, y `--cierra <id> --respuesta …`)." % pid)
+                  "(`lookout decision %s --abre … --agentes <agente> --si-es \"<etiqueta del sí>\"` y pregúntale en tu modal: "
+                  "tu hook la cierra con lo que elija)." % pid)
             return 5
         gobierno.amplia(pid, e, a.usuario_amplia)
         print("Decisión %s: %s → %s" % (d["id"], d["texto"], d.get("respuesta", "")))
@@ -615,7 +618,7 @@ def cmd_publica(a):
         root = lote.repo_root(common)
         est, _ = publica.regla_estado(root)
         print("")
-        print("Siguiente: `lookout decision %s --abre \"<qué decide>\" --agentes %s` y pásale al usuario este push "
+        print("Siguiente: `lookout decision %s --abre \"<qué decide>\" --agentes %s --si-es \"<etiqueta del sí>\"` y pásale al usuario este push "
               "para que lo apruebe en un AskUserQuestion (junto con sus otras decisiones pendientes, nunca en prosa), "
               "con el resumen de arriba." % (pid, e["nombre"]))
         if est == "aplicada":
@@ -662,7 +665,8 @@ def cmd_descarta(a):
     d = decisiones.respondida(pid, a.usuario_confirmo or "")
     if not d:
         print("NO: --usuario-confirmo necesita el id de una decisión que el usuario respondió con un sí (p.ej. d3); "
-              "%r no lo es. Ábrela con `lookout decision`, pregúntale y ciérrala con su respuesta." % a.usuario_confirmo)
+              "%r no lo es. Ábrela con `lookout decision … --abre … --si-es \"<etiqueta del sí>\"` y pregúntale en tu "
+              "modal: tu hook la cierra con lo que elija." % a.usuario_confirmo)
         return 5
     lk = lookout_state.read_json(os.path.join(lookout_state.project_dir(pid), "lock.json")) or {}
     sesion = (lk.get("supervisor") or {}).get("session_id") or "lookout-descarta"
@@ -679,7 +683,8 @@ def cmd_cierra(a):
     d = decisiones.respondida(pid, a.usuario_confirmo or "")
     if a.usuario_confirmo and not d:
         print("NO: --usuario-confirmo necesita el id de una decisión que el usuario respondió con un sí (p.ej. d3); "
-              "%r no lo es. Ábrela con `lookout decision`, pregúntale y ciérrala con su respuesta." % a.usuario_confirmo)
+              "%r no lo es. Ábrela con `lookout decision … --abre … --si-es \"<etiqueta del sí>\"` y pregúntale en tu "
+              "modal: tu hook la cierra con lo que elija." % a.usuario_confirmo)
         return 5
     ok, lines = cierre.cierra(pid, common, e, gobierno.estado(pid, e), a.estado,
                               a.nota + (" — confirmó el usuario: %s (%s)" % (d["id"], d.get("respuesta", "")) if d else ""),
@@ -792,15 +797,29 @@ def cmd_decision(a):
                 print("- %s: %s → %s: %s" % (d["id"], d["texto"], "SÍ" if d.get("aprueba") else "NO", d.get("respuesta", "")))
             print("Si una de ellas ya responde esto, úsala y no preguntes. Si es otra cosa, repite con --nueva.")
             return 5
-        it = decisiones.abre(pid, a.abre, agentes)
+        if a.cierre and (not agentes or not a.si_es):
+            print("NO ABIERTA: una decisión --cierre necesita --agentes <agente> y --si-es \"<etiqueta de la opción sí>\".")
+            return 5
+        it = decisiones.abre(pid, a.abre, agentes, si_es=a.si_es or "", tipo="cierre" if a.cierre else "")
         supervisor_md.write(pid)
-        print("Decisión %s abierta (aviso de herdr mostrado). Ciérrala con `lookout decision %s --cierra %s --respuesta … --si|--no` "
-              "cuando el usuario conteste (--si solo si su respuesta autoriza lo preguntado)." % (it["id"], pid, it["id"]))
+        if it.get("si_es"):
+            print("Decisión %s abierta (aviso de herdr mostrado). Pon «(%s)» al final de su pregunta y la opción «%s» tal "
+                  "cual en el modal: tu hook la cierra con lo que elija el usuario (no hace falta --cierra)."
+                  % (it["id"], it["id"], it["si_es"]))
+        else:
+            print("Decisión %s abierta (aviso de herdr mostrado). Ciérrala con `lookout decision %s --cierra %s --respuesta … "
+                  "--no` cuando el usuario conteste. Si su sí debe autorizar algo, ábrela con --si-es \"<etiqueta del sí>\": "
+                  "un sí solo vale si lo anota tu hook." % (it["id"], pid, it["id"]))
         return 0
     if a.cierra:
         if a.si == a.no:
             print("NO: di si el usuario aprobó: --si (su respuesta autoriza lo preguntado) o --no (no lo autoriza).")
             return 5
+        hecha = next((x for x in decisiones.load(pid)["items"] if x["id"] == a.cierra and x.get("por_hook")), None)
+        if hecha:  # 0.13.9: the modal's hook already closed it with the user's own choice; that stands
+            print("Decisión %s ya cerrada por tu hook con la elección del usuario («%s»: %s)."
+                  % (a.cierra, hecha.get("respuesta_usuario", ""), "sí" if hecha.get("aprueba") else "no"))
+            return 0
         it = decisiones.cierra(pid, a.cierra, a.respuesta or "", a.si)
         supervisor_md.write(pid)
         print("Decisión %s cerrada." % a.cierra if it else "No hay una decisión abierta %s." % a.cierra)
@@ -860,11 +879,14 @@ def main():
     p = sub.add_parser("cierra-pestana"); p.add_argument("proyecto"); p.add_argument("agente")
     p.add_argument("--motivo", help="cita tal cual de su último turno que dice que terminó (si no dejó «Como retomar»)")
     p.add_argument("--revisa", action="store_true", help="solo dice si se puede cerrar; no toca nada")
-    p.add_argument("--usuario-confirmo", help="id (dN) del sí del usuario; lo exige un relevo fallido")
+    p.add_argument("--usuario-confirmo", help="id (dN) del sí del usuario a cerrarla: lo exige un relevo fallido, y con él se cierra un bloque ambiguo o un turno con una pregunta")
     p = sub.add_parser("decision"); p.add_argument("proyecto"); p.add_argument("--abre"); p.add_argument("--agentes")
     p.add_argument("--cierra"); p.add_argument("--respuesta"); p.add_argument("--lista", action="store_true")
     p.add_argument("--si", action="store_true"); p.add_argument("--no", action="store_true")
     p.add_argument("--nueva", action="store_true")
+    p.add_argument("--si-es", default="", help="etiqueta de la opción del modal que significa sí: tu hook cierra la "
+                                              "decisión con lo que elija el usuario")
+    p.add_argument("--cierre", action="store_true", help="la decisión es cerrar la pestaña de --agentes (cierra-pestana)")
     p = sub.add_parser("corrige"); p.add_argument("proyecto"); p.add_argument("agente")
     p.add_argument("--resumen", required=True); p.add_argument("--firma", default=None)
     p.add_argument("--reporte", default=None)

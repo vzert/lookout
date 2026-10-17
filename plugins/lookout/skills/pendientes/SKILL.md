@@ -50,7 +50,7 @@ Antes de proponer, **en cada lote** (también el que imprimen `libera` y `cierra
 ## 3. Una sola aprobación del usuario
 
 Una pregunta en **tu** sesión (tú no estás supervisado) con el lote completo, siempre en `AskUserQuestion`, nunca
-en prosa. Con agentes vivos, antes `lookout decision … --abre` y el waiter vivo (ver «Cómo pedirle una decisión al
+en prosa. Con agentes vivos, antes `lookout decision … --abre … --si-es "<etiqueta del sí>"` y el waiter vivo (ver «Cómo pedirle una decisión al
 usuario» en `/lookout:supervisa`). En la pregunta:
 por pendiente, **qué problema resuelve en palabras simples** (para alguien que no recuerda el pendiente) y qué hará
 el agente (solo medir, cambiar código, redactar algo sin enviarlo); al final, entre paréntesis, id, agente y dónde trabaja (pestaña en main o el worktree que pidió el usuario).
@@ -74,7 +74,7 @@ Qué hacer con cada salida:
 - **Cualquier otro `FALLO`** (worktree o workspace que herdr no creó, diálogo de confianza con otra ruta,
   sin `SessionStart`, carpeta que ya existe): la tarea no arrancó. No lo arregles por tu cuenta ni borres
   nada. Mira la pantalla del agente una vez si hay pane (`herdr agent read <pane> --source visible`) y
-  pregunta al usuario en el modal (con `lookout decision … --abre` antes si hay otros agentes vivos): **Reintentar** (si quedó un worktree, él corre en su
+  pregunta al usuario en el modal (con `lookout decision … --abre … --si-es "Reintentar"` antes si hay otros agentes vivos): **Reintentar** (si quedó un worktree, él corre en su
   terminal `! git -C <repo> worktree remove <ruta del worktree>`; sin él, el pendiente vuelve a salir en
   `lookout pendientes`) / **Dejarlo fuera** (queda excluido como "ya tiene agente"). Un agente de código que falló
   en main deja sus cambios a medias en el árbol: no vuelve a proponerse hasta que el usuario decida qué hacer con
@@ -101,6 +101,7 @@ Cuando un agente reporte que **terminó** su pendiente:
 2. Compara su reporte con su tarea (el archivo de la tarea, no tu resumen): «Alcance / no tocar», «Restricciones»
    y «Criterios de aceptación» contra lo que dice que escribió, dónde y su «riesgo asumido». Lo que escribió fuera
    de su carpeta (checkout principal o worktree), un commit o un cambio de rama en main, o algo en un host remoto (scp, `mktemp`, `rm`, clones) se lo dices al usuario en un bloque de decisión
+   (`lookout decision … --abre … --si-es "<etiqueta del sí>"`)
    **antes** de liberar; nunca le ordenes al agente arreglarlo por su cuenta (p. ej. borrar el `/tmp` remoto).
 3. `lookout libera <project_id> <agente> --fuera ninguno` — o, si algo se salió, `--fuera "<qué>"
    --usuario-confirmo <id de la decisión>` (sin esa revisión, `libera` se niega). Marca la tarea terminada y

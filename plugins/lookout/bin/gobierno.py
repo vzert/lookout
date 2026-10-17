@@ -201,9 +201,9 @@ def decide_ronda(st):
     if nxt > st["limite"]:
         return False, "PREGUNTA-USUARIO", (
             "PARA: ya van %d rondas (límite %d). Antes de abrir la %d abre la decisión (`lookout decision … "
-            "--abre`) y pregúntale al usuario en un AskUserQuestion (nunca en prosa): "
-            "abrir otra ronda / registrar lo que queda como pendientes propuestos y cerrar / parar. Si dice que "
-            "sí: `lookout gobierno <proyecto> <agente> --usuario-amplia %d`." % (st["rondas"], st["limite"], nxt, nxt))
+            "--abre … --agentes <agente> --si-es \"<etiqueta del sí>\"`) y pregúntale al usuario en un AskUserQuestion (nunca en prosa): "
+            "abrir otra ronda / registrar lo que queda como pendientes propuestos y cerrar / parar. Si elige esa opción, tu hook la "
+            "cierra con su sí: `lookout gobierno <proyecto> <agente> --usuario-amplia %d`." % (st["rondas"], st["limite"], nxt, nxt))
     return True, "OK", "OK: puede abrir la ronda %d de %d." % (nxt, st["limite"])
 
 

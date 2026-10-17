@@ -193,5 +193,6 @@ def _relevo(project_id, entry, nota_for, retomar, modelo, confirmar, fin_timeout
     lookout_state.remove_marker(sid)
     return False, ("relevo %d de %s FALLÓ: %s. La tarea sigue con %s (estado relevo-fallido): corrige la causa y repite "
                    "`lookout relevo` sobre ese mismo nombre; arranca otra vez sin /exit. Su pestaña quedó sin agente: díselo al "
-                   "usuario en una línea; si prefiere cerrarla, ábrele una decisión con --agentes %s y, con su sí, "
+                   "usuario en una línea; si prefiere cerrarla, ábrele `lookout decision … --abre \"¿cierro su pestaña?\" "
+                   "--agentes %s --cierre --si-es \"<etiqueta del sí>\"` y, si elige esa opción en tu modal, "
                    "`lookout cierra-pestana … --usuario-confirmo <id>`." % (n, clave_de(new), msg, old["nombre"], old["nombre"]))

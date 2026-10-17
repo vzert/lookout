@@ -735,16 +735,16 @@ def revisa_alcance(project_id, entry, fuera, usuario_confirmo=""):
             "Busca en el reporte y en su transcript lo que escribió y dónde (fuera del worktree, en hosts remotos, "
             "scp, mktemp, rm) y su «riesgo asumido».",
             "Si nada se salió: `lookout libera <proyecto> <agente> --fuera ninguno`.",
-            "Si algo se salió: díselo al usuario en un bloque de decisión (`lookout decision --abre`), y con su "
-            "respuesta: `lookout libera <proyecto> <agente> --fuera \"<qué se salió>\" --usuario-confirmo <id>`."]
+            "Si algo se salió: díselo al usuario en un bloque de decisión (`lookout decision --abre … "
+            "--si-es \"<etiqueta del sí>\"`), y si elige esa opción: `lookout libera <proyecto> <agente> --fuera \"<qué se salió>\" --usuario-confirmo <id>`."]
     if fuera.strip().lower() == "ninguno":
         return True, []
     d = decisiones.respondida(project_id, usuario_confirmo or "")
     if not d:
         return False, [
             "NO: %s se salió de su tarea (%s). Eso lo ve el usuario antes de liberar: ábrele una decisión con "
-            "`lookout decision --abre` que diga qué se salió, ciérrala con su respuesta y repite con "
-            "--usuario-confirmo <id>." % (entry.get("nombre", "?"), fuera.strip())]
+            "`lookout decision --abre … --si-es \"<etiqueta del sí>\"` que diga qué se salió y, si elige esa opción (tu hook "
+            "la cierra con su sí), repite con --usuario-confirmo <id>." % (entry.get("nombre", "?"), fuera.strip())]
     return True, ["Fuera de la tarea: %s — lo vio el usuario: %s (%s)" % (fuera.strip(), d["id"], d.get("respuesta", ""))]
 
 

@@ -22,10 +22,16 @@ def load(project_id):
     return lookout_state.read_json(path(project_id)) or {"n": 0, "items": []}
 
 
-def abre(project_id, texto, agentes=(), notificar=True):
+def abre(project_id, texto, agentes=(), notificar=True, si_es="", tipo=""):
+    """0.13.9: `si_es` = the label of the modal option that means yes; the modal's hook then closes the decision
+    itself, aprueba = (the user's literal choice == si_es), so no `--cierra … --si` of the supervisor is needed (live
+    3-tier 2026-10-16: auto mode denied that command as «Auto-Mode Bypass» for d113). `tipo` = "cierre": a decision
+    about closing the tab of `agentes` (retiro.cierre_decidido accepts only that kind)."""
     d = load(project_id)
     d["n"] += 1
-    item = {"id": "d%d" % d["n"], "texto": texto, "agentes": list(agentes), "desde": time.time(), "estado": "abierta"}
+    item = dict({"id": "d%d" % d["n"], "texto": texto, "agentes": list(agentes), "desde": time.time(),
+                 "estado": "abierta"}, **({"si_es": si_es} if si_es and si_es.strip() else {}),  # as given (r10)
+                **({"tipo": tipo} if tipo else {}))
     d["items"].append(item)
     lookout_state.write_json(path(project_id), d)
     if notificar:
@@ -61,7 +67,8 @@ def respondida(project_id, did):
 # put an answer on a decision the modal never asked). A decision counts as answered only when the answer to its own
 # question arrives. Anything unmatched stays waiting, and the Stop check reminds it once: a miss errs toward asking.
 # A modal that names no decision at all becomes its own entry, as before. The hook writes down the user's answer as
-# given and never turns it into a yes: only `decision --cierra … --si` authorizes (respondida()).
+# given and never turns it into a yes: only the literal --si-es choice (or `decision --cierra … --si`) authorizes
+# (respondida()).
 ID_EN_PREGUNTA = re.compile(r"\bd(\d+)\b")
 
 
@@ -123,7 +130,8 @@ def registra_respuesta(project_id, tool_use_id, respuesta, now=None, por_pregunt
     """The user's literal answer. A decision the hook opened (a modal naming no decision) is closed with the whole
     `respuesta` (aprueba unknown: None). A decision the supervisor opened gets only the answer to ITS question
     (`por_pregunta`: question text -> answer, as Claude Code reports it); with no answer to its question it stays
-    waiting. It stays open for `decision --cierra … --si|--no`. Returns the last one it touched, or None."""
+    waiting. It stays open for `decision --cierra … --si|--no`, unless it was opened with `si_es` (0.13.9): then this
+    closes it, yes only if the user's choice is that label. Returns the last one it touched, or None."""
     if not tool_use_id:
         return None
     por_pregunta = por_pregunta or {}
@@ -141,6 +149,9 @@ def registra_respuesta(project_id, tool_use_id, respuesta, now=None, por_pregunt
         mia = next((a for q, a in por_pregunta.items() if id_de(q) == it["id"]), None)
         if mia not in (None, ""):
             it["respuesta_usuario"] = str(mia)[:300]
+            if it.get("si_es") and it["estado"] == "abierta":  # 0.13.9: the user's own choice decides, by structure
+                it.update(estado="respondida", respuesta=str(mia)[:300], aprueba=str(mia) == it["si_es"],
+                          por_hook=True, hasta=now or time.time())
             hit = it
     if hit:
         lookout_state.write_json(path(project_id), d)

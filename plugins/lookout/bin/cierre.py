@@ -67,9 +67,9 @@ def cierra(project_id, common_dir, entry, st, estado, nota, usuario_confirmo, si
     if not tarea:
         return False, ["NO: %s no tiene un pendiente asignado." % entry.get("nombre")]
     if not usuario_confirmo:
-        return False, ["NO: cerrar un pendiente lo confirma el usuario. Abre la decisión (`lookout decision … --abre`), "
-                       "pregúntale en un AskUserQuestion (nunca en prosa), ciérrala con su respuesta y repite con "
-                       "--usuario-confirmo <id>."]
+        return False, ["NO: cerrar un pendiente lo confirma el usuario. Abre la decisión (`lookout decision … --abre … --agentes <agente> "
+                       "--si-es \"<etiqueta del sí>\"`), pregúntale en un AskUserQuestion (nunca en prosa) y, si elige esa opción "
+                       "(tu hook la cierra con su sí), repite con --usuario-confirmo <id>."]
     last = st["ultimo"]
     # Fase 9 C2: abandoning (or superseding) claims no result: no hold and no push needed, only the user's yes.
     sin_resultado = estado != "resolved"
@@ -125,8 +125,8 @@ def descarta(project_id, common_dir, tarea, estado, nota, usuario_confirmo, sesi
                        "con el agente que lo hizo."]
     if not usuario_confirmo:
         return False, ["NO: descartar un pendiente lo confirma el usuario. Abre la decisión (`lookout decision … "
-                       "--abre`), pregúntale en un AskUserQuestion (nunca en prosa), ciérrala con su respuesta y repite con "
-                       "--usuario-confirmo <id>."]
+                       "--abre … --si-es \"<etiqueta del sí>\"`), pregúntale en un AskUserQuestion (nunca en prosa) y, si elige esa "
+                       "opción (tu hook la cierra con su sí), repite con --usuario-confirmo <id>."]
     for e in lote.tasks(registry.load(project_id)):
         if e.get("tarea") == tarea and e.get("tarea_estado") not in ("terminada", "fallida"):
             return False, ["NO: %s tiene un agente (%s, %s). Ciérralo con `lookout cierra … --estado %s`." % (

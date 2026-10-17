@@ -15,6 +15,7 @@ it; a last turn with no «?», «¿» or «？» (the 0.12.2 rule: a question wa
 Threat model: an accidental omission (work left behind, a pending answer); not an agent that lies on purpose.
 """
 import json
+import re
 import os
 import time
 
@@ -37,7 +38,8 @@ def _turno(session_id):
 
 # 0.13.3: the brake says what to do (live 3-tier 2026-10-16: the supervisor read it and did nothing with the block)
 RELEVO_NO_CIERRE = ("su último turno deja un bloque para retomar con trabajo: es un relevo, no un cierre (vigente → "
-                    "`lookout relevo`; ambiguo → modal «¿relevo, cierro o lo dejo?» con --agentes)")
+                    "`lookout relevo`; ambiguo → modal «¿relevo, cierro o lo dejo?» con --agentes; si el usuario "
+                    "contesta que la cierres, repite con --usuario-confirmo dN de una decisión --cierre --si-es)")
 
 
 def senal_terminado(entry, motivo="", project_id=""):
@@ -255,11 +257,11 @@ def _direcciones(project_id, entry):
     return out
 
 
-def guarda_mensaje(project_id, entry):
+def guarda_mensaje(project_id, entry, decidido=False):
     marker = lookout_state.read_marker(entry["session_id"]) or {}
     enviado = _ultimo_mensaje_al_supervisor(entry["session_id"], marker.get("address", ""))
     text, _ts = _turno(entry["session_id"])
-    if any(c in text for c in "?¿？"):
+    if not decidido and any(c in text for c in "?¿？"):
         return "su último turno pregunta algo («?», «¿» o «？»): espera respuesta"
     if not enviado:
         return ""
@@ -315,13 +317,13 @@ def revisa_relevo_fallido(project_id, entry, confirmo=""):
         out.append("su pane tiene otra sesión (%s)" % sesion[:8])
     desde = _fallido_desde(project_id, entry)
     it = next((x for x in decisiones.load(project_id).get("items") or () if x.get("id") == confirmo), None) if confirmo else None
-    if not it:
-        out.append("un relevo fallido se cierra solo con la decisión del usuario: ábrela con --agentes %s preguntando "
-                   "si cierras su pestaña y repite con --usuario-confirmo <id> tras su sí" % entry.get("nombre"))
-    elif (it.get("aprueba") is not True or entry.get("nombre") not in (it.get("agentes") or ())
-          or desde is None or float(it.get("desde") or 0) < desde):
-        out.append("la decisión %s no es un sí del usuario abierto después del fallo que nombre a %s"
-                   % (confirmo, entry.get("nombre")))
+    if not it or desde is None:
+        out.append("un relevo fallido se cierra solo con la decisión del usuario: ábrela con `lookout decision … --abre "
+                   "«¿cierro su pestaña?» --agentes %s --cierre --si-es \"<etiqueta del sí>\"`, pregúntala en el modal y "
+                   "repite con --usuario-confirmo <id>" % entry.get("nombre"))
+    elif not decision_de_cierre(project_id, entry, confirmo, desde):
+        out.append("la decisión %s no es un sí del usuario abierto después del fallo que nombre a %s (hace falta "
+                   "--cierre y --si-es, y que el usuario elija esa opción en tu modal)" % (confirmo, entry.get("nombre")))
     return out, ""
 
 
@@ -331,15 +333,37 @@ def revisa(project_id, entry, motivo="", confirmo=""):
         frenos, gone = revisa_relevo_fallido(project_id, entry, confirmo)
         return [] if gone else frenos + [r for r in (g(project_id, entry) for g in GUARDAS) if r]
     out = []
-    for check in (lambda: senal_terminado(entry, motivo, project_id), lambda: senal_pantalla(entry)):
+    decidido = cierre_decidido(project_id, entry, confirmo)
+    for check in ((lambda: "") if decidido else (lambda: senal_terminado(entry, motivo, project_id)),
+                  lambda: senal_pantalla(entry)):
         r = check()
         if r:
             out.append(r)
     for g in GUARDAS:
-        r = g(project_id, entry)
+        r = guarda_mensaje(project_id, entry, decidido) if g is guarda_mensaje else g(project_id, entry)
         if r:
             out.append(r)
     return out
+
+
+def cierre_decidido(project_id, entry, confirmo):
+    """0.13.9: the user decided to close it: `confirmo` (dN) answered yes by the user in the modal (its answer written
+    down by the supervisor's hook), naming this agent. It skips only what reads the agent's own words (finished? a
+    question?), which the user already weighed; never the screen, git, a publication, an open decision, an unanswered
+    message or a background task. Live 3-tier 2026-10-16: d111 «Cerrarla» and `cierra-pestana` still refused."""
+    _text, ts = _turno(entry["session_id"])
+    return ts is not None and decision_de_cierre(project_id, entry, confirmo, ts)
+
+
+def decision_de_cierre(project_id, entry, confirmo, despues_de):
+    """dN is the user's yes to closing THIS agent's tab, by structure, never by its words (adversary r3-r4): opened
+    as a close (`lookout decision --abre … --cierre`), naming the agent, approved by the modal's hook from the user's
+    own choice (`--si-es`; a `--cierra … --si` is the supervisor's word), and opened after `despues_de`."""
+    d = decisiones.respondida(project_id, confirmo) if confirmo else None
+    return bool(d and d.get("tipo") == "cierre" and d.get("por_hook") and d.get("respuesta_usuario")
+                and entry.get("nombre") in (d.get("agentes") or ()) and float(d.get("desde") or 0) > despues_de)
+
+
 
 
 def cierra(project_id, entry, motivo="", fin_timeout=FIN_TIMEOUT, log=print, confirmo=""):

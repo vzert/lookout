@@ -264,7 +264,7 @@ def corrige(project_id, entry, resumen, sig=None, reporte=None, projects_dir=Non
             guarda_contadores(project_id, events)
         if corr >= MAX_CORRECCIONES:
             return 5, ("PARA: ya van %d correcciones para «%s» y el error volvió. No mandes otra corrección (sin "
-                       "ping-pong). Replantea: escala al usuario con `lookout decision %s --abre …` y la pregunta en un "
+                       "ping-pong). Replantea: escala al usuario con `lookout decision %s --abre … --si-es \"<etiqueta del sí>\"` y la pregunta en un "
                        "AskUserQuestion (junto con sus otras decisiones pendientes, nunca en prosa), "
                        "con los intentos y tu propuesta (otro enfoque, otra tarea, o parar a %s); al agente dile que "
                        "espere tu mensaje." % (corr, sig, project_id, entry["nombre"]))

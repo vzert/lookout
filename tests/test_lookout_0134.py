@@ -158,11 +158,14 @@ class CierraRelevoFallidoTest(t130.CierraPestanaTest):
         self.retiro.herdr_cli.pane_get = self.saved_pg
         super().tearDown()
 
-    def decide(self, did, aprueba, desde, agentes=("sidebar",)):
+    def decide(self, did, aprueba, desde, agentes=("sidebar",), respuesta="Sí, ciérrala", tipo="cierre", hook=True):
         import decisiones
         d = decisiones.load(self.pid)
-        d.setdefault("items", []).append({"id": did, "agentes": list(agentes), "desde": desde, "estado": "respondida",
-                                          "aprueba": aprueba})
+        # 0.13.9 (adversary r3-r4): a close decision (`--cierre`) whose yes the modal's hook wrote down
+        d.setdefault("items", []).append(dict({"id": did, "agentes": list(agentes), "desde": desde,
+                                               "estado": "respondida", "aprueba": aprueba, "tipo": tipo,
+                                               "por_hook": hook},
+                                              **({"respuesta_usuario": respuesta} if respuesta else {})))
         lookout_state.write_json(decisiones.path(self.pid), d)
 
     def cierra_con(self, did):
@@ -186,6 +189,15 @@ class CierraRelevoFallidoTest(t130.CierraPestanaTest):
         self.no_con("d3", "no es un sí")
         self.decide("d4", True, time.time())
         self.no_con("d5", "solo con la decisión del usuario")  # an id that does not exist
+        self.decide("d6", True, time.time(), respuesta="")     # a yes the supervisor wrote, no answer of the user
+        self.no_con("d6", "no es un sí")
+        self.decide("d7", True, time.time(), tipo="")          # a yes to something else (adversary r4: «Sí, publícalo»)
+        self.no_con("d7", "no es un sí")
+        self.decide("d8", True, time.time(), hook=False)       # the supervisor's own --cierra --si
+        self.no_con("d8", "no es un sí")
+        fallo = registry.load(self.pid)["agents"]["s1"]["relevo_fallido_ts"]
+        self.decide("d9", True, fallo)                         # the same instant as the failure is not after it
+        self.no_con("d9", "no es un sí")
 
     def test_with_the_users_yes_it_closes_without_exit(self):
         self.decide("d4", True, time.time())

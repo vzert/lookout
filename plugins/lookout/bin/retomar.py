@@ -28,7 +28,11 @@ FENCE_RE = re.compile(r"```[^\n]*\n(.*?)```", re.S)
 # «Ninguno», «Nada que retomar», or one of them followed by a dash and its explanation («Ninguno — los tres pendientes
 # quedaron cerrados»). Adversary round 1: a prefix match took «Ninguno, salvo que falta desplegar» for finished.
 NADA_RE = re.compile(r"(?i)^[^\w]*(?:ninguno|ninguna|nada(?: que retomar)?|none|nothing)[ \t]*(?:[.!]?[ \t]*$|[—–-][ \t])")
+# a block that opens with the word, whatever comes after it (adversary r4: «Ninguno, p-…», «Ninguno: p-…»,
+# «**Ninguno** — p-…» and a no-break space were read as a normal relief)
+NINGUNO_RE = re.compile(r"(?i)^[\W_]*(?:ninguno|ninguna|nada|none|nothing)(?![^\W_])")  # «_Ninguno_» too (r5)
 CERRADO = "todo lo que cita ya está cerrado"  # an ambiguo block the close treats as finished (retiro.senal_terminado)
+NINGUNO_CITA = "dice «Ninguno» pero cita pendientes: pregúntale al usuario si lo cierras o lo relevas"
 PID_RE = re.compile(r"\bp-[0-9a-f]{10}\b")
 
 
@@ -38,10 +42,19 @@ def bloque(text):
     text = text or ""
     for m in reversed(list(HEAD_RE.finditer(text))):  # the last block of the turn wins
         header = m.group(0)
-        inline = header.split(":", 1)[1].strip() if ":" in header else ""
-        if inline and NADA_RE.match(inline) and not PID_RE.search(inline):
-            return "nada", inline  # a p-id in the explanation means something is still cited: not «nothing»
         rest = text[m.end():]
+        if "como retomar" in header.lower():
+            # 0.13.9 (adversary r5): what follows the words, after any colon, dash or formatting («## Como retomar —
+            # Ninguno», «**Como retomar** — Ninguno, p-…» lost it)
+            inline = re.sub(r"^[\W_]+", "", re.split(r"(?i)como retomar", header, 1)[1]).strip()
+        else:
+            inline = header.split(":", 1)[1].strip() if ":" in header else ""
+        if inline and NADA_RE.match(inline):
+            if not PID_RE.search(inline) and not PID_RE.search(rest):
+                return "nada", inline  # a p-id cited anywhere after it means something is still cited: not «nothing»
+            if not PID_RE.search(inline):  # 0.13.9 (r5): «Ninguno.» and the pendiente on the next line
+                nxt = re.search(r"(?m)^#+\s", rest)
+                return "hay", (inline + "\n" + (rest[:nxt.start()] if nxt else rest)).strip()
         f = FENCE_RE.search(rest)
         if f and rest[:f.start()].count("\n") <= 3 and not re.search(r"(?m)^#+\s", rest[:f.start()]):
             return "hay", f.group(1).strip()
@@ -210,6 +223,13 @@ def info(text, ts, raices, otros, ahora=None):
     if not vivos and not perdidos:  # every p-id closed: the user decides (usually closing it); none left to list
         out["pendientes"] = []
         out["motivo"] = "%s: %s" % (CERRADO, ", ".join(cerrados_l))
+        return out
+    if NINGUNO_RE.match(blk):
+        # 0.13.9, the user's rule: a «Ninguno» that cites a pendiente still open is neither a relief nor a close on its
+        # own, whatever its words; it goes to the user's modal (3-tier 2026-10-16: «Ninguno — … (p-f8df9ea916) espera a
+        # que se acumulen cierres, con recordatorio el 2026-10-22» was relieved as vigente; reading «it only waits for a
+        # date» from the text let through ten wordings with work left, adversary round 3)
+        out["motivo"] = NINGUNO_CITA
         return out
     if not vivos:  # e.g. a pendiente.add not compacted yet: neither open nor closed
         out["motivo"] = "no encuentro en la memoria: %s" % ", ".join(perdidos)
