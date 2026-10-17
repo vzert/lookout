@@ -317,7 +317,7 @@ def describe(r):
 def accion(r):
     """What the supervisor does with a block (the supervise skill's rule, in the line it reads)."""
     if (r or {}).get("estado") == "vigente":
-        return "lookout relevo"
+        return "lookout relevo (--goalspec salvo que sea solo medir)"
     if ((r or {}).get("motivo") or "").startswith(CERRADO):
         return "lookout cierra-pestana (terminó)"
     return "modal «¿relevo, cierro o lo dejo?»"

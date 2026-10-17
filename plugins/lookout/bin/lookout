@@ -37,7 +37,7 @@ Subcommands (PROYECTO = a path inside the repo, or its project_id):
   descarta PROYECTO P-ID [--estado abandoned|superseded] --nota N --usuario-confirmo DECISION_ID
                                 close by journal a pendiente that never had an agent (Fase 9 C1)
                                 close the agent's pendiente by journal (pendiente.resolve), never by editing
-  relevo PROYECTO AGENTE [--retomar ARCHIVO] [--modelo M] [--shells D]
+  relevo PROYECTO AGENTE [--retomar ARCHIVO] [--modelo M] [--shells D] [--goalspec]
                                 /exit + a new session on the same task with its "Como retomar" (F3); --shells: the
                                 user's choice for its live background work (0.13.10)
   decision PROYECTO (--abre TEXTO [--agentes A,B] [--si-es ETIQUETA] [--cierre] [--shells-parar E --shells-dejar E]
@@ -762,7 +762,7 @@ def cmd_relevo(a):
         with open(a.retomar, encoding="utf-8") as fh:
             retomar = fh.read()
     ok, msg = relevo.relevo(pid, e, nota_for(pid), retomar, a.modelo, a.confirmar, log=lambda m: print("  " + m),
-                            shells=a.shells or "")
+                            shells=a.shells or "", goalspec=a.goalspec)
     print(msg)
     return 0 if ok else 4
 
@@ -929,6 +929,9 @@ def main():
     p.add_argument("--confirmar", type=float, default=30)
     p.add_argument("--shells", default="", metavar="DECISION_ID",
                    help="id (dN) de la elección del usuario para su trabajo de fondo vivo (parar o dejarlo)")
+    p.add_argument("--goalspec", action="store_true",
+                   help="la sesión nueva recibe /goalspec:goalspec <disparador>: su «Como retomar» trae trabajo que no es "
+                        "solo medir (o dudas)")
     p = sub.add_parser("recarga"); p.add_argument("proyecto"); p.add_argument("agente")
     p = sub.add_parser("cierra-pestana"); p.add_argument("proyecto"); p.add_argument("agente")
     p.add_argument("--motivo", help="cita tal cual de su último turno que dice que terminó (si no dejó «Como retomar»)")

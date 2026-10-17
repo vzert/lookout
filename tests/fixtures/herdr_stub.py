@@ -8,6 +8,7 @@ Conf keys:
   prompt_event: if set, `agent prompt` appends a `working` event with the prompt to this events.jsonl
                path, as the agent's UserPromptSubmit hook would ({"path", "session_id"})
   enter_event: same, for `agent send-keys … enter` (the stuck text gets submitted)
+  start_event: if set, `agent start` appends a SessionStart `start` event to this path ({"path", "session_id"})
   read_after_prompt: new `agent_read` value once a prompt or Enter was sent
   version:     text printed for `--version` (default "herdr 0.9.1"); version_rc: its exit code
   status:      dict printed as JSON for `status --json` (default: client and server 0.9.1, compatible)
@@ -63,6 +64,12 @@ elif args[:2] == ["agent", "get"]:
     print(json.dumps({"result": {"agent": conf.get("agent_get")}}))
 elif args[:2] == ["agent", "read"]:
     sys.stdout.write(conf.get("agent_read", ""))
+elif args[:2] == ["agent", "start"]:
+    if conf.get("start_event"):
+        with open(conf["start_event"]["path"], "a") as fh:
+            fh.write(json.dumps({"ts": time.time(), "session_id": conf["start_event"]["session_id"], "event": "start",
+                                 "hook": "SessionStart"}) + "\n")
+    print(json.dumps({"result": {}}))
 elif args[:2] == ["agent", "prompt"]:
     if conf.get("prompt_event"):
         emit(conf["prompt_event"], args[3])

@@ -15,6 +15,7 @@ import time
 import uuid
 
 import deliver
+import gobierno
 import herdr_cli
 import lookout_state
 import lote
@@ -28,6 +29,10 @@ TRIGGER = ("Retoma la tarea {id}: eres el relevo de otra sesión y su «Como ret
 TRIGGER_SIN_TAREA = ("Retoma el trabajo de {id}: eres el relevo de otra sesión y su «Como retomar» está en tus "
                      "instrucciones de sistema, bajo «Relevo». Lo primero: manda al supervisor por SendMessage 3 líneas "
                      "de dónde quedamos.")
+# 0.13.13: the supervisor's call (SKILL.md, «Relevo de un agente»): a block whose work is not only measuring goes
+# through goalspec, as the user did by hand («sí, continúa, pero usando goalspec»). Typed as the skill's own command:
+# a sentence in the system prompt («Usa /goalspec.» of the lote template) did not make a relieved session use it.
+GOALSPEC = "/goalspec:goalspec "
 
 
 def assistant_texts(path):
@@ -95,13 +100,27 @@ def relevo_prompt(project_id, entry, retomar, nota, n):
     return path
 
 
-def relevo(project_id, entry, nota_for, retomar="", modelo=None, confirmar=30.0, fin_timeout=60, log=print, shells=""):
-    """(ok, message). `shells`: the decision (dN) with the user's choice for its live background work (salida)."""
+def trigger_de(entry, goalspec, log=print):
+    """The one line typed into the new session; with `goalspec`, as /goalspec:goalspec <line> when goalspec is
+    installed for its project (without it the flag changes nothing, and says so)."""
+    linea = (TRIGGER if entry.get("tarea") else TRIGGER_SIN_TAREA).format(id=clave_de(entry))
+    if not goalspec:
+        return linea
+    if not gobierno.goalspec_de(entry):
+        log("--goalspec sin efecto: goalspec no está instalado en su proyecto")
+        return linea
+    return GOALSPEC + linea
+
+
+def relevo(project_id, entry, nota_for, retomar="", modelo=None, confirmar=30.0, fin_timeout=60, log=print, shells="",
+           goalspec=False):
+    """(ok, message). `shells`: the decision (dN) with the user's choice for its live background work (salida).
+    `goalspec`: the new session starts its work through goalspec (trigger_de)."""
     with lote.project_mutex(project_id):
-        return _relevo(project_id, entry, nota_for, retomar, modelo, confirmar, fin_timeout, log, shells)
+        return _relevo(project_id, entry, nota_for, retomar, modelo, confirmar, fin_timeout, log, shells, goalspec)
 
 
-def _relevo(project_id, entry, nota_for, retomar, modelo, confirmar, fin_timeout, log, shells=""):
+def _relevo(project_id, entry, nota_for, retomar, modelo, confirmar, fin_timeout, log, shells="", goalspec=False):
     pane = entry["pane_id"]
     live = herdr_cli.agent_get(pane) or {}
     reintento = entry.get("tarea_estado") == "relevo-fallido" and entry["session_id"] in lote.ended_sessions(project_id)
@@ -111,6 +130,7 @@ def _relevo(project_id, entry, nota_for, retomar, modelo, confirmar, fin_timeout
         if other and other in lote.live_sessions():
             return False, "NO: el pane %s ya tiene otra sesión viva (%s). No arranco encima." % (pane, other[:8])
         retomar = retomar or entry.get("relevo_retomar", "")
+        goalspec = goalspec or bool(entry.get("relevo_goalspec"))  # the call of the failed attempt still holds
     else:
         if (live.get("agent_session") or {}).get("value") != entry["session_id"]:
             return False, "NO: el pane %s ya no es de %s (registro viejo)." % (pane, entry.get("nombre"))
@@ -165,18 +185,18 @@ def _relevo(project_id, entry, nota_for, retomar, modelo, confirmar, fin_timeout
                prompt_sistema=sysfile, relevo_de=entry["session_id"], relevo_n=n,
                modelo=modelo or old.get("modelo", ""), esfuerzo=cfg.get("esfuerzo") or old.get("esfuerzo", ""),
                permisos=cfg.get("permisos") or old.get("permisos", ""), alta=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
-    for k in ("tarea_motivo", "relevo_retomar"):
+    for k in ("tarea_motivo", "relevo_retomar", "relevo_goalspec"):
         new.pop(k, None)
     # The old session keeps the task until the new one is confirmed (adversary round 1: marking it relieved first
     # lost the task when the start failed). It is gone already, so it is marked as a relief in progress.
-    old.update(tarea_estado="relevando", relevo_retomar=retomar)
+    old.update(tarea_estado="relevando", relevo_retomar=retomar, relevo_goalspec=goalspec)
     reg["agents"][sid] = new
     registry.save(project_id, reg)
     marker = lookout_state.read_marker(entry["session_id"]) or {}
     lookout_state.write_marker(sid, dict(marker, nombre=new["nombre"], display=new["nombre"] + " (lookout)"))
     ok, msg = lote.arranca(project_id, sid, pane, new["worktree"] or new["cwd"], nombre_herdr, sysfile,
                            new["modelo"], lote.solo_lectura(new), "relevo:%s:%s" % (clave_de(new), sid[:8]),
-                           (TRIGGER if new.get("tarea") else TRIGGER_SIN_TAREA).format(id=clave_de(new)), confirmar, log,
+                           trigger_de(new, goalspec, log), confirmar, log,
                            # an agent launched by hand had no port of lookout; its checkout path is shared by all
                            lote.puerto_de(new) if new.get("tarea") or new.get("clave_puerto") else None,
                            new.get("esfuerzo", ""), new.get("permisos", ""))
@@ -187,6 +207,7 @@ def _relevo(project_id, entry, nota_for, retomar, modelo, confirmar, fin_timeout
         old.update(tarea_estado="relevada", relevada_por=sid, nombre="%s~%s" % (old["nombre"], entry["session_id"][:6]),
                    herdr_name="")
         old.pop("relevo_retomar", None)
+        old.pop("relevo_goalspec", None)
         registry.save(project_id, reg)
         lookout_state.remove_marker(entry["session_id"])
         publica.retira_sesion(project_id, entry["session_id"], "relevada")

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.13.13
+
+- A relief whose work is not only measuring starts through goalspec (asked by the user, 2026-10-17: by hand they read
+  the agent's «Como retomar» and, when it held anything but measuring, answered «sí, continúa, pero hazlo usando
+  goalspec»; the relieved session had only «Usa /goalspec.» in its system prompt and did not use it). The supervisor
+  judges the block before each `lookout relevo` (SKILL.md, «Relevo con goalspec»): only measuring (read, count,
+  compare, run checks, report, change nothing) → no flag; anything else, or in doubt → `--goalspec`, and the new
+  session gets `/goalspec:goalspec <trigger>` typed. Without the flag the trigger is byte for byte the old one. With
+  goalspec not installed for the project the flag changes nothing and says so. A failed relief that is retried keeps
+  the call of its first attempt. The line the supervisor reads for a live block, and the close brake, name the flag.
+  A typed `/goalspec:…` reaches UserPromptSubmit as typed (measured on 2026-10-17 in lookout's events of
+  `/goalspec:interview …` typed by the user), so its first delivery is confirmed by that event like the plain trigger.
+  The transcript fallback of a retry does not recognise the slash form yet (Claude Code stores it as a command block).
+
 ## 0.13.12
 
 - The supervisor can approve an agent's Bash permission dialog after the user's yes in its modal (asked by the user,

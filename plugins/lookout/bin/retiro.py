@@ -40,7 +40,7 @@ def _turno(session_id):
 
 # 0.13.3: the brake says what to do (live 3-tier 2026-10-16: the supervisor read it and did nothing with the block)
 RELEVO_NO_CIERRE = ("su último turno deja un bloque para retomar con trabajo: es un relevo, no un cierre (vigente → "
-                    "`lookout relevo`; ambiguo → modal «¿relevo, cierro o lo dejo?» con --agentes; si el usuario "
+                    "`lookout relevo`, con --goalspec salvo que sea solo medir; ambiguo → modal «¿relevo, cierro o lo dejo?» con --agentes; si el usuario "
                     "contesta que la cierres, repite con --usuario-confirmo dN de una decisión --cierre --si-es)")
 
 

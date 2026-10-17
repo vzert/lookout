@@ -111,8 +111,9 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
   avisa una vez por bloque mientras no cambie lo que hace con él (un ambiguo que pasa a vigente se avisa otra vez).
   Mientras nadie lo atienda, la tabla lo deja en «Te necesita» con `bloque vigente|ambiguo … → <qué hacer>` en cada
   despertar; sale de ahí cuando abres su modal con `--agentes <agente>`, lo relevas, se cierra o vuelve a trabajar.
-  - `vigente` → `lookout relevo <project_id> <agente>` **sin preguntar**, y una línea al usuario («Relevé
-    <pestaña>: sigue con p-…»). Si el relevo dice `NO: …`, pásale esa línea al usuario.
+  - `vigente` → `lookout relevo <project_id> <agente>` **sin preguntar** (con `--goalspec` según «Relevo con
+    goalspec», abajo), y una línea al usuario («Relevé <pestaña>: sigue con p-…, con goalspec | solo medición»). Si
+    el relevo dice `NO: …`, pásale esa línea al usuario.
   - `ambiguo` (con su motivo) → al modal en lote con su id dN: «¿relevo, cierro o lo dejo?», abierta con `--cierre
     --si-es "<la etiqueta de cerrar>"` para que su sí a cerrarla sirva a `cierra-pestana`. No adivines. La
     opción recomendada es **«Relevarlo»** (decisión del usuario, 2026-10-15: un bloque con trabajo se releva por
@@ -364,6 +365,17 @@ esfuerzo y modo de permisos (los lee de su transcript; si no puede, no releva y 
 su «Como retomar» en el prompt de sistema, y le manda un disparador de una línea. Su primer acto es un SendMessage
 de 3 líneas: esa es la prueba del canal. Lee el bloque solo del último turno del agente; si dice que no lo
 encuentra, pídeselo al agente antes. Si `/exit` no sale, no arranca otro encima: avisa al usuario.
+
+**Relevo con goalspec** (0.13.13; lo hacía el usuario a mano: «sí, continúa, pero hazlo usando goalspec»): antes de
+cada `lookout relevo`, también tras un «Relevarlo» del usuario en tu modal, lee el «Como retomar» y juzga qué trabajo
+le queda. **Solo medir** (leer, contar, comparar, correr checks o tests y reportar, sin escribir ni cambiar nada:
+ni archivos, ni commits, ni push, ni mensajes, ni estado de otro sistema) → relevo sin flag: el disparador va tal
+cual. **Cualquier otra cosa, o si dudas** → añade `--goalspec`: la sesión nueva recibe `/goalspec:goalspec
+<disparador>` y arranca su trabajo con su spec. No lo decides por palabras sueltas: un «medir y, si sale mal,
+arreglarlo» lleva `--goalspec`. Di en tu línea al usuario cuál elegiste. Si goalspec no está instalado en su
+proyecto, la flag no cambia nada y `relevo` lo dice. Un relevo fallido que repites conserva la elección del primer
+intento. Su spec esperará ratificación en su pane: sigue la regla de siempre (un spec con acción terminal lo
+ratifica el usuario en tu modal y tú tecleas su respuesta; «Eres el único canal del usuario», arriba).
 
 **Agente con trabajo de fondo vivo** (un shell o una tarea suya sigue corriendo; desde 0.13.10): `relevo` y
 `cierra-pestana` dicen `NO … tiene trabajo de fondo vivo (…)` **antes** de teclear `/exit`, porque `/exit` abriría
