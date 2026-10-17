@@ -22,13 +22,14 @@ def load(project_id):
     return lookout_state.read_json(path(project_id)) or {"n": 0, "items": []}
 
 
-def abre(project_id, texto, agentes=(), notificar=True, si_es="", tipo="", shells=None):
+def abre(project_id, texto, agentes=(), notificar=True, si_es="", tipo="", shells=None, permiso=None):
     """0.13.9: `si_es` = the label of the modal option that means yes; the modal's hook then closes the decision
     itself, aprueba = (the user's literal choice == si_es), so no `--cierra … --si` of the supervisor is needed (live
     3-tier 2026-10-16: auto mode denied that command as «Auto-Mode Bypass» for d113). `tipo` = "cierre": a decision
     about closing the tab of `agentes` (retiro.cierre_decidido accepts only that kind). 0.13.10: `shells` =
     {"parar": label, "dejar": label}: what /exit does with the background work of `agentes` (salida.eleccion); the
-    hook writes down which of the two the user chose, and any other answer (wait) authorizes nothing."""
+    hook writes down which of the two the user chose, and any other answer (wait) authorizes nothing. 0.13.12:
+    `permiso` = {"comando", "ts"} of the agent's pending permission request (aprueba.abre, tipo "permiso")."""
     if shells:
         tipo = "shells"
     d = load(project_id)
@@ -36,7 +37,8 @@ def abre(project_id, texto, agentes=(), notificar=True, si_es="", tipo="", shell
     item = dict({"id": "d%d" % d["n"], "texto": texto, "agentes": list(agentes), "desde": time.time(),
                  "estado": "abierta"}, **({"si_es": si_es} if si_es and si_es.strip() else {}),  # as given (r10)
                 **({"tipo": tipo} if tipo else {}),
-                **({"opciones": {k: v for k, v in shells.items() if v and v.strip()}} if shells else {}))
+                **({"opciones": {k: v for k, v in shells.items() if v and v.strip()}} if shells else {}),
+                **({"permiso": dict(permiso)} if permiso else {}))
     d["items"].append(item)
     lookout_state.write_json(path(project_id), d)
     if notificar:
@@ -55,6 +57,15 @@ def cierra(project_id, did, respuesta, aprueba):
             lookout_state.write_json(path(project_id), d)
             return it
     return None
+
+
+def marca_usada(project_id, did, now=None):
+    """0.13.12: a yes to a permission request presses one dialog, once (aprueba.aprueba)."""
+    d = load(project_id)
+    for it in d["items"]:
+        if it["id"] == did:
+            it["usada"] = now or time.time()
+    lookout_state.write_json(path(project_id), d)
 
 
 def respondida(project_id, did):

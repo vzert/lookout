@@ -1,0 +1,54 @@
+ │ HEAD:refs/heads/largo2 -o
+ │ opcion00=valor-largo-de-relleno-p
+ │ ara-ver-recorte -o
+ │ opcion01=valor-largo-de-relleno-p
+ │ ara-ver-recorte -o
+ │ opcion02=valor-largo-de-relleno-p
+ │ ara-ver-recorte -o
+ │ opcion03=valor-largo-de-relleno-p
+ │ ara-ver-recorte -o
+ │ opcion04=valor-largo-de-relleno-p
+ │ ara-ver-recorte -o
+ │ opcion05=valor-largo-de-relleno-p
+ │ ara-ver-recorte -o
+ │ opcion06=valor-largo-de-relleno-p
+ │ ara-ver-recorte -o
+ │ opcion07=valor-largo-de-relleno-p
+ │ ara-ver-recorte -o
+ │ opcion08=valor-largo-de-relleno-p
+ │ ara-ver-recorte -o
+ │ opcion09=valor-largo-de-relleno-p
+ │ ara-ver-recorte -o
+ │ opcion10=valor-largo-de-relleno-p
+ │ ara-ver-recorte -o
+ │ opcion11=valor-largo-de-relleno-p
+ │ ara-ver-recorte -o
+ │ opcion12=valor-largo-de-relleno-p
+ │ ara-ver-recorte -o
+ │ opcion13=valor-largo-de-relleno-p
+ │ ara-ver-recorte -o
+ │ opcion14=valor-largo-de-relleno-p
+ │ ara-ver-recorte -o
+ │ opcion15=valor-largo-de-relleno-p
+ │ ara-ver-recorte -o
+ │ opcion16=valor-largo-de-relleno-p
+ │ ara-ver-recorte -o
+ │ opcion17=valor-largo-de-relleno-p
+ │ ara-ver-recorte -o
+ │ opcion18=valor-largo-de-relleno-p
+ │ ara-ver-recorte -o
+ │ opcion19=valor-largo-de-relleno-p
+ │ ara-ver-recorte
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ This command requires approval
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don’t ask again for:
+      git push *
+   3. Yes, and switch to auto mode ·
+      auto mode handles these prompts
+      for you
+   4. No
+
+ Esc to cancel · Tab to amend

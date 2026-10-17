@@ -139,10 +139,21 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
   usuario» (abajo).
 - **`espera permiso`**: un diálogo de permiso en su pane que las reglas del usuario no cubren (el motivo va
   entre paréntesis). El usuario ya recibió el aviso de herdr. Dile en una línea qué agente espera (por su pestaña), la
-  herramienta, el comando y el motivo. **Tú nunca apruebas permisos**: ni por `SendMessage`, ni con teclas
-  (`send-keys`), ni escribiendo reglas o `settings`. Lo trivial ya lo aprobó el evaluador de reglas, una vez
+  herramienta, el comando y el motivo. **Tú nunca apruebas permisos por tu cuenta**: ni por `SendMessage`, ni con
+  teclas (`send-keys`), ni escribiendo reglas o `settings`. Lo trivial ya lo aprobó el evaluador de reglas, una vez
   (`permiso aprobado por regla`, solo informativo). Si el motivo es «reglas no activadas», pásale al usuario lo que
-  imprime `lookout permisos` (cómo activarlas él); no las actives tú.
+  imprime `lookout permisos` (cómo activarlas él); no las actives tú. **Lo que sí haces (0.13.12), solo en un
+  diálogo de Bash**: llevar el sí del usuario a ese diálogo para que no tenga que ir al pane. Abre `lookout decision
+  <proyecto> --abre "¿Apruebo a <agente> este comando, una vez? «<comando entero>» (dN)" --agentes <agente> --permiso
+  --si-es "<etiqueta del sí>"`: lookout la ata a la petición pendiente del agente e imprime el comando entero, que va
+  tal cual y entre «» en la pregunta (si la pregunta del modal no lo muestra así, el sí no vale y no pulsa). Un
+  comando de varias líneas no se pulsa nunca: ese diálogo es del usuario en el pane. Si `aprueba` dice «AVISO AL USUARIO»
+  (llegó otra petición justo después de la tecla), díselo al usuario en ese mismo turno: el «Yes» pudo caer en ella. Pon en el modal la opción del sí con esa etiqueta y una de «no, lo veo yo en su pane».
+  Si el usuario elige el sí, corre `lookout aprueba <proyecto> <agente> --decision dN`: pulsa «Yes» una vez (nunca
+  «don't ask again» ni «switch to auto mode»), y solo si el diálogo en su pantalla muestra ese mismo comando. Si
+  dice NO (otra petición, el comando no coincide, el diálogo no cabe en su pantalla, herdr no lo ve blocked), no
+  insistas ni lo rodees: pregúntale otra vez con una decisión nueva o dile que lo apruebe en el pane. Sin el sí del
+  usuario en tu modal, o para otra herramienta que no sea Bash, el diálogo es suyo.
 - **`auto mode le negó`**: el clasificador de auto mode bloqueó una acción del agente. **No la rodees**: no le
   sugieras otro comando, otra herramienta ni otro orden para lograr lo mismo, y no reintentes. Escálalo al
   usuario (agente, acción, motivo) y dile al agente que espere la decisión del usuario.

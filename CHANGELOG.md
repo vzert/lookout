@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.13.12
+
+- The supervisor can approve an agent's Bash permission dialog after the user's yes in its modal (asked by the user,
+  2026-10-17: the user said yes in the modal and still had to go to the pane). The agent's PermissionRequest hook now
+  writes the whole command in its `blocked` event (it kept 200 characters). `lookout decision … --permiso` ties a
+  decision to the agent's pending request and prints the whole command for the modal's question; the modal's hook
+  closes it with the user's own choice. `lookout aprueba PROYECTO AGENTE --decision dN` presses «Yes» once (never
+  «Yes, and don't ask again», never «switch to auto mode»), and only when the yes is the user's for this agent and
+  unused, the agent's last event is still that request, herdr sees it blocked, and the dialog at the bottom of its
+  visible screen, read by its whole shape, shows exactly that command, wrapped wide (a break at a space eats it) or
+  narrow (a break mid-word). A dialog taller than the pane pushes its header off the visible screen: then nothing is
+  pressed. The dialog must have its top border right above the header, as wide as its rules, and its options numbered 1..N with one «Yes» and «No» last, and the user's yes
+  counts only for a modal question that showed the whole command, exactly and between «» (as the modal's hook wrote
+  it down). A wrap eats one space, and only where the next word did not fit; a command with a newline is never
+  pressed. The dialog's command lines carry the bar «│» (one call) or not (two calls in one message): both are read.
+  The yes is spent before the key, and the request and the screen are checked once more right before it. A window
+  of one herdr call stays between that check and the key; the user accepted it, and from the key until 3 s after the
+  dialog closes (or until it gives up) lookout watches for another request of the agent and warns loudly if one
+  comes. Anything else presses nothing, not even
+  Esc, and says why.
+
 ## 0.13.11
 
 - The alta and the sweep go on while the supervisor's modal is open. Only the waiter's checker thread ran them, and

@@ -41,10 +41,15 @@ Subcommands (PROYECTO = a path inside the repo, or its project_id):
                                 /exit + a new session on the same task with its "Como retomar" (F3); --shells: the
                                 user's choice for its live background work (0.13.10)
   decision PROYECTO (--abre TEXTO [--agentes A,B] [--si-es ETIQUETA] [--cierre] [--shells-parar E --shells-dejar E]
+                    [--permiso]
                     | --cierra ID --respuesta R (--si|--no) | --lista)
                                 the user's pending decisions (T4): shown in `resumen` with their age; with --si-es
                                 the modal's hook closes it from the user's own choice (0.13.9); with --shells-parar
-                                and --shells-dejar it writes down which of the two the user chose (0.13.10)
+                                and --shells-dejar it writes down which of the two the user chose (0.13.10); with
+                                --permiso it is tied to the agent's pending permission request (0.13.12)
+  aprueba PROYECTO AGENTE --decision ID
+                                press «Yes» once in the agent's permission dialog after the user's yes in your modal,
+                                only if the dialog on screen shows exactly the command the user approved (0.13.12)
   corrige PROYECTO AGENTE --resumen R [--firma F] [--reporte CITA]
                                 record a correction for the agent's repeated error (Fase 6) and print the message to
                                 send it; after 2 corrections of the same error: PARA (exit 5), escalate instead
@@ -60,6 +65,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import aprueba  # noqa: E402
 import cierre  # noqa: E402
 import decisiones  # noqa: E402
 import deliver  # noqa: E402
@@ -641,7 +647,8 @@ def cmd_permisos(a):
     print("Plantilla del plugin: %s" % permisos.TEMPLATE)
     print("Archivo del usuario: %s" % permisos.user_rules_path())
     print("Las activa el USUARIO creando ese archivo con `activo = true` (yo no lo escribo). Solo aprueban en modo")
-    print("manual, una vez por llamada. En auto mode lookout no aprueba nada y decide el clasificador de Claude Code.")
+    print("manual, una vez por llamada. En auto mode las reglas no aprueban nada y decide el clasificador de Claude Code.")
+    print("Aparte (0.13.12): el sí del usuario en tu modal a un diálogo de Bash lo pulsa `lookout aprueba`, una vez.")
     print("Diálogo forzado en auto mode: %s. Con `dialogo_forzado = true` en ese archivo, push, merge, publicar, gh repo"
           % ("ENCENDIDO" if rules.get("dialogo_forzado") else "apagado (por omisión)"))
     print("delete/archive, gh api con escritura y borrados fuera del worktree piden diálogo (leído del texto del comando:")
@@ -790,8 +797,36 @@ def cmd_cierra_pestana(a):
     return 0 if ok else 4
 
 
+def cmd_aprueba(a):
+    """0.13.12: relay the user's yes to one permission dialog of an agent (aprueba.py)."""
+    pid, _ = project(a.proyecto)
+    lk = lock.read(pid) or {}
+    if (lk.get("supervisor") or {}).get("session_id") != lock.me()["session_id"]:
+        print("No pulso nada: el candado de %s no es de esta sesión." % pid)
+        return 3
+    ok, msg = aprueba.aprueba(pid, agent_entry(pid, a.agente), a.decision or "")
+    print(msg)
+    return 0 if ok else 4
+
+
 def cmd_decision(a):
     pid, _ = project(a.proyecto)
+    if a.abre and getattr(a, "permiso", False):
+        agentes = [x for x in (a.agentes or "").split(",") if x]
+        if len(agentes) != 1 or a.cierre or any((getattr(a, "shells_parar", ""), getattr(a, "shells_dejar", ""))):
+            print("NO ABIERTA: una decisión --permiso es de un solo agente (--agentes <agente>), con --si-es y sin "
+                  "--cierre ni --shells-*.")
+            return 5
+        ok, it = aprueba.abre(pid, agent_entry(pid, agentes[0]), a.abre, a.si_es or "")
+        if not ok:
+            print("NO ABIERTA: " + it)
+            return 5
+        supervisor_md.write(pid)
+        print("Decisión %s abierta (aviso de herdr mostrado). Pon «(%s)» al final de su pregunta, con el comando entero "
+              "que pide %s entre «», y la opción «%s» tal cual en el modal: tu hook la cierra con lo que elija el usuario. Si "
+              "dice sí, corre `lookout aprueba %s %s --decision %s`. El comando, tal cual y entre «» en la pregunta:\n«%s»"
+              % (it["id"], it["id"], agentes[0], it["si_es"], pid, agentes[0], it["id"], it["permiso"]["comando"]))
+        return 0
     if a.abre:
         agentes = [x for x in (a.agentes or "").split(",") if x]
         previas = decisiones.tomadas_de(pid, agentes)
@@ -910,6 +945,11 @@ def main():
     p.add_argument("--cierre", action="store_true", help="la decisión es cerrar la pestaña de --agentes (cierra-pestana)")
     p.add_argument("--shells-parar", default="", help="etiqueta de la opción del modal que para su trabajo de fondo al salir")
     p.add_argument("--shells-dejar", default="", help="etiqueta de la opción del modal que lo deja en segundo plano al salir")
+    p.add_argument("--permiso", action="store_true",
+                   help="la decisión es aprobar el permiso que espera --agentes (su petición pendiente, comando entero)")
+    p = sub.add_parser("aprueba"); p.add_argument("proyecto"); p.add_argument("agente")
+    p.add_argument("--decision", required=True, metavar="DECISION_ID",
+                   help="id (dN) del sí del usuario en tu modal a una decisión --permiso de ese agente")
     p = sub.add_parser("corrige"); p.add_argument("proyecto"); p.add_argument("agente")
     p.add_argument("--resumen", required=True); p.add_argument("--firma", default=None)
     p.add_argument("--reporte", default=None)
@@ -919,7 +959,7 @@ def main():
             "resumen": cmd_resumen, "espera": cmd_espera, "suelta": cmd_suelta,
             "pendientes": cmd_pendientes, "lanza": cmd_lanza, "libera": cmd_libera, "descarta": cmd_descarta, "envia": cmd_envia,
             "gobierno": cmd_gobierno, "publica": cmd_publica, "regla-push": cmd_regla_push, "permisos": cmd_permisos, "cierra": cmd_cierra,
-            "relevo": cmd_relevo, "recarga": cmd_recarga, "cierra-pestana": cmd_cierra_pestana, "decision": cmd_decision, "retomar": cmd_retomar, "corrige": cmd_corrige,
+            "relevo": cmd_relevo, "recarga": cmd_recarga, "cierra-pestana": cmd_cierra_pestana, "decision": cmd_decision, "aprueba": cmd_aprueba, "retomar": cmd_retomar, "corrige": cmd_corrige,
             "puerto": cmd_puerto}[a.cmd](a) or 0
 
 

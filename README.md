@@ -109,7 +109,12 @@ trivial actions inside an agent's own worktree (an agent on the main checkout ha
 you). It does this only in manual mode, never with "always allow", and only
 after **you** turn the rules on. The supervisor shows the rules and where to turn them on with `lookout permisos`. The template is in
 `plugins/lookout/rules/permisos.toml`. You copy it to `~/.config/lookout/permisos.toml` and set `activo = true`. The
-supervisor never writes that file. lookout never approves a push, merge, publishing or delete outside the worktree.
+supervisor never writes that file. lookout's rules never approve a push, merge, publishing or delete outside the
+worktree.
+
+Since 0.13.12 you can also answer an agent's Bash permission dialog from the supervisor's modal: it asks you with the
+whole command, and on your yes it presses «Yes» once in the agent's pane (never "don't ask again"), only if the dialog
+on screen shows that same command. Anything else it leaves to you in the pane.
 
 In auto mode, auto mode's own classifier decides, as it does for your agents without lookout. Since 0.8.0 lookout adds
 no dialogs of its own there. If you want an extra alarm, put `dialogo_forzado = true` in
