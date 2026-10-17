@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.13.10
+
+- An agent with a live background shell can take input again. A shell keeps herdr «working» after the turn ended
+  (the footer «· N shells ·», matched by a local herdr detection rule), and `envia`, `entrega`, `recarga`, `relevo`,
+  `cierra-pestana` and the sweep of the alta refused it until the shell ended, forever for a shell that never ends.
+  Measured 2026-10-17 in the transcripts: 19 «está working» refusals, 2 of them test benches; of the 17 real ones, 10
+  were an agent quiet since its Stop (8 on 2026-10-15, two agents, four tries each). Now herdr's «working» counts as
+  quiet when the agent's last event is a Stop (`idle` or `bg_wait`) and its transcript has nothing after it but the
+  Stop's own system rows; replayed on those 17, it lets through exactly the 10. The other 7 stay refused: 4 had a hook
+  event of a turn (`working`, `fallo`), 1 had no Stop yet, and 2 were turns opened by a task notification or a
+  message, which fire no UserPromptSubmit but do write the transcript at once. `blocked` and `unknown` are never quiet, and the
+  input box is still read after this check. Only `system` rows and Claude Code's undated bookkeeping rows
+  (`last-prompt`, `cost-state`, `mode`…) may follow the Stop; a row with no or a bad timestamp of any other type, a
+  line it cannot read, or a tail of the transcript that does not reach the Stop count as a turn (adversary round 1:
+  a 400 kB row after the Stop left only a fragment in the tail it read).
+- `/exit` with live background work opens Claude Code's «Background work is running» dialog (Exit and stop tasks /
+  Move to background and exit / Stay). `cierra-pestana` and `relevo` waited for a SessionEnd that never came and left
+  it open in the pane. Now they check for live work before typing `/exit` (the last Stop's tasks, or the footer's
+  count, which also covers a monitor) and stop with a NO that asks the supervisor for a modal. Stopping a shell kills
+  a process, so the choice is the user's: `lookout decision … --abre … --agentes <agente> --shells-parar "<label>"
+  --shells-dejar "<label>"` records which of the two labels the user picked in the modal (exact label, written by
+  the hook; any other answer, such as wait, authorizes nothing). With `--shells dN` the command presses that option's
+  own number in the dialog (the number alone picks it, measured live), read by its whole shape: a ▔ border,
+  «Background work is running», the three options and «Enter to confirm · Esc to cancel» ending the screen, read
+  as one text so a narrow pane that wraps it still counts (the same options typed in the prompt box do not).
+  A footer cut to «· 2» by a narrow pane counts as live work. The decision must name
+  the agent and be newer than its last Stop. A dialog that opens with no choice on record (a shell started in
+  between) is cancelled with Esc, which only undoes lookout's own `/exit`, and the supervisor gets the same request.
+  With the user's choice, the background guard of `cierra-pestana` gives way to it.
+
 ## 0.13.9
 
 - The user's yes is written by the modal's hook, not by the supervisor. `lookout decision … --abre … --si-es "<label>"`:

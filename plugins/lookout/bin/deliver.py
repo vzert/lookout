@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Idempotent prompt delivery to one registered agent (docs/plan.md 6.2, F2).
 
-Rules (6.2): send only to an idle/done agent; never write over a user's draft; `agent prompt`
+Rules (6.2): send only to a quiet agent (quieto: idle/done, or herdr «working» only because of a background shell); never write over a user's draft; `agent prompt`
 without --wait; "delivered" only when the agent's own UserPromptSubmit hook logs this prompt;
 on a timeout READ before retrying (events.jsonl, then the agent's transcript, then its input box)
 and never send the same text twice; at most 3 attempts, then escalate.
@@ -14,6 +14,7 @@ Exit codes: 0 delivered (now or before), 4 not delivered (busy, draft, stale reg
 6 sent but not confirmed yet (run it again later with the same key: it reads before resending).
 """
 import argparse
+import calendar
 import glob
 import json
 import os
@@ -160,6 +161,82 @@ def read_box(pane):
     return inputbox.read_box(out) if code == 0 else ("desconocida", "")
 
 
+# 0.13.10: a live background shell keeps herdr «working» after the turn ended (the footer «· N shells ·»; measured
+# 2026-10-17: 10 of 17 real «está working» refusals were an agent quiet since its Stop). Its own hooks say quiet when
+# its last event is a Stop and its transcript has nothing but the Stop's own system rows after the last row dated
+# before that Stop: a turn opened by a task-notification or a message fires no UserPromptSubmit, but writes the
+# transcript at once (2 of the 7 right refusals). Events of lookout and herdr notifications are not the agent's.
+NO_DEL_AGENTE = ("notification", "nuevo", "retomar", "repite", "correccion", "correccion_fallida", "sin_progreso", "largo")
+COLA_TRANSCRIPT = 1024 * 1024
+# Claude Code's undated bookkeeping rows (counted 2026-10-17 over 300 transcripts); every row a turn writes is dated
+# (user, queue-operation, assistant, attachment). An undated row of another type, or a bad stamp, counts as a turn.
+CONTABLES = ("last-prompt", "atis-latch", "mode", "cost-state", "permission-mode", "ai-title", "custom-title")
+
+
+def _neutra(row):
+    return row.get("type") == "system" or ("timestamp" not in row and row.get("type") in CONTABLES)
+
+
+SELLO = re.compile(r"([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(\.[0-9]+)?Z")  # ASCII digits only
+
+
+def _ts(row):
+    """A transcript row's stamp (UTC, exactly «2026-10-17T03:02:19.512Z»), in seconds; None when it has none or it is
+    anything else (adversary r2: «…Zgarbage» passed)."""
+    try:
+        m = SELLO.fullmatch(row["timestamp"])
+        if not m:
+            return None
+        return calendar.timegm(time.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S")) + float(m.group(2) or 0)
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+
+
+def quieto(project_id, entry, live, projects_dir=None):
+    """True when the agent can take input: herdr sees it idle/done, or herdr sees it working and its hooks and
+    transcript say it is between turns. Never over blocked or unknown (a dialog, a menu). Anything it cannot read
+    after the Stop counts as a turn (adversary r1: a row with no or a bad stamp, a row bigger than the tail)."""
+    estado = (live or {}).get("agent_status")
+    if estado in ("idle", "done"):
+        return True
+    if estado != "working":
+        return False
+    sid = entry.get("session_id")
+    last = None
+    for ev in lookout_state.read_events(project_id, 0)[0]:
+        if ev.get("session_id") == sid and ev.get("event") not in NO_DEL_AGENTE:
+            last = ev
+    if not last or last.get("event") not in ("idle", "bg_wait") or last.get("ts") is None:
+        return False
+    path = transcript_path(sid, projects_dir)
+    if not path:
+        return False
+    try:
+        with open(path, "rb") as fh:
+            inicio = max(0, os.path.getsize(path) - COLA_TRANSCRIPT)
+            fh.seek(inicio)
+            cola = fh.read().split(b"\n")
+    except OSError:
+        return False
+    if inicio > 0:
+        cola = cola[1:]  # it starts inside a row
+    filas = []
+    for line in cola:
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line.decode("utf-8"))  # strict (adversary r2: «replace» read bad bytes as a row)
+        except ValueError:
+            return False  # a row being written, or one it cannot read: not proof of quiet
+        if not isinstance(row, dict):
+            return False
+        filas.append(row)
+    antes = [i for i, row in enumerate(filas) if (_ts(row) or float("inf")) <= float(last["ts"])]
+    if not antes:
+        return False  # the tail does not reach the Stop
+    return all(_neutra(row) for row in filas[antes[-1] + 1:])
+
+
 def events_size(project_id):
     try:
         return os.path.getsize(lookout_state.events_path(project_id))
@@ -236,9 +313,9 @@ def _deliver(project_id, entry, key, text, confirmar, max_intentos, projects_dir
     if clase == "desconocida":
         return 4, "NO ENTREGADO: no pude leer la caja de entrada de %s." % entry.get("nombre")
 
-    # 4. State: only to an idle/done agent (6.2.1).
+    # 4. State: only to a quiet agent (6.2.1; quieto, 0.13.10).
     estado = live.get("agent_status")
-    if estado not in ("idle", "done"):
+    if not quieto(project_id, entry, live, projects_dir):  # 0.13.10: a shell's «working» after its Stop is quiet
         return 4, "NO ENTREGADO: %s está %s. Se le entrega en su siguiente idle." % (entry.get("nombre"), estado)
 
     if rec["intentos"] >= max_intentos:

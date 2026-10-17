@@ -1,6 +1,6 @@
 """Relieve an agent with a fresh session on the same task (docs/plan.md 3.11, F3; research §5, cycle p6→f3).
 
-Cycle: read its "Como retomar" → it must be idle with an empty input box → `/exit` (better than /clear: the
+Cycle: read its "Como retomar" → it must be quiet (deliver.quieto) with an empty input box → `/exit` (better than /clear: the
 new session loads the plugin's current version and hooks) → wait for its SessionEnd event (no polling: the
 events file, tail -F) → register the new session BEFORE it starts (marker from its first event) → start it
 in the SAME pane and folder with the task's system prompt plus a "Relevo" section carrying the "Como
@@ -21,6 +21,7 @@ import lote
 import publica
 import registry
 import retomar as retomar_mod
+import salida
 
 TRIGGER = ("Retoma la tarea {id}: eres el relevo de otra sesión y su «Como retomar» está en tus instrucciones de "
            "sistema, bajo «Relevo». Lo primero: manda al supervisor por SendMessage 3 líneas de dónde quedamos.")
@@ -94,13 +95,13 @@ def relevo_prompt(project_id, entry, retomar, nota, n):
     return path
 
 
-def relevo(project_id, entry, nota_for, retomar="", modelo=None, confirmar=30.0, fin_timeout=60, log=print):
-    """(ok, message)."""
+def relevo(project_id, entry, nota_for, retomar="", modelo=None, confirmar=30.0, fin_timeout=60, log=print, shells=""):
+    """(ok, message). `shells`: the decision (dN) with the user's choice for its live background work (salida)."""
     with lote.project_mutex(project_id):
-        return _relevo(project_id, entry, nota_for, retomar, modelo, confirmar, fin_timeout, log)
+        return _relevo(project_id, entry, nota_for, retomar, modelo, confirmar, fin_timeout, log, shells)
 
 
-def _relevo(project_id, entry, nota_for, retomar, modelo, confirmar, fin_timeout, log):
+def _relevo(project_id, entry, nota_for, retomar, modelo, confirmar, fin_timeout, log, shells=""):
     pane = entry["pane_id"]
     live = herdr_cli.agent_get(pane) or {}
     reintento = entry.get("tarea_estado") == "relevo-fallido" and entry["session_id"] in lote.ended_sessions(project_id)
@@ -113,11 +114,17 @@ def _relevo(project_id, entry, nota_for, retomar, modelo, confirmar, fin_timeout
     else:
         if (live.get("agent_session") or {}).get("value") != entry["session_id"]:
             return False, "NO: el pane %s ya no es de %s (registro viejo)." % (pane, entry.get("nombre"))
-        if live.get("agent_status") not in ("idle", "done"):
+        if not deliver.quieto(project_id, entry, live):
             return False, "NO: %s está %s. El relevo se hace con el agente quieto." % (entry.get("nombre"), live.get("agent_status"))
         box, _text = deliver.read_box(pane)
         if box not in ("vacia", "sugerencia"):
             return False, "NO: la caja de %s tiene %s. No escribo encima; avisa al usuario." % (entry.get("nombre"), box)
+        vivo = salida.shells_vivos(project_id, entry)  # 0.13.10: /exit would ask what to do with them
+        eleccion = salida.eleccion(project_id, entry, shells) if vivo else None
+        if vivo and not eleccion:
+            return False, "NO: %s %s." % (entry.get("nombre"), salida.pide_modal(entry, vivo)) + (
+                " (%s no es una elección del usuario, en tu modal, abierta después de su último Stop, que nombre a %s.)"
+                % (shells, entry.get("nombre")) if shells else "")
         retomar = retomar or retomar_de(entry["session_id"])
     if not retomar:
         return False, ("NO: no encuentro su «Como retomar» (ni en su texto ni pasado con --retomar). Pídeselo por "
@@ -140,10 +147,9 @@ def _relevo(project_id, entry, nota_for, retomar, modelo, confirmar, fin_timeout
     sysfile = relevo_prompt(project_id, entry, retomar, nota_for(entry["nombre"]), n)
     log("prompt de sistema del relevo: %s" % sysfile)
     if not reintento:
-        offset = deliver.events_size(project_id)
-        herdr_cli.run(["agent", "prompt", pane, "/exit"])
-        ended = deliver.wait_event(project_id, offset, fin_timeout,
-                                   lambda ev: ev.get("session_id") == entry["session_id"] and ev.get("event") == "end")
+        ended, por_que = salida.salir(project_id, entry, eleccion, fin_timeout, log)
+        if not ended and por_que:
+            return False, "NO: %s %s. No arranco otro encima." % (entry["nombre"], por_que)
         if not ended:
             return False, ("NO: %s no salió en %d s tras /exit (sin SessionEnd). No arranco otro encima: mira su pane o "
                            "escala al usuario." % (entry["nombre"], fin_timeout))

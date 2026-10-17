@@ -638,7 +638,9 @@ class CierraPestanaTest(f3.Base):
     def test_clean_closes_the_tab_and_retires_it(self):
         ok, msg = self.cierra()
         self.assertTrue(ok, msg)
-        self.assertEqual(self.calls, [["agent", "prompt", "w1A:pE", "/exit"], ["tab", "close", "w1A:tE"]])
+        # 0.13.10: it also reads the screen (the footer's shells, the dialog of /exit)
+        self.assertEqual([c for c in self.calls if c[:2] != ["agent", "read"]],
+                         [["agent", "prompt", "w1A:pE", "/exit"], ["tab", "close", "w1A:tE"]])
         self.assertIn("Cerré la pestaña de sidebar", msg)
         self.assertTrue(registry.load(self.pid)["agents"]["s1"].get("retirado"))
         self.assertIsNone(lookout_state.read_marker("s1"))

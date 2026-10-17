@@ -26,11 +26,13 @@ sin `&&`, `;` ni `|` (cada subcomando tendría que tener su propio permiso).
    - `inicia` también nombra **tu** pestaña de herdr «Supervisor» (si nadie la nombró y solo tiene tu pane) y tu
      sesión (`/rename supervisor-<repo>`, aplicado al terminar el turno). Así el usuario te distingue de un vistazo.
 2. Para cada agente de la tabla: `lookout entrega <project_id> <nombre>`.
-   Hace, solo si el agente está idle y su caja de entrada vacía: `/reload-plugins` (activa los hooks del
+   Hace, solo si el agente está quieto (idle, o `working` en herdr solo por un shell de fondo tras su Stop) y su caja
+   de entrada vacía: `/reload-plugins` (activa los hooks del
    plugin en una sesión que arrancó antes de instalarlo), `/rename` + nombres de herdr (un solo nombre en
    todas partes; si el usuario ya había nombrado la pestaña, el nombre sale de ella; si la pestaña tenía el número
    que pone herdr, toma el nombre del agente; una pestaña nombrada por el usuario no se toca) y la **nota de reporte**. Confirma los hooks con el evento `UserPromptSubmit` de la nota.
-   - `NO ENTREGADO … está working`: no insistas; entrégalo cuando llegue su evento `terminó su turno`.
+   - `NO ENTREGADO … está working`: está en un turno (un shell de fondo solo ya no lo frena); no insistas: entrégalo
+     cuando llegue su evento `terminó su turno`.
    - `NO ENTREGADO … caja de entrada tiene borrador`: el usuario está escribiendo ahí. No escribas encima; avísale.
    - `hooks SIN CONFIRMAR`: dilo al usuario; ese agente no te avisará por hooks. Suscríbete a su fin de
      turno como respaldo: `SendMessage` a su nombre con un mensaje corto y `notify_when_idle: true`
@@ -129,7 +131,7 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
 - **`↳ hooks viejos: <plugin> <versión> (instalada <versión>) → lookout recarga …`** (debajo de su fila, en cada
   despertar): ese agente arrancó antes de la última actualización y sus hooks no tienen los arreglos (3-tier-memory,
   2026-10-16: un agente con el guardián de 2.62.0 repetía un aviso ya arreglado en 2.62.3). Corre `lookout recarga
-  <project_id> <agente>` **sin preguntar**: teclea `/reload-plugins` solo con el agente quieto y la caja vacía, y
+  <project_id> <agente>` **sin preguntar**: teclea `/reload-plugins` solo con el agente quieto (como en `entrega`) y la caja vacía, y
   confirma en su pantalla. Si dice `NO: … está working`, repítelo tras su `terminó su turno`; `NO: … caja …`, díselo al
   usuario una vez. No le pidas al usuario que recargue él.
 - **`↳ ESPERA ALGO TECLEADO EN SU PANE`** (debajo de su fila, en cada despertar, aunque sus últimos turnos ya no lo
@@ -351,6 +353,20 @@ su «Como retomar» en el prompt de sistema, y le manda un disparador de una lí
 de 3 líneas: esa es la prueba del canal. Lee el bloque solo del último turno del agente; si dice que no lo
 encuentra, pídeselo al agente antes. Si `/exit` no sale, no arranca otro encima: avisa al usuario.
 
+**Agente con trabajo de fondo vivo** (un shell o una tarea suya sigue corriendo; desde 0.13.10): `relevo` y
+`cierra-pestana` dicen `NO … tiene trabajo de fondo vivo (…)` **antes** de teclear `/exit`, porque `/exit` abriría
+la pregunta de Claude Code «Exit and stop tasks / Move to background and exit / Stay» y parar un shell mata un
+proceso. Esa elección es del usuario, nunca tuya: abre `lookout decision <project_id> --abre "¿Cómo cierro <agente>
+con su trabajo de fondo vivo? (…)" --agentes <agente> --shells-parar "<etiqueta de parar>" --shells-dejar
+"<etiqueta de dejarlo en segundo plano>" --nueva` (`--nueva`: ya puede haber otra decisión suya), ponla en tu modal
+con esas dos etiquetas tal cual más una de esperar, y si elige parar o dejar repite la orden con `--shells dN`:
+lookout pulsa en el diálogo el número de esa opción. Si elige esperar, no repitas hasta que su trabajo termine. Una
+elección anterior a su último Stop no vale (su trabajo de fondo pudo terminar o cambiar entretanto): si lookout la
+rechaza por eso, pregunta otra vez. Si el diálogo aparece sin elección (un shell nuevo en medio),
+lookout lo cancela con Esc (deshace su propio `/exit`, no mata nada) y te pide lo mismo. Un shell de fondo deja a
+herdr en `working` aunque el agente esté quieto: `envia`, `entrega`, `recarga`, `relevo`, `cierra-pestana` y el alta
+lo dan por quieto si su último evento es un Stop y su transcript no cambió desde entonces.
+
 **Agente terminado** (su «Como retomar» dice que no queda nada, o dijo que terminó sin bloque):
 `lookout cierra-pestana <project_id> <agente>` **sin preguntar** (sin bloque: añade `--motivo "<su frase, tal cual>"`,
 p. ej. «No emito nada y termino aquí»; un `[COMPLETION-REVIEW` o «¿Cerrado? Sí» solos no bastan). Comprueba que su
@@ -358,7 +374,7 @@ pantalla está quieta y con la caja vacía, y que no deja nada: cambios sin comm
 (el dueño de un commit es la sesión que corría un `git commit` a esa hora, o su sucesor si la relevaron; uno de
 otro agente vivo no frena),
 publicación pendiente, decisión abierta que lo nombre, mensaje suyo sin respuesta, una pregunta en su último turno o
-una tarea de fondo. Con todo limpio hace `/exit`, cierra su pestaña (o solo su pane si comparte pestaña) y te da la
+una tarea de fondo (con trabajo de fondo vivo, ver arriba: `--shells dN`). Con todo limpio hace `/exit`, cierra su pestaña (o solo su pane si comparte pestaña) y te da la
 línea para el usuario. Si dice `NO cierro …`, pásale al usuario el motivo en una línea; si el motivo es «mensaje sin
 respuesta», contéstale primero (un acuse basta) y repite. `--revisa` solo dice si se puede, sin tocar nada.
 Si el usuario decide cerrarla en tu modal, repite con `--usuario-confirmo dN`. dN debe ser `lookout decision … --abre
@@ -415,7 +431,7 @@ migrar. En su lugar haz Z y muéstrame W."
   mensaje o el waiter.
 - **Pantalla solo para verificar** o cuando falta un reporte esperado: `herdr agent read <pane> --source visible`
   (nunca `--lines` con el agente trabajando). Leer pantallas es lo que más contexto gasta.
-- **Entrega de prompts** a un agente solo con `lookout entrega` (comprueba idle y caja vacía), con
+- **Entrega de prompts** a un agente solo con `lookout entrega` (comprueba que está quieto y la caja vacía), con
   `lookout envia` (entrega idempotente: no duplica tras un timeout ni escribe sobre un borrador) o, para
   una respuesta, por `SendMessage`. No uses `herdr agent prompt` a mano.
 - Para repartir pendientes en agentes nuevos, usa `/lookout:pendientes`.

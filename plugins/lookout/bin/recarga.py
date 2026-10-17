@@ -1,7 +1,7 @@
 """0.13.8 (p-d0c5d57049): `lookout recarga` types /reload-plugins into an agent whose hooks are older than the installed
 plugins (versiones.viejos), so the fixes reach it. /reload-plugins reloads hooks in a live session (learning 3); it is
 a local command: no hook event says it ran, so the screen confirms it («Reloaded: …»). Like the relief's /exit: only
-with the agent idle and its box empty (a suggestion counts as empty; a draft of the user's never), and never twice for
+with the agent quiet (deliver.quieto) and its box empty (a suggestion counts as empty; a draft of the user's never), and never twice for
 the same installed versions (`recargado` in the registry, read by versiones.viejos).
 """
 import time
@@ -25,7 +25,7 @@ def recarga(project_id, entry, espera=10.0):
     nombre = entry.get("nombre")
     if (live.get("agent_session") or {}).get("value") != entry.get("session_id"):
         return False, "NO: el pane %s ya no es de %s (registro viejo)." % (pane, nombre)
-    if live.get("agent_status") not in ("idle", "done"):
+    if not deliver.quieto(project_id, entry, live):
         return False, "NO: %s está %s. Recarga cuando termine su turno." % (nombre, live.get("agent_status"))
     box, _text = deliver.read_box(pane)
     if box not in ("vacia", "sugerencia"):

@@ -8,7 +8,8 @@ Signal 1, finished: its last turn says so — a «Como retomar: Ninguno» header
 supervisor gives with --motivo that appears verbatim in that last turn (plan-ciclo: «No emito nada y termino aquí»).
 A goalspec [COMPLETION-REVIEW or a task marked terminada alone never count (askuserquestion-pendientes declared
 «¿Cerrado? Sí» and still waited for an answer). A live block («hay») is a relief, never a close.
-Signal 2, screen: herdr says idle/done, its input box is empty or a suggestion.
+Signal 2, screen: the agent is quiet (deliver.quieto: herdr idle/done, or «working» only because of a background shell
+after its Stop), its input box is empty or a suggestion. Live background work goes to the user first (salida).
 Guards: no uncommitted change of its own; no local commit of its own not on the remote; no publication of its own
 waiting/holding the turn; no open decision naming it; no message of its to the supervisor newer than the last answer to
 it; a last turn with no «?», «¿» or «？» (the 0.12.2 rule: a question waits for someone); no background task of its own.
@@ -27,6 +28,7 @@ import lote
 import publica
 import registry
 import retomar
+import salida
 import supervisor_md
 
 FIN_TIMEOUT = 60
@@ -62,11 +64,11 @@ def senal_terminado(entry, motivo="", project_id=""):
             "[COMPLETION-REVIEW o una tarea terminada solos no bastan)")
 
 
-def senal_pantalla(entry):
+def senal_pantalla(entry, project_id=""):
     live = herdr_cli.agent_get(entry["pane_id"]) or {}
     if (live.get("agent_session") or {}).get("value") != entry["session_id"]:
         return "su pane ya no es suyo (registro viejo)"
-    if live.get("agent_status") not in ("idle", "done"):
+    if not deliver.quieto(project_id, entry, live):
         return "herdr lo ve %s" % (live.get("agent_status") or "sin estado")
     box, _ = deliver.read_box(entry["pane_id"])
     if box not in ("vacia", "sugerencia"):
@@ -327,22 +329,31 @@ def revisa_relevo_fallido(project_id, entry, confirmo=""):
     return out, ""
 
 
-def revisa(project_id, entry, motivo="", confirmo=""):
-    """The list of reasons not to close ([] = it can be closed)."""
+def revisa(project_id, entry, motivo="", confirmo="", shells=""):
+    """The list of reasons not to close ([] = it can be closed). `shells`: the decision (dN) with the user's choice
+    for its live background work (0.13.10, salida): with it, the background guard gives way to that choice."""
     if entry.get("tarea_estado") == "relevo-fallido":
         frenos, gone = revisa_relevo_fallido(project_id, entry, confirmo)
         return [] if gone else frenos + [r for r in (g(project_id, entry) for g in GUARDAS) if r]
     out = []
+    vivo = salida.shells_vivos(project_id, entry)
+    eleccion = salida.eleccion(project_id, entry, shells) if vivo else None
     decidido = cierre_decidido(project_id, entry, confirmo)
     for check in ((lambda: "") if decidido else (lambda: senal_terminado(entry, motivo, project_id)),
-                  lambda: senal_pantalla(entry)):
+                  lambda: senal_pantalla(entry, project_id)):
         r = check()
         if r:
             out.append(r)
     for g in GUARDAS:
+        if g is guarda_fondo and vivo:
+            continue  # said below, with what /exit would do to it
         r = guarda_mensaje(project_id, entry, decidido) if g is guarda_mensaje else g(project_id, entry)
         if r:
             out.append(r)
+    if vivo and not eleccion:
+        out.append(salida.pide_modal(entry, vivo) + (
+            " (%s no es una elección del usuario, en tu modal, abierta después de su último Stop, que nombre a %s)"
+            % (shells, entry.get("nombre")) if shells else ""))
     return out
 
 
@@ -366,7 +377,7 @@ def decision_de_cierre(project_id, entry, confirmo, despues_de):
 
 
 
-def cierra(project_id, entry, motivo="", fin_timeout=FIN_TIMEOUT, log=print, confirmo=""):
+def cierra(project_id, entry, motivo="", fin_timeout=FIN_TIMEOUT, log=print, confirmo="", shells=""):
     """(ok, message for the user)."""
     with lote.project_mutex(project_id):
         fallido = entry.get("tarea_estado") == "relevo-fallido"
@@ -381,16 +392,15 @@ def cierra(project_id, entry, motivo="", fin_timeout=FIN_TIMEOUT, log=print, con
             lookout_state.remove_marker(entry["session_id"])
             return True, "%s: su pestaña ya no existe; lo saco de la tabla.%s" % (
                 entry.get("nombre"), (" Díselo al usuario, quedó: " + "; ".join(ojo) + ".") if ojo else "")
-        frenos = revisa(project_id, entry, motivo, confirmo)
+        frenos = revisa(project_id, entry, motivo, confirmo, shells)
         if frenos:
             return False, "NO cierro la pestaña de %s: %s." % (entry.get("nombre"), "; ".join(frenos))
         pane = entry["pane_id"]
-        offset = deliver.events_size(project_id)
         ended = fallido  # its session ended in the relief: nothing to /exit
         if not fallido:
-            herdr_cli.run(["agent", "prompt", pane, "/exit"])
-            ended = deliver.wait_event(project_id, offset, fin_timeout,
-                                       lambda ev: ev.get("session_id") == entry["session_id"] and ev.get("event") == "end")
+            ended, por_que = salida.salir(project_id, entry, salida.eleccion(project_id, entry, shells), fin_timeout, log)
+            if not ended and por_que:
+                return False, "NO cierro la pestaña de %s: %s." % (entry.get("nombre"), por_que)
         if not ended:
             return False, ("NO cierro la pestaña de %s: no salió en %d s tras /exit (sin SessionEnd). Mira su pane o "
                            "avisa al usuario." % (entry.get("nombre"), fin_timeout))

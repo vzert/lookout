@@ -209,7 +209,8 @@ class TextosConElSiDelHookTest(unittest.TestCase):
                     continue
                 if '"""' in ln or "- 0.12.0" in ln or "as a close" in ln:
                     continue  # docstrings (adversary r9: the escalation of heuristicas.py counts too)
-                if "--si-es" not in " ".join(lines[i:i + 3]):
+                cerca = " ".join(lines[i:i + 3])
+                if "--si-es" not in cerca and "--shells-parar" not in cerca:  # 0.13.10: its own exact labels
                     sin.append("%s:%d" % (name, i + 1))
         # adversary r8 (codex): the skills too
         for skill in ("supervisa", "pendientes"):
@@ -217,7 +218,8 @@ class TextosConElSiDelHookTest(unittest.TestCase):
                 lines = fh.read().splitlines()
                 for i, ln in enumerate(lines):
                     if (re.search(r"lookout decision[^`]*--abre|abres? la decisión|bloque de decisión", ln)
-                            and "--si-es" not in " ".join(lines[i:i + 2]) and "El texto de" not in ln
+                            and "--si-es" not in " ".join(lines[i:i + 2]) and "--shells-parar" not in " ".join(lines[i:i + 2])
+                            and "El texto de" not in ln
                             and "NO ABIERTA" not in ln):
                         sin.append("%s/SKILL.md:%d" % (skill, i + 1))
         self.assertEqual(sin, [])

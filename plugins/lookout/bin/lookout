@@ -7,7 +7,8 @@ Subcommands (PROYECTO = a path inside the repo, or its project_id):
   inicia PROYECTO [--nombre N]  check herdr (version, client vs server; exit 6 = refused, nothing taken) and goalspec
                                 (absent = warning), take the project lock, discover and register its agents
   entrega PROYECTO AGENTE [--pasos reload,rename,nota]
-                                deliver to an idle agent with an empty input box, in order:
+                                deliver to a quiet agent (idle, or working only by a background shell) with an
+                                empty input box, in order:
                                 /reload-plugins (V1), /rename + herdr renames (V12), the report note
   nota PROYECTO AGENTE          print the report note for one agent
   resumen PROYECTO [--no-marcar] [--todo]  agents table + events not handled yet (≤40 lines; --todo = all); advances
@@ -36,11 +37,14 @@ Subcommands (PROYECTO = a path inside the repo, or its project_id):
   descarta PROYECTO P-ID [--estado abandoned|superseded] --nota N --usuario-confirmo DECISION_ID
                                 close by journal a pendiente that never had an agent (Fase 9 C1)
                                 close the agent's pendiente by journal (pendiente.resolve), never by editing
-  relevo PROYECTO AGENTE [--retomar ARCHIVO] [--modelo M]
-                                /exit + a new session on the same task with its "Como retomar" (F3)
-  decision PROYECTO (--abre TEXTO [--agentes A,B] [--si-es ETIQUETA] [--cierre] | --cierra ID --respuesta R (--si|--no) | --lista)
+  relevo PROYECTO AGENTE [--retomar ARCHIVO] [--modelo M] [--shells D]
+                                /exit + a new session on the same task with its "Como retomar" (F3); --shells: the
+                                user's choice for its live background work (0.13.10)
+  decision PROYECTO (--abre TEXTO [--agentes A,B] [--si-es ETIQUETA] [--cierre] [--shells-parar E --shells-dejar E]
+                    | --cierra ID --respuesta R (--si|--no) | --lista)
                                 the user's pending decisions (T4): shown in `resumen` with their age; with --si-es
-                                the modal's hook closes it from the user's own choice (0.13.9)
+                                the modal's hook closes it from the user's own choice (0.13.9); with --shells-parar
+                                and --shells-dejar it writes down which of the two the user chose (0.13.10)
   corrige PROYECTO AGENTE --resumen R [--firma F] [--reporte CITA]
                                 record a correction for the agent's repeated error (Fase 6) and print the message to
                                 send it; after 2 corrections of the same error: PARA (exit 5), escalate instead
@@ -166,7 +170,7 @@ def cmd_inicia(a):
         print("Avisar a: %s" % (", ".join(avisar) or "nadie (ningún agente vivo con hooks confirmados)"))
         print("No hace falta `lookout entrega`: ya están registrados y con hooks.")
         return 0
-    print("Siguiente: `lookout entrega %s <nombre>` para cada agente idle." % pid)
+    print("Siguiente: `lookout entrega %s <nombre>` para cada agente quieto." % pid)
     return 0
 
 
@@ -256,7 +260,7 @@ def cmd_entrega(a):
     if (live.get("agent_session") or {}).get("value") != entry["session_id"] or live.get("cwd") != entry["cwd"]:
         print("NO ENTREGADO: el pane %s ya no es de %s (registro viejo). Corre `lookout inicia` otra vez." % (pane, entry["nombre"]))
         return 4
-    if live.get("agent_status") not in ("idle", "done"):
+    if not deliver.quieto(pid, entry, live):
         print("NO ENTREGADO: %s está %s. Se le entrega en su siguiente idle." % (entry["nombre"], live.get("agent_status")))
         return 4
     box = box_state(pane)
@@ -750,7 +754,8 @@ def cmd_relevo(a):
     if a.retomar:
         with open(a.retomar, encoding="utf-8") as fh:
             retomar = fh.read()
-    ok, msg = relevo.relevo(pid, e, nota_for(pid), retomar, a.modelo, a.confirmar, log=lambda m: print("  " + m))
+    ok, msg = relevo.relevo(pid, e, nota_for(pid), retomar, a.modelo, a.confirmar, log=lambda m: print("  " + m),
+                            shells=a.shells or "")
     print(msg)
     return 0 if ok else 4
 
@@ -777,10 +782,10 @@ def cmd_cierra_pestana(a):
         return 3
     e = agent_entry(pid, a.agente)
     if a.revisa:
-        frenos = retiro.revisa(pid, e, a.motivo or "", a.usuario_confirmo or "")
+        frenos = retiro.revisa(pid, e, a.motivo or "", a.usuario_confirmo or "", a.shells or "")
         print("Se puede cerrar." if not frenos else "No se puede cerrar: " + "; ".join(frenos) + ".")
         return 0 if not frenos else 4
-    ok, msg = retiro.cierra(pid, e, a.motivo or "", confirmo=a.usuario_confirmo or "")
+    ok, msg = retiro.cierra(pid, e, a.motivo or "", confirmo=a.usuario_confirmo or "", shells=a.shells or "")
     print(msg)
     return 0 if ok else 4
 
@@ -800,9 +805,21 @@ def cmd_decision(a):
         if a.cierre and (not agentes or not a.si_es):
             print("NO ABIERTA: una decisión --cierre necesita --agentes <agente> y --si-es \"<etiqueta de la opción sí>\".")
             return 5
-        it = decisiones.abre(pid, a.abre, agentes, si_es=a.si_es or "", tipo="cierre" if a.cierre else "")
+        shells = {"parar": getattr(a, "shells_parar", "") or "", "dejar": getattr(a, "shells_dejar", "") or ""}
+        if any(shells.values()):
+            if not (agentes and all(v.strip() for v in shells.values())) or a.cierre or a.si_es \
+                    or shells["parar"] == shells["dejar"]:
+                print("NO ABIERTA: una decisión de trabajo de fondo necesita --agentes <agente>, --shells-parar y "
+                      "--shells-dejar con dos etiquetas distintas, y ni --cierre ni --si-es.")
+                return 5
+        it = decisiones.abre(pid, a.abre, agentes, si_es=a.si_es or "", tipo="cierre" if a.cierre else "",
+                             shells=shells if any(shells.values()) else None)
         supervisor_md.write(pid)
-        if it.get("si_es"):
+        if it.get("opciones"):
+            print("Decisión %s abierta (aviso de herdr mostrado). Pon «(%s)» al final de su pregunta y las opciones «%s» y "
+                  "«%s» tal cual en el modal, más una de esperar: tu hook anota cuál elige el usuario. Luego repite con "
+                  "--shells %s." % (it["id"], it["id"], it["opciones"]["parar"], it["opciones"]["dejar"], it["id"]))
+        elif it.get("si_es"):
             print("Decisión %s abierta (aviso de herdr mostrado). Pon «(%s)» al final de su pregunta y la opción «%s» tal "
                   "cual en el modal: tu hook la cierra con lo que elija el usuario (no hace falta --cierra)."
                   % (it["id"], it["id"], it["si_es"]))
@@ -875,11 +892,15 @@ def main():
     p = sub.add_parser("relevo"); p.add_argument("proyecto"); p.add_argument("agente")
     p.add_argument("--retomar"); p.add_argument("--modelo", default=os.environ.get("LOOKOUT_MODELO"))
     p.add_argument("--confirmar", type=float, default=30)
+    p.add_argument("--shells", default="", metavar="DECISION_ID",
+                   help="id (dN) de la elección del usuario para su trabajo de fondo vivo (parar o dejarlo)")
     p = sub.add_parser("recarga"); p.add_argument("proyecto"); p.add_argument("agente")
     p = sub.add_parser("cierra-pestana"); p.add_argument("proyecto"); p.add_argument("agente")
     p.add_argument("--motivo", help="cita tal cual de su último turno que dice que terminó (si no dejó «Como retomar»)")
     p.add_argument("--revisa", action="store_true", help="solo dice si se puede cerrar; no toca nada")
     p.add_argument("--usuario-confirmo", help="id (dN) del sí del usuario a cerrarla: lo exige un relevo fallido, y con él se cierra un bloque ambiguo o un turno con una pregunta")
+    p.add_argument("--shells", default="", metavar="DECISION_ID",
+                   help="id (dN) de la elección del usuario para su trabajo de fondo vivo (parar o dejarlo)")
     p = sub.add_parser("decision"); p.add_argument("proyecto"); p.add_argument("--abre"); p.add_argument("--agentes")
     p.add_argument("--cierra"); p.add_argument("--respuesta"); p.add_argument("--lista", action="store_true")
     p.add_argument("--si", action="store_true"); p.add_argument("--no", action="store_true")
@@ -887,6 +908,8 @@ def main():
     p.add_argument("--si-es", default="", help="etiqueta de la opción del modal que significa sí: tu hook cierra la "
                                               "decisión con lo que elija el usuario")
     p.add_argument("--cierre", action="store_true", help="la decisión es cerrar la pestaña de --agentes (cierra-pestana)")
+    p.add_argument("--shells-parar", default="", help="etiqueta de la opción del modal que para su trabajo de fondo al salir")
+    p.add_argument("--shells-dejar", default="", help="etiqueta de la opción del modal que lo deja en segundo plano al salir")
     p = sub.add_parser("corrige"); p.add_argument("proyecto"); p.add_argument("agente")
     p.add_argument("--resumen", required=True); p.add_argument("--firma", default=None)
     p.add_argument("--reporte", default=None)

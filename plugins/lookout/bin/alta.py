@@ -11,7 +11,7 @@ or retired one stays in the registry, so it never comes back as new).
 0.13.1: the alta also renames it (`/rename` of the session, herdr's agent and pane names, a tab with herdr's default
 label), as `lookout entrega` does. Live 2026-10-15 a supervisor read the waiter's digest through its own grep, missed
 the `nuevo` line, never ran `entrega`, and two hand-launched sessions kept their old names. The note stays with
-`entrega`: it is long and needs an idle agent. Never typed over a draft: with text in its input box nothing is typed.
+`entrega`: it is long and needs a quiet agent (deliver.quieto). Never typed over a draft: with text in its input box nothing is typed.
 """
 import os
 import time
@@ -137,7 +137,7 @@ def pasada(project_id):
 def barre(project_id, agents):
     """0.13.2: an agent already registered and quiet, whose last turn left a «Como retomar», never gets another Stop,
     so its block was never read (3-tier-memory, 2026-10-15: hook-para-checkpoint, vigente, idle since 00:51 and never
-    relieved). Each pass reads the last turn of the registered agents herdr sees idle or done; `retomar.al_registrar`
+    relieved). Each pass reads the last turn of the registered agents that are quiet (deliver.quieto); `retomar.al_registrar`
     writes one `retomar` event per block and classification (not one its Stop already announced; again when it changes,
     e.g. an ambiguo now vigente). A transcript that did not change since the last read is
     skipped (the per-agent read also scans the other agents' transcripts)."""
@@ -149,16 +149,17 @@ def barre(project_id, agents):
     for a in agents or []:
         sid = (a.get("agent_session") or {}).get("value")
         e = reg.get(sid)
-        if not sid or not e or e.get("retirado") or a.get("agent_status") not in ("idle", "done"):
-            continue
         import deliver
+        if not sid or not e or e.get("retirado") or not deliver.quieto(project_id, e, a):
+            continue
         try:
             mtime = os.path.getmtime(deliver.transcript_path(sid))
         except (OSError, TypeError):
             continue
         if vistos.get(sid) == mtime:
             continue
-        estados[sid] = a.get("agent_status")
+        # quiet by its hooks while a shell keeps herdr «working» (0.13.10): read as idle
+        estados[sid] = a.get("agent_status") if a.get("agent_status") in ("idle", "done") else "idle"
         cambiados.append(sid)
         vistos[sid] = mtime
     if not cambiados:
