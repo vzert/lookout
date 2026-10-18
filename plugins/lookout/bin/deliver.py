@@ -39,6 +39,27 @@ def norm(text):
 
 
 BASH_INPUT = re.compile(r"^<bash-input>(.*)</bash-input>$", re.S)
+# 0.13.15: a typed /command is kept as a block of tags: <command-name> and <command-message> in either order, then
+# <command-args> last when it had args (every real block with args, 2026-10-17), not escaped
+COMMAND_HEAD = re.compile(r"(?:\s*<command-(name|message)>[^<]*</command-\1>)+\s*")
+COMMAND_NAME = re.compile(r"<command-name>([^<]*)</command-name>")
+ARGS_OPEN, ARGS_CLOSE = "<command-args>", "</command-args>"
+
+
+def as_typed(t):
+    """A transcript's user message as it was typed: «! cmd» for <bash-input>, «/x args» for a command block."""
+    t = t.strip()
+    m = BASH_INPUT.match(t)
+    if m:
+        return "!" + m.group(1)
+    head, sep, args = t.partition(ARGS_OPEN)
+    if sep and not args.endswith(ARGS_CLOSE):
+        return t
+    name = COMMAND_NAME.search(head) if COMMAND_HEAD.fullmatch(head) else None
+    if not name:
+        return t
+    args = args[:-len(ARGS_CLOSE)] if sep else ""
+    return name.group(1) + (" " + args if args.strip() else "")
 
 
 def es_comando(text):
@@ -112,8 +133,7 @@ def count_in_transcript(session_id, text, projects_dir=None):
         return 0
     n = 0
     for t in user_texts(path):
-        m = BASH_INPUT.match(t.strip())
-        n += norm("!" + m.group(1) if m else t) == want
+        n += norm(as_typed(t)) == want
     return n
 
 
@@ -325,8 +345,8 @@ def _deliver(project_id, entry, key, text, confirmar, max_intentos, projects_dir
 
     # 5. Send once, recorded BEFORE sending so a crash mid-send still counts as an attempt.
     offset = events_size(project_id)
-    if es_comando(text) and rec["intentos"] == 0:
-        rec["previas"] = count_in_transcript(sid, text, projects_dir)  # the same command run before is not this one
+    if rec["intentos"] == 0:  # 0.13.15: also a /command or a plain text, not only «! cmd» (codex r1)
+        rec["previas"] = count_in_transcript(sid, text, projects_dir)  # the same text sent before is not this one
     rec["intentos"] += 1
     rec["offset"] = offset
     rec["estado"] = "enviada"

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.13.15
+
+- A retry of `lookout entrega` (and of the trigger an alta or a relief types) recognises a typed `/command` already in
+  the transcript. When the `working` event of the first attempt was lost, the retry reads the session's transcript to
+  see whether the text arrived; Claude Code does not keep a typed `/command` as typed but as a block of tags
+  (`<command-name>`, `<command-args>`, often `<command-message>`), so a relief typed with `--goalspec` could get its
+  `/goalspec:goalspec <trigger>` typed a second time. The retry now reads such a block back as `/name args`. Measured on
+  2026-10-17 over the transcripts in `~/.claude/projects` (about 5100 files and 1380 blocks; the count moves as
+  sessions are written and removed): name and message come in either order, `<command-args>` comes last when there
+  are args, is not escaped (args may hold its own closing tag), and can be empty, missing or span lines; every block
+  read back as a `/command`. A message that holds such tags among other text is not a command, another command or
+  other args do not count, and a malformed block is read in linear time. A text already in the transcript before
+  the first attempt (the same `/command`, or the same plain text, sent earlier in that session) no longer confirms a
+  retry: until now only a `! command` was counted that way. The tests run the real delivery against the herdr stub
+  with the block in the transcript and no event (tests/test_lookout_01315.py).
+
 ## 0.13.14
 
 - supervisor.md (its pending decisions and its «Proximo paso» line), the digest and the supervisor's Stop reminder show
