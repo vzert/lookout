@@ -10,6 +10,8 @@ Conf keys:
   enter_event: same, for `agent send-keys … enter` (the stuck text gets submitted)
   start_event: if set, `agent start` appends a SessionStart `start` event to this path ({"path", "session_id"})
   read_after_prompt: new `agent_read` value once a prompt or Enter was sent
+  prompt_append: if set, `agent prompt` appends `line` to the file at `path` (a transcript row: 0.13.24)
+  prompt_rc:   exit code of `agent prompt` (default 0)
   version:     text printed for `--version` (default "herdr 0.9.1"); version_rc: its exit code
   status:      dict printed as JSON for `status --json` (default: client and server 0.9.1, compatible)
   agent_list:  list returned by `agent list` (default [])
@@ -73,8 +75,12 @@ elif args[:2] == ["agent", "start"]:
 elif args[:2] == ["agent", "prompt"]:
     if conf.get("prompt_event"):
         emit(conf["prompt_event"], args[3])
+    if conf.get("prompt_append"):
+        with open(conf["prompt_append"]["path"], "a") as fh:
+            fh.write(conf["prompt_append"]["line"])
     after_send(args[3])
     print(json.dumps({"result": {}}))
+    sys.exit(conf.get("prompt_rc", 0))
 elif args[:2] == ["agent", "send-keys"] and args[-1] == "enter":
     if conf.get("enter_event"):
         emit(conf["enter_event"], conf["enter_event"]["prompt"])

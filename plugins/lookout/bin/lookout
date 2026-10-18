@@ -40,6 +40,8 @@ Subcommands (PROYECTO = a path inside the repo, or its project_id):
   relevo PROYECTO AGENTE [--retomar ARCHIVO] [--modelo M] [--shells D] [--goalspec]
                                 /exit + a new session on the same task with its "Como retomar" (F3); --shells: the
                                 user's choice for its live background work (0.13.10)
+  retoma PROYECTO AGENTE        claude --resume of an agent whose session ended without anyone asking (SessionEnd
+                                «other», e.g. a stray kill), in its pane or a new tab on its folder (0.13.20)
   decision PROYECTO (--abre TEXTO [--agentes A,B] [--si-es ETIQUETA] [--cierre] [--shells-parar E --shells-dejar E]
                     [--permiso]
                     | --cierra ID --respuesta R (--si|--no) | --lista)
@@ -86,6 +88,8 @@ import relevo  # noqa: E402
 import requisitos  # noqa: E402
 import retiro  # noqa: E402
 import retomar  # noqa: E402
+import retoma  # noqa: E402
+import sesiones  # noqa: E402
 
 NOTA = os.path.join(HERE, "..", "skills", "supervisa", "references", "nota-reporte.md")
 WAITER_TIMEOUT = 7000  # s; under the 7200 s ceiling of a background Bash task
@@ -154,12 +158,15 @@ def cmd_inicia(a):
     print("")
     print("Al usuario nombra a cada agente por su pestaña de herdr (columna `pestaña`): es lo que él ve. El pane "
           "(wS:p25) no le dice nada.")
-    print("nombre | pestaña | worktree | rama | estado herdr | session")
+    # 0.13.24 (p-e9c8601cfb): the session's own name, which SendMessage takes; lookout's name may not be it
+    print("Para SendMessage usa la columna `to`: es el nombre de su sesión, que puede no ser el de lookout.")
+    print("nombre | pestaña | worktree | rama | estado herdr | session | to (SendMessage)")
     for e in reg["agents"].values():
         if e.get("retirado"):
             continue  # Fase 9 E2: its pane is another session's now
-        print("%s | %s | %s | %s | %s | %s" % (e["nombre"], e.get("pestana") or "-", e.get("worktree") or "-",
-                                             e.get("branch") or "-", e.get("estado_herdr") or "-", e["session_id"][:8]))
+        print("%s | %s | %s | %s | %s | %s | %s" % (e["nombre"], e.get("pestana") or "-", e.get("worktree") or "-",
+                                                  e.get("branch") or "-", e.get("estado_herdr") or "-",
+                                                  e["session_id"][:8], sesiones.to_texto(e)))
     for o in others:
         print("(no registrado: pestaña %s en %s, kind=%s, sin session_id de Claude)" % (
             o.get("pestana") or o["pane_id"], o["cwd"], o["kind"]))
@@ -167,10 +174,11 @@ def cmd_inicia(a):
     md = supervisor_md.write(pid)
     if relevo_sup:
         live = {f.get("session_id") for f in found}
-        avisar = [e["nombre"] for s, e in reg["agents"].items() if s in live and e.get("hooks") == "ok"]
+        avisar = ["%s (%s)" % (e["nombre"], sesiones.to_texto(e)) for s, e in reg["agents"].items()
+                  if s in live and e.get("hooks") == "ok"]
         print("RELEVO DEL SUPERVISOR. Tu estado: %s (léelo antes de decidir nada: decisiones tomadas y pendientes,"
               " lo que ya respondiste a cada agente)." % md)
-        print("Sus notas de reporte llevan la dirección vieja. Manda a cada uno, por SendMessage (to = su nombre), este texto"
+        print("Sus notas de reporte llevan la dirección vieja. Manda a cada uno, por SendMessage (to = el de la lista), este texto"
               " tal cual: «Cambio de supervisor: desde ahora tus reportes y preguntas van a to=\"%s\" (cópialo tal cual);"
               " la dirección anterior ya no existe.»" % me["address"])
         print("Avisar a: %s" % (", ".join(avisar) or "nadie (ningún agente vivo con hooks confirmados)"))
@@ -714,7 +722,7 @@ def cmd_corrige(a):
     code, text = heuristicas.corrige(pid, e, a.resumen, a.firma, a.reporte)
     if code == 0:
         print("Corrección registrada. Mándasela TAL CUAL por SendMessage a %s (to = la dirección de su último mensaje, o "
-              "su nombre), y termina tu turno:" % e["nombre"])
+              "%s), y termina tu turno:" % (e["nombre"], sesiones.to_texto(e)))
     print(text)
     return code
 
@@ -751,18 +759,37 @@ def cmd_puerto(a):
 
 
 def cmd_relevo(a):
+    retomar = ""
+    if a.retomar:  # 0.13.17: a path; the «Como retomar» text itself gave a FileNotFoundError traceback (3-tier)
+        try:
+            with open(a.retomar, encoding="utf-8") as fh:
+                retomar = fh.read()
+        except (OSError, UnicodeDecodeError) as ex:
+            print("No releva nada: --retomar espera la ruta de un archivo con su «Como retomar», y «%s» no se "
+                  "puede leer (%s). Escribe el bloque en un archivo y pasa su ruta." % (
+                      a.retomar, ex.strerror if isinstance(ex, OSError) and ex.strerror else type(ex).__name__))
+            return 2
     pid, _ = project(a.proyecto)
     lk = lock.read(pid) or {}
     if (lk.get("supervisor") or {}).get("session_id") != lock.me()["session_id"]:
         print("No releva nada: el candado de %s no es de esta sesión." % pid)
         return 3
     e = agent_entry(pid, a.agente)
-    retomar = ""
-    if a.retomar:
-        with open(a.retomar, encoding="utf-8") as fh:
-            retomar = fh.read()
     ok, msg = relevo.relevo(pid, e, nota_for(pid), retomar, a.modelo, a.confirmar, log=lambda m: print("  " + m),
                             shells=a.shells or "", goalspec=a.goalspec)
+    print(msg)
+    return 0 if ok else 4
+
+
+def cmd_retoma(a):
+    """0.13.20: an agent whose session ended without anyone asking starts again with its context (retoma.py)."""
+    pid, _ = project(a.proyecto)
+    lk = lock.read(pid) or {}
+    if (lk.get("supervisor") or {}).get("session_id") != lock.me()["session_id"]:
+        print("No retoma nada: el candado de %s no es de esta sesión." % pid)
+        return 3
+    e = agent_entry(pid, a.agente)
+    ok, msg = retoma.retoma(pid, e, a.confirmar, log=lambda m: print("  " + m))
     print(msg)
     return 0 if ok else 4
 
@@ -870,10 +897,19 @@ def cmd_decision(a):
         if a.si == a.no:
             print("NO: di si el usuario aprobó: --si (su respuesta autoriza lo preguntado) o --no (no lo autoriza).")
             return 5
-        hecha = next((x for x in decisiones.load(pid)["items"] if x["id"] == a.cierra and x.get("por_hook")), None)
-        if hecha:  # 0.13.9: the modal's hook already closed it with the user's own choice; that stands
+        hecha = next((x for x in decisiones.load(pid)["items"] if x["id"] == a.cierra), None)
+        if not hecha:
+            print("La decisión %s no existe en %s (`lookout decision %s` lista las pendientes)." % (a.cierra, pid, pid))
+            return 5
+        if hecha.get("por_hook"):  # 0.13.9: the modal's hook already closed it with the user's own choice; that stands
             print("Decisión %s ya cerrada por tu hook con la elección del usuario («%s»: %s)."
                   % (a.cierra, hecha.get("respuesta_usuario", ""), "sí" if hecha.get("aprueba") else "no"))
+            return 0
+        if hecha.get("estado") != "abierta":
+            # 0.13.21: «No hay una decisión abierta» read as «no existe» (3-tier 2026-10-17, the vigía's test modals)
+            print("Decisión %s ya está respondida (%s): «%s». No hay nada que cerrar%s." % (
+                a.cierra, supervisor_md.veredicto(hecha), hecha.get("respuesta") or "",
+                "; vino de un modal que no nombraba ninguna decisión" if hecha.get("origen") == "hook" else ""))
             return 0
         it = decisiones.cierra(pid, a.cierra, a.respuesta or "", a.si)
         supervisor_md.write(pid)
@@ -928,13 +964,17 @@ def main():
     p.add_argument("--estado", choices=["abandoned", "superseded"], default="abandoned"); p.add_argument("--nota", required=True)
     p.add_argument("--usuario-confirmo", metavar="DECISION_ID", default="")
     p = sub.add_parser("relevo"); p.add_argument("proyecto"); p.add_argument("agente")
-    p.add_argument("--retomar"); p.add_argument("--modelo", default=os.environ.get("LOOKOUT_MODELO"))
+    p.add_argument("--retomar", metavar="ARCHIVO",
+                   help="ruta de un archivo con el «Como retomar» que recibe la sesión nueva (no el texto)")
+    p.add_argument("--modelo", default=os.environ.get("LOOKOUT_MODELO"))
     p.add_argument("--confirmar", type=float, default=30)
     p.add_argument("--shells", default="", metavar="DECISION_ID",
                    help="id (dN) de la elección del usuario para su trabajo de fondo vivo (parar o dejarlo)")
     p.add_argument("--goalspec", action="store_true",
                    help="la sesión nueva recibe /goalspec:goalspec <disparador>: su «Como retomar» trae trabajo que no es "
                         "solo medir (o dudas)")
+    p = sub.add_parser("retoma"); p.add_argument("proyecto"); p.add_argument("agente")
+    p.add_argument("--confirmar", type=float, default=30)
     p = sub.add_parser("recarga"); p.add_argument("proyecto"); p.add_argument("agente")
     p = sub.add_parser("cierra-pestana"); p.add_argument("proyecto"); p.add_argument("agente")
     p.add_argument("--motivo", help="cita tal cual de su último turno que dice que terminó (si no dejó «Como retomar»)")
@@ -965,7 +1005,7 @@ def main():
             "resumen": cmd_resumen, "espera": cmd_espera, "suelta": cmd_suelta,
             "pendientes": cmd_pendientes, "lanza": cmd_lanza, "libera": cmd_libera, "descarta": cmd_descarta, "envia": cmd_envia,
             "gobierno": cmd_gobierno, "publica": cmd_publica, "regla-push": cmd_regla_push, "permisos": cmd_permisos, "cierra": cmd_cierra,
-            "relevo": cmd_relevo, "recarga": cmd_recarga, "cierra-pestana": cmd_cierra_pestana, "decision": cmd_decision, "aprueba": cmd_aprueba, "retomar": cmd_retomar, "corrige": cmd_corrige,
+            "relevo": cmd_relevo, "retoma": cmd_retoma, "recarga": cmd_recarga, "cierra-pestana": cmd_cierra_pestana, "decision": cmd_decision, "aprueba": cmd_aprueba, "retomar": cmd_retomar, "corrige": cmd_corrige,
             "puerto": cmd_puerto}[a.cmd](a) or 0
 
 

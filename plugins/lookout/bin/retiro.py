@@ -18,6 +18,7 @@ Threat model: an accidental omission (work left behind, a pending answer); not a
 import json
 import re
 import os
+import subprocess
 import time
 
 import decisiones
@@ -173,6 +174,78 @@ def glob_subagentes(path, sid):
     return glob.glob(os.path.join(os.path.dirname(path), sid, "subagents", "*.jsonl"))
 
 
+def _patch_ids(wt, args):
+    """{commit: patch-id} of `git log -p <args>` (git patch-id --stable: the same change on another base keeps its id)."""
+    try:
+        log = subprocess.run(["git", "-C", wt, "log", "--no-color", "--no-ext-diff", "-p"] + list(args),
+                             capture_output=True, timeout=30)
+        ids = subprocess.run(["git", "-C", wt, "patch-id", "--stable"], input=log.stdout, capture_output=True,
+                             timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    out = {}
+    for linea in ids.stdout.decode("utf-8", "replace").splitlines():
+        partes = linea.split()
+        if len(partes) == 2:
+            out[partes[1]] = partes[0]
+    return out
+
+
+def ramas_destino(wt):
+    """The remote refs a commit has to reach to count as upstream (0.13.23, codex review of 0.13.22: a patch on any
+    remote ref let a tab close with the commit only on an unrelated branch): each remote's main branch (its HEAD, else
+    main or master) and the branch's own upstream."""
+    refs = []
+    code, up = _git(wt, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+    if code == 0 and up.strip():
+        refs.append(up.strip())
+    code, remotos = _git(wt, "remote")
+    for r in (remotos or "").split() if code == 0 else []:
+        code, cabeza = _git(wt, "symbolic-ref", "--short", "refs/remotes/%s/HEAD" % r)
+        # its HEAD first; main and master after it, also when that HEAD names a branch that is gone (round 2, codex)
+        candidatas = ([cabeza.strip()] if code == 0 and cabeza.strip() else []) + ["%s/main" % r, "%s/master" % r]
+        for c in candidatas:
+            if _git(wt, "rev-parse", "--verify", "--quiet", c + "^{commit}")[0] == 0 and c not in refs:
+                refs.append(c)
+                break
+    return refs
+
+
+def ya_arriba(wt, hashes, dias=30):
+    """({hash: remote hash with the same patch}, {hash: remote hash with the same subject and author, another patch}) —
+    0.13.22. 3-tier 2026-10-17: the 6 «unpushed» commits of reopen-replay-ts had reached main through a rebased PR; by
+    hash they were unpushed, by content 3 were upstream and 3 had a rebased copy. Only ramas_destino, the last `dias`
+    days before the oldest of them."""
+    if not hashes:
+        return {}, {}
+    code, log = _git(wt, "log", "--no-walk", "--format=%H%x00%ct%x00%ae%x00%s", *hashes)
+    if code != 0:
+        return {}, {}
+    meta = {}
+    for linea in (log or "").splitlines():
+        partes = linea.split("\x00")
+        if len(partes) == 4 and partes[1].isdigit():
+            meta[partes[0]] = (int(partes[1]), partes[2], partes[3])
+    if not meta:
+        return {}, {}
+    refs = ramas_destino(wt)
+    if not refs:
+        return {}, {}
+    since = "--since=@%d" % (min(m[0] for m in meta.values()) - dias * 86400)
+    remotos = _patch_ids(wt, refs + ["--no-merges", since])
+    por_parche = {pid: h for h, pid in remotos.items()}
+    locales = _patch_ids(wt, ["--no-walk"] + list(meta))
+    iguales = {h: por_parche[pid] for h, pid in locales.items() if pid in por_parche}
+    code, rlog = _git(wt, "log", *refs, "--no-merges", since, "--format=%H%x00%ae%x00%s")
+    por_asunto = {}
+    for linea in (rlog or "").splitlines() if code == 0 else []:
+        partes = linea.split("\x00")
+        if len(partes) == 3:
+            por_asunto.setdefault((partes[1], partes[2]), partes[0])
+    copias = {h: por_asunto[(m[1], m[2])] for h, m in meta.items() if h not in iguales and (m[1], m[2]) in por_asunto}
+    return iguales, copias
+
+
 def guarda_sin_subir(project_id, entry):
     wt = entry.get("worktree") or entry.get("cwd") or ""
     code, out = _git(wt, "rev-list", "@{u}..HEAD")
@@ -181,6 +254,10 @@ def guarda_sin_subir(project_id, entry):
     if code != 0:
         return "no puedo saber si tiene commits sin subir en %s" % wt
     pendientes = [h for h in (out or "").split() if h]
+    if not pendientes:
+        return ""
+    iguales, copias = ya_arriba(wt, pendientes)  # 0.13.22: already upstream by content, or a rebased copy there
+    pendientes = [h for h in pendientes if h not in iguales]
     if not pendientes:
         return ""
     # A commit made with -q, by a subagent or by a script prints no «[rama hash]» in its transcript (3-tier-memory,
@@ -201,14 +278,30 @@ def guarda_sin_subir(project_id, entry):
             vistos.add(s)
             s = agentes[s]["relevada_por"]
         return s
-    duenos = {h: {actual(s) for s in ss} for h, ss in duenos_commits(project_id, wt, pendientes).items()}
+    crudos = duenos_commits(project_id, wt, pendientes)
+    duenos = {h: {actual(s) for s in ss} for h, ss in crudos.items()}
 
     def vivo_ajeno(s):
         e = agentes.get(s) or {}
         return s != sid and e and not e.get("retirado") and e.get("tarea_estado") not in ("relevada", "relevando")
+    rebasados = [h for h in pendientes if h in copias]
+    if rebasados:
+        _c, rama = _git(wt, "rev-parse", "--abbrev-ref", "HEAD")
+        return ("%d commit(s) sin subir en %s con una copia rebasada en el remoto (mismo asunto y autor, otro parche): "
+                "%s. No los cuento como trabajo de %s: compáralos con `git range-diff` y pregúntale al usuario qué hacer "
+                "con la rama %s" % (len(rebasados), wt, ", ".join("%s → %s" % (h[:7], copias[h][:7]) for h in rebasados[:3])
+                                    + (" y %d más" % (len(rebasados) - 3) if len(rebasados) > 3 else ""),
+                                    entry.get("nombre"), (rama or "").strip() or "?"))
     suyos = [h for h in pendientes if sid in duenos.get(h, ())]
     if suyos:
-        return "%d commit(s) suyo(s) sin subir en %s" % (len(suyos), wt)
+        if any(sid in crudos.get(h, ()) for h in suyos):
+            return "%d commit(s) suyo(s) sin subir en %s" % (len(suyos), wt)
+        # all made by an earlier session of its chain (3-tier 2026-10-17: its first session, before its current task)
+        antes = sorted({s for h in suyos for s in crudos.get(h, ()) if s != sid})
+        _c, fechas = _git(wt, "log", "--no-walk", "--format=%cs", *suyos)
+        dias = sorted(set((fechas or "").split()))
+        return "%d commit(s) suyo(s) sin subir en %s, hechos por su sesión anterior %s (%s): primero el push" % (
+            len(suyos), wt, ", ".join(s[:8] for s in antes) or "?", " a ".join(dias[:1] + dias[-1:] if len(dias) > 1 else dias))
     frenan = [h for h in pendientes if not duenos.get(h) or not all(vivo_ajeno(s) for s in duenos[h])]
     if frenan:
         return "%d commit(s) sin subir en su árbol %s sin dueño vivo conocido: primero el push" % (len(frenan), wt)

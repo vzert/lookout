@@ -67,9 +67,17 @@ def _tupla(v):
     return tuple(int(x) for x in re.findall(r"\d+", v or "")[:3]) or (0,)
 
 
+def _con_recarga(v, recargado):
+    """(version its hooks run, came from the reload). A reload lookout typed loads what was installed then, so the
+    hooks run at least that: an agent idle since (3-tier 2026-10-17, prompts-repetidos) has no newer event to show it."""
+    if recargado and _tupla(recargado) > _tupla(v or "0"):
+        return recargado, True
+    return v, False
+
+
 def viejos(entry, events, transcript_path, inst=None):
-    """[(plugin, version its hooks run, installed version)] for one agent; [] when up to date or unknown.
-    A /reload-plugins lookout typed (`recargado`: {plugin: version installed then}) counts until the next update."""
+    """[(plugin, version its hooks run, installed version, came from a reload)] for one agent; [] when up to date or
+    unknown. A /reload-plugins lookout typed (`recargado`: {plugin: version installed then}) counts as that version."""
     inst = instaladas() if inst is None else inst
     sid = entry.get("session_id")
     hechos = entry.get("recargado") or {}
@@ -78,18 +86,20 @@ def viejos(entry, events, transcript_path, inst=None):
     # its own version, and on_ask's `ask` has no `hook`
     last = next((ev for ev in reversed(events) if ev.get("session_id") == sid and ev.get("hook") in HOOKS_CLAUDE), None)
     if last is not None and inst.get(LOOKOUT):
-        v = last.get("v") or ""
+        v, rec = _con_recarga(last.get("v") or "", hechos.get(LOOKOUT))
         # no `v`: hooks before 0.13.8, the first that stamps it; older only once 0.13.8 or later is installed
         antiguo = _tupla(v) < _tupla(inst[LOOKOUT]) if v else _tupla(inst[LOOKOUT]) >= (0, 13, 8)
-        if antiguo and hechos.get(LOOKOUT) != inst[LOOKOUT]:
-            out.append(("lookout", v or "<0.13.8", inst[LOOKOUT]))
+        if antiguo:
+            out.append(("lookout", v or "<0.13.8", inst[LOOKOUT], rec))
     for key, v in sorted(citadas(transcript_path).items()):
-        if key == LOOKOUT or key not in inst or hechos.get(key) == inst[key]:
+        if key == LOOKOUT or key not in inst:
             continue
+        v, rec = _con_recarga(v, hechos.get(key))
         if _tupla(v) < _tupla(inst[key]):
-            out.append((key.split("@")[0], v, inst[key]))
+            out.append((key.split("@")[0], v, inst[key], rec))
     return out
 
 
 def texto(lista):
-    return ", ".join("%s %s (instalada %s)" % x for x in lista)
+    return ", ".join("%s %s (instalada %s)%s" % (p, v, i, "; ya recargado; la %s llegó después" % i if rec else "")
+                     for p, v, i, rec in lista)

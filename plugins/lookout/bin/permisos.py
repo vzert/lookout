@@ -316,6 +316,208 @@ def arbol_compartido(cmd):
     return ""
 
 
+# 0.13.18: what a pkill/killall by name must not reach. 3-tier, 2026-10-17: `pkill -f "tools/run-tests.sh" -n` took
+# `-n` as a second pattern (macOS's pkill stops reading options at the first pattern) and killed every session lookout
+# had started with `-n <nombre>`. A pattern is judged on these samples, not on the live process list: what it would
+# hit tomorrow counts as much as what runs now.
+def _protegidos_linea():
+    """Command lines as lookout starts them, with this machine's real paths: `pkill -f /Users/<u>` must hit them."""
+    home = os.path.expanduser("~")
+    estado = {lookout_state.state_root(), os.path.join(home, ".local", "state", "lookout")}
+    lookouts = {os.path.join(PLUGIN_ROOT, "bin", "lookout"),
+                os.path.join(home, ".claude", "plugins", "cache", "lookout-marketplace", "lookout", VERSION or "0",
+                             "bin", "lookout")}
+    out = ["claude --session-id 00000000-0000-4000-8000-000000000001 -n agente --append-system-prompt-file "
+           "%s/projects/p/tareas/agente.sistema.md --model opus --effort medium --permission-mode auto" % e
+           for e in sorted(estado)]
+    out += ["python3 %s espera p" % lk for lk in sorted(lookouts)]
+    return out + ["claude --resume 00000000-0000-4000-8000-000000000001", "claude", "herdr", "herdr server"]
+
+
+PROTEGIDOS_NOMBRE = ("claude", "herdr", "python3", "Python", "node", "bash", "zsh", "sh", "login", "tail")
+PGREP_VALOR = ("-F", "-G", "-P", "-U", "-d", "-g", "-s", "-t", "-u", "-c", "-j", "-M", "-N", "--signal", "--ns",
+               "--nslist", "--pidfile", "--group", "--parent", "--session", "--terminal", "--euid", "--uid",
+               "--delimiter")
+KILLALL_VALOR = ("-u", "-t", "-c", "-s", "-o", "-y", "--signal", "--user", "--older-than", "--younger-than")
+COMO_MATAR = ("Busca antes con `pgrep -lf '<patrón>'` (opciones antes del patrón), mira que solo salgan los tuyos y "
+              "mata por número: kill <pid>.")
+
+
+def _letras(tok):
+    """The lowercase option letters of a short-option token (-fl → 'fl'); '' for a signal like -9, -TERM or -SIGKILL."""
+    return tok[1:] if re.fullmatch(r"-[a-z]+", tok) else ""
+
+
+def _alcanza(patron, linea_completa, exacto, sin_mayus):
+    """The sample a pkill/killall pattern would hit, or ''. An unreadable pattern counts as hitting."""
+    if DIN in patron:
+        return "un patrón armado en tiempo de ejecución"
+    try:
+        rx = re.compile(patron, re.I if sin_mayus else 0)
+    except re.error:
+        return "un patrón que no leo como expresión regular"
+    for s in (_protegidos_linea() if linea_completa else PROTEGIDOS_NOMBRE):
+        if (rx.fullmatch(s) if exacto else rx.search(s)):
+            return s.split(" --append")[0][:60]
+    return ""
+
+
+def _pgrep(toks):
+    """pkill/pgrep tokens after the program: (opciones, patrones, la opción detrás del patrón o '')."""
+    opts, pats, i = [], [], 0
+    while i < len(toks):
+        t = toks[i]
+        if t == "--":
+            pats += toks[i + 1:]
+            break
+        if t.startswith("-") and len(t) > 1 and not pats:
+            opts.append(t)
+            i += 2 if t in PGREP_VALOR else 1
+            continue
+        if t.startswith("-") and len(t) > 1:
+            return opts, pats, t
+        pats.append(t)
+        i += 1
+    return opts, pats, ""
+
+
+# 0.13.23 (codex review of 0.13.18): what runs the next word as a command, with the options that take a value
+ENVOLTORIOS = {"timeout": ("-s", "-k", "--signal", "--kill-after"), "nice": ("-n", "--adjustment"),
+               "env": ("-u", "-C", "-P", "--unset", "--chdir"), "stdbuf": ("-i", "-o", "-e"),
+               # 0.13.25 (round 2): the less common ones of the notes
+               "setsid": (), "ionice": ("-c", "-n", "-p", "-P", "-u", "--class", "--classdata"),
+               "chrt": ("-T", "-P", "-D", "--sched-runtime", "--sched-period", "--sched-deadline"),  # 0.13.26
+               "doas": ("-u", "-C"), "watch": ("-n", "--interval", "-d"),
+               "xargs": ("-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--max-args",
+                         "--max-procs", "--max-lines", "--replace", "--eof", "--max-chars"),
+               "nohup": (), "exec": (), "command": (), "time": (), "sudo": ("-u", "-g", "-C", "-h", "-p")}
+PALABRAS_SHELL = ("then", "do", "else", "elif", "if", "while", "until", "!", "{", "(", "coproc")
+XARGS_REPL = "__lookout_xargs_repl__"  # `{}` of `xargs -I{}`: the subshell scanner would make it a separator
+FIND_FIN = "__lookout_find_fin__"  # 0.13.26: the `\\;`, `';'` or `";"` that ends find -exec, kept as one word
+
+
+def _desenvuelve(toks):
+    """(the command a wrapper runs, the wrappers seen): `timeout 5 pkill …` → `pkill …`. Shell keywords (then, do…),
+    env assignments and each wrapper's own options and operands go; what is left starts with the command that runs."""
+    toks, vistos = list(toks), set()
+    while toks:
+        prog = os.path.basename(toks[0])
+        if toks[0] in PALABRAS_SHELL or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", toks[0]):
+            toks = toks[1:]
+            continue
+        if prog not in ENVOLTORIOS:
+            return toks, vistos
+        vistos.add(prog)
+        con_valor, i = ENVOLTORIOS[prog], 1
+        while i < len(toks) and toks[i].startswith("-") and toks[i] != "--":
+            t = toks[i]
+            if prog == "env" and (t in ("-S", "--split-string") or t.startswith(("-S", "--split-string="))):
+                # env -S "<command line>": its value is the command env runs (round 2, codex)
+                valor = toks[i + 1] if t in ("-S", "--split-string") and i + 1 < len(toks) else t.split("=", 1)[-1] \
+                    if t.startswith("--") else t[2:]
+                try:
+                    dentro = shlex.split(valor)
+                except ValueError:
+                    dentro = valor.split()
+                toks = dentro + toks[i + (2 if t in ("-S", "--split-string") else 1):]
+                i = 0
+                break
+            i += 2 if t in con_valor else 1
+        else:
+            if i < len(toks) and toks[i] == "--":
+                i += 1
+            if prog == "timeout" and i < len(toks):
+                i += 1  # its DURATION
+            if prog == "chrt" and i < len(toks) and re.match(r"^\d+$", toks[i]):
+                i += 1  # its priority
+            while prog == "env" and i < len(toks) and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", toks[i]):
+                i += 1
+            toks = toks[i:]
+    return toks, vistos
+
+
+def mata_procesos(cmd):
+    """Why this command could kill processes it does not name (other agents, herdr, lookout), or ''. Applies to every
+    registered agent in every mode: nothing here is the user's to approve, it is always a mistake."""
+    cmd = re.sub(r"\\\r?\n", " ", cmd or "").replace("{}", XARGS_REPL)  # 0.13.25: before the scanner splits it
+    cmd = re.sub(r"""(?<!\S)(?:\\;|';'|";")(?!\S)""", " " + FIND_FIN + " ", cmd)  # 0.13.26: find's terminator
+    cmd = _abre_subshells(cmd)
+    # `kill $(pgrep -f x)`, `pgrep -f x | xargs kill`: that pgrep chooses who dies, so it is judged like a pkill
+    pgrep_mata = bool(re.search(r"(?<![\w.-])(?:kill|xargs)(?![\w.-])", cmd))
+    for part in SPLIT_OPS.split(cmd):
+        try:
+            toks = shlex.split(part)
+        except ValueError:
+            toks = part.split()
+        toks, vistos = _desenvuelve(toks)
+        if not toks:
+            continue
+        prog, rest = os.path.basename(toks[0]), toks[1:]
+        # what xargs hands a pkill/killall is a pattern the text does not show; a kill's pids may come from a pgrep of
+        # the same line, which is judged as a pkill (pgrep_mata)
+        if prog == "find":  # -exec/-execdir/-ok/-okdir run a command of their own (round 2 notes)
+            for k, t in enumerate(rest):
+                if t in ("-exec", "-execdir", "-ok", "-okdir"):
+                    fin = next((j for j in range(k + 1, len(rest)) if rest[j] in (FIND_FIN, ";", "\\;", "+")),
+                               len(rest))
+                    why = mata_procesos(" ".join(shlex.quote(x) for x in rest[k + 1:fin]))
+                    if why:
+                        return why
+            continue
+        if "xargs" in vistos and (prog in ("pkill", "killall") or (prog == "kill" and not re.search(
+                r"(?<![\w.-])pgrep(?![\w.-])", cmd))):
+            return "%s con argumentos que pone xargs: no los leo" % prog
+        if prog == "eval":  # its words are a command line of their own
+            why = mata_procesos(" ".join(rest))
+            if why:
+                return why
+        elif prog in ("sh", "bash", "zsh", "dash", "ksh") and "-c" in rest:
+            k = rest.index("-c")
+            why = mata_procesos(rest[k + 1]) if k + 1 < len(rest) else ""
+            if why:
+                return why
+        elif prog in ("pkill", "pgrep"):
+            opts, pats, detras = _pgrep(rest)
+            if detras:
+                return ("%s con la opción «%s» detrás del patrón: en macOS es otro patrón, y casa con todo proceso "
+                        "que lleve «%s» en su línea (así murieron 3 agentes de 3-tier el 2026-10-17). Pon las "
+                        "opciones antes del patrón." % (prog, detras, detras))
+            if prog == "pgrep" and not pgrep_mata:
+                continue  # a read: only its options are judged
+            letras = "".join(_letras(o) for o in opts)
+            for p in pats:
+                hit = _alcanza(p, "f" in letras, "x" in letras, "i" in letras)
+                if hit:
+                    return "%s «%s» alcanza a %s" % ("pkill" if prog == "pkill" else "pgrep que elige a quién matar",
+                                                    p, hit)
+        elif prog == "killall":
+            opts, names, i = [], [], 0
+            while i < len(rest):
+                t = rest[i]
+                if t.startswith("-") and len(t) > 1 and t != "--":
+                    opts.append(t)
+                    i += 2 if t in KILLALL_VALOR else 1
+                    continue
+                if t != "--":
+                    names.append(t)
+                i += 1
+            letras = "".join(_letras(o) for o in opts)
+            regex = "m" in letras or "r" in letras
+            for n in names:
+                hit = _alcanza(n if regex else re.escape(n), False, not regex, "i" in letras or "-I" in opts)
+                if hit:
+                    return "killall «%s» alcanza a %s" % (n, hit)
+        elif prog == "kill":
+            i = 0
+            if rest and rest[0] in ("-s", "-n"):
+                i = 2
+            elif rest and rest[0].startswith("-") and rest[0] != "--":
+                i = 1  # the signal
+            if "-1" in [t for t in rest[i:] if t != "--"]:
+                return "kill -1 manda la señal a todos tus procesos (los otros agentes y herdr incluidos)"
+    return ""
+
+
 def agente_en_main(session_id, marker):
     entry = (registry.load(marker.get("project_id", "")).get("agents") or {}).get(session_id) or {}
     return bool(entry.get("sin_worktree")) and entry.get("lanzado_por") == "lookout"
@@ -622,6 +824,22 @@ def handle(data, marker, rules=None):
     who = quien(marker, sid)
 
     if name == "PreToolUse":
+        mata = ""
+        if tool == "Bash":
+            # 0.13.23: a command the brake cannot read is denied (main() turns any exception into "allow")
+            comando = ti.get("command", "")
+            try:
+                # 0.13.25: a falsy value that is not text (None, [], 0) is unreadable too, not an empty command
+                mata = mata_procesos(comando) if isinstance(comando, str) else \
+                    "no pude leer el comando: no es texto (%s)" % type(comando).__name__
+            except Exception as ex:  # noqa: BLE001
+                mata = "no pude leer el comando: el freno falló (%s)" % type(ex).__name__
+        if mata:
+            emit(marker, dict(base, event="negado", motivo="matar procesos: " + mata))
+            return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                           "permissionDecisionReason": (
+                "lookout: %s. Otros agentes corren en esta máquina y morirían con su trabajo. %s No lo intentes "
+                "por otra vía; si no puedes, díselo al supervisor por SendMessage." % (mata, COMO_MATAR))}}
         if tool == "Bash" and agente_en_main(sid, marker):
             why = arbol_compartido(ti.get("command") or "")
             if why:

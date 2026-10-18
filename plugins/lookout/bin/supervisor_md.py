@@ -18,6 +18,12 @@ LOG_KEEP = 15  # supervisor answers shown in supervisor.md
 TXT = 220      # characters per quoted text
 
 
+def veredicto(d):
+    """How an answered decision reads (0.13.21): an answer with no yes or no (a modal that named no decision) authorizes
+    nothing, and says so; «respondió» alone read as still to be closed (3-tier 2026-10-17, d125 and d126)."""
+    return {True: "SÍ", False: "NO"}.get(d.get("aprueba"), "respondió, sin sí ni no (no autoriza nada)")
+
+
 def path(project_id):
     return os.path.join(lookout_state.project_dir(project_id), "supervisor.md")
 
@@ -134,7 +140,7 @@ def render(project_id, now=None):
     L += ["", "## Decisiones del usuario — tomadas"]
     respuestas = [x for x in slog if x.get("tipo") == "usuario"]
     L += ["- %s (%s): %s → %s: %s" % (d["id"], hhmm(d.get("hasta")), one_line(d["texto"], 120),
-                                      {True: "SÍ", False: "NO"}.get(d.get("aprueba"), "respondió"),
+                                      veredicto(d),
                                       one_line(d.get("respuesta"), 120))
           for d in tomadas] or ([] if respuestas else ["- ninguna"])
     if respuestas:

@@ -10,6 +10,7 @@ import time
 
 import lookout_state
 import registry
+import sesiones
 
 # `pausa` (provider limit) does not wake: it is not something to answer (Fase 6). `fallo` neither: only its 3rd repeat.
 # 0.12.2: `bg_wait` wakes only when its turn asked something (`pregunta`, wait_event): 19 of 36 wakes in 3-tier-memory
@@ -453,9 +454,12 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
     all_events, _ = lookout_state.read_events(project_id, 0)
     last, last_estado = {}, {}
     import heuristicas
+    last_se = {}  # 0.13.20: its last start/end, what retoma.salio_solo reads (as heuristicas.grupo does)
     for ev in all_events:
         if ev.get("event") != "notification":
             last[ev.get("session_id")] = ev
+        if ev.get("event") in ("start", "end"):
+            last_se[ev.get("session_id")] = ev
         if ev.get("event") not in heuristicas.NO_ESTADO:  # the event grupo() reads (0.13.3: the block's row)
             last_estado[ev.get("session_id")] = ev
     cur = lookout_state.read_json(cursor_path(project_id)) or {}
@@ -473,11 +477,13 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
     ecos = [ev for ev in new if es_eco(ev)]
     new = [ev for ev in new if not es_eco(ev)]
     import heuristicas
+    import retoma  # 0.13.20: an agent whose session ended without anyone asking stays, with `lookout retoma`
     # 0.13.4: a failed relief ended the session and started none; it stays until the relief is repeated or it is closed
     # and the session it tried to start is no agent (a ghost row «x~3b9909 | sin eventos»)
     vivos = {s: e for s, e in agents.items() if e.get("tarea_estado") != "relevada" and not e.get("retirado")
              and not (e.get("relevo_de") and e.get("tarea_estado") == "fallida" and s not in last)
-             and ((last.get(s) or {}).get("event") != "end" or e.get("tarea_estado") == "relevo-fallido")}
+             and ((last.get(s) or {}).get("event") != "end" or e.get("tarea_estado") == "relevo-fallido"
+                  or retoma.salio_solo(last_se.get(s), e))}
     head = ["Agentes (%d%s), por grupo: pestaña (nombre) | rama | tarea | último evento" % (
         len(vivos), ", +%d terminados" % (len(agents) - len(vivos)) if len(agents) > len(vivos) else "")]
     now = time.time()
@@ -502,6 +508,11 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
             if e.get("tarea_estado") == "relevo-fallido":  # 0.13.4: every wake, like a block, until attended
                 estado = "relevo fallido → díselo al usuario; `lookout relevo` otra vez, o una decisión --cierre --si-es y con su sí `lookout cierra-pestana … --usuario-confirmo <id>` (%s)" % (
                     e.get("tarea_motivo") or "?")
+                filas_bloque.append("  " + clip("%s | %s" % (registry.quien(e), estado), MAX_COLS - 2))
+            elif retoma.salio_solo(last_se.get(sid), e):  # 0.13.20: every wake, until it is resumed or closed
+                fin = last_se[sid]
+                estado = ("salió sin que nadie lo pidiera %s (SessionEnd «%s») → `lookout retoma %s %s`; tú, no el "
+                          "usuario" % (hhmmss(fin.get("ts")), fin.get("razon"), project_id, e.get("nombre")))
                 filas_bloque.append("  " + clip("%s | %s" % (registry.quien(e), estado), MAX_COLS - 2))
             elif blk:  # 0.13.3: the row says what to do, every wake, until it is attended
                 import retomar
@@ -530,7 +541,11 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
                 else:
                     estado += " (sin eventos hace %ds)" % int(now - float(beat.get("ts") or now))
             # Fase 9 E1: the indent goes on after clip(), which collapses spaces; the hidden-agents count relies on it
-            head.append("  " + clip("%s | %s | %s | %s" % (registry.quien(e), e.get("branch") or "-", e.get("tarea") or "-",
+            etiqueta = registry.quien(e)
+            to = sesiones.to(e)  # 0.13.24 (p-e9c8601cfb): after a relief or a /rename its session has another name
+            if to and to != e.get("nombre"):
+                etiqueta += " [to=%s]" % to
+            head.append("  " + clip("%s | %s | %s | %s" % (etiqueta, e.get("branch") or "-", e.get("tarea") or "-",
                                                           estado), MAX_COLS - 2))
             head += ["    ↳ " + clip(x, MAX_COLS - 6) for x in extra]
     import decisiones

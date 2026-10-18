@@ -35,7 +35,7 @@ sin `&&`, `;` ni `|` (cada subcomando tendría que tener su propio permiso).
      cuando llegue su evento `terminó su turno`.
    - `NO ENTREGADO … caja de entrada tiene borrador`: el usuario está escribiendo ahí. No escribas encima; avísale.
    - `hooks SIN CONFIRMAR`: dilo al usuario; ese agente no te avisará por hooks. Suscríbete a su fin de
-     turno como respaldo: `SendMessage` a su nombre con un mensaje corto y `notify_when_idle: true`
+     turno como respaldo: `SendMessage` a su `to` con un mensaje corto y `notify_when_idle: true`
      (un solo aviso; vuelve a suscribirte tras cada aviso). Ojo: no avisa mientras esté en un diálogo.
 3. Lanza el waiter: Bash con `run_in_background: true` y `timeout: 7200000`: `lookout espera <project_id>`.
 4. Carga ya `SendMessage` (ToolSearch `select:SendMessage`) si no lo tienes: lo usarás en cada respuesta.
@@ -43,7 +43,10 @@ sin `&&`, `;` ni `|` (cada subcomando tendría que tener su propio permiso).
 
 **Cómo nombrar a un agente ante el usuario:** por su **pestaña de herdr**, que es lo que él ve: «**Cambio DeepSeek**
 espera tu permiso…». `resumen` y los eventos ya lo traen así: `Cambio DeepSeek (cambio-deepseek)`. **Nunca le cites el
-pane** (`wS:p25`): no lo ve en ningún lado. El pane y el nombre son para tus comandos (`lookout`, `herdr`, `SendMessage`).
+pane** (`wS:p25`): no lo ve en ningún lado. El pane y el nombre son para tus comandos (`lookout`, `herdr`).
+**Para `SendMessage` usa el `to` que imprime lookout**, no su nombre: tras un relevo o un `/rename` la sesión puede
+llamarse de otro modo (`cambio-worktrees-2`). `inicia` lo trae en la columna `to (SendMessage)` y `resumen` lo añade a la
+fila como `[to=…]` cuando difiere del nombre; con `to desconocido`, usa el `from` de su último mensaje.
 
 ## Si eres el relevo de otro supervisor
 
@@ -170,6 +173,12 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
 - **`en pausa (límite del proveedor, no es falla)`**: `rate_limit` u `overloaded`. No despierta. No es falla de la tarea:
   no lo relances, no lo marques fallido, no le reasignes la tarea. Sigue solo cuando el proveedor lo deje.
 - **`salió`**: el agente cerró su sesión. Avísalo en la tabla.
+- **`salió sin que nadie lo pidiera … → lookout retoma`** (SessionEnd «other»: lo mató algo de fuera, no un `/exit`;
+  3-tier 2026-10-17, un `pkill` ajeno mató a tres): lo retomas TÚ con `lookout retoma <project_id> <agente>`, que corre
+  `claude --resume` con su misma sesión y sus flags en su pane (o en una pestaña nueva en su carpeta). Nunca le pidas al
+  usuario que teclee `claude --resume`. Lo que tenía en segundo plano murió con él: su primer mensaje te dirá qué quedó
+  a medias. Si `retoma` dice NO, haz lo que dice su motivo; si no puedes, escala al usuario. No lo confundas con
+  `lookout retomar <project_id>`, que es TU relevo de supervisor.
 - **`repite el mismo error`** (el mismo fallo de herramienta 3 veces, o 1 vez después de una corrección: esa corrección
   falló; los contadores los lleva lookout, no tú):
   **siempre como primer paso**, aunque ya sepas qué decir: `lookout corrige <project_id> <agente> --resumen "<qué falla,
@@ -400,7 +409,7 @@ lo dan por quieto si su último evento es un Stop y su transcript no cambió des
 p. ej. «No emito nada y termino aquí»; un `[COMPLETION-REVIEW` o «¿Cerrado? Sí» solos no bastan). Comprueba que su
 pantalla está quieta y con la caja vacía, y que no deja nada: cambios sin commit, commits suyos o sin dueño sin subir en su árbol
 (el dueño de un commit es la sesión que corría un `git commit` a esa hora, o su sucesor si la relevaron; uno de
-otro agente vivo no frena),
+otro agente vivo no frena; uno cuyo mismo parche ya está en la rama principal del remoto o en su upstream no cuenta),
 publicación pendiente, decisión abierta que lo nombre, mensaje suyo sin respuesta, una pregunta en su último turno o
 una tarea de fondo (con trabajo de fondo vivo, ver arriba: `--shells dN`). Con todo limpio hace `/exit`, cierra su pestaña (o solo su pane si comparte pestaña) y te da la
 línea para el usuario. Si dice `NO cierro …`, pásale al usuario el motivo en una línea; si el motivo es «mensaje sin
@@ -411,6 +420,12 @@ usuario debe haber elegido esa etiqueta (un `--cierra --si` tuyo no sirve). Salt
 bloque con trabajo» y «una pregunta en su último turno», que el usuario ya sopesó; las demás comprobaciones siguen
 (3-tier-memory, 2026-10-16: con d111 «Cerrarla», la «¿» de su «¿Cerrado? Sí.» frenaba el cierre). Un «Como retomar:
 Ninguno …» que cita un pendiente abierto llega como bloque `ambiguo` («dice «Ninguno» pero cita pendientes»): al modal.
+Si dice `NO cierro … con una copia rebasada en el remoto … local → remoto`: esos commits ya llegaron, con otro parche,
+por otro camino (un PR rebasado) y no son trabajo del agente, pero el cierre los sigue contando hasta que alguien
+decida qué hacer con la rama local. Compara tú los pares con `git range-diff` (lectura) y pregúntaselo al usuario:
+`lookout decision <project_id> --abre "<rama, los pares y lo que dice range-diff>" --agentes <agente> --si-es "<etiqueta: p. ej.
+Descartar la rama local>"` y su pregunta en el modal. Solo con esa etiqueta elegida le dices al agente (o a quien tenga el
+checkout) lo que el usuario aprobó, y después repites `cierra-pestana`. Nunca borres ni muevas la rama tú.
 
 ## Relevo del supervisor (presupuesto de contexto)
 

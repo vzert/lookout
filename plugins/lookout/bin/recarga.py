@@ -3,7 +3,13 @@ plugins (versiones.viejos), so the fixes reach it. /reload-plugins reloads hooks
 a local command: no hook event says it ran, so the screen confirms it («Reloaded: …»). Like the relief's /exit: only
 with the agent quiet (deliver.quieto) and its box empty (a suggestion counts as empty; a draft of the user's never), and never twice for
 the same installed versions (`recargado` in the registry, read by versiones.viejos).
+0.13.24 (p-eff2c277ba): the confirmation is the transcript's `local_command` row of /reload-plugins with «Reloaded:».
+The screen count gave 16 false «sin confirmar» in 3-tier (2026-10-17), each with that row in the agent's transcript inside
+the call: `agent read --source recent` of a Claude Code pane returns its visible rows only (47 on the test agent), so once
+the screen is full of «Reloaded:» a new one pushes an old one out and the count stays. The screen is read only when
+lookout finds no transcript; a prompt herdr did not type is said, not waited for (codex r1).
 """
+import json
 import time
 
 import deliver
@@ -18,6 +24,31 @@ def vistos(pane):
     return (out or "").count("Reloaded:") if code == 0 else 0
 
 
+def filas(path):
+    """How many /reload-plugins `local_command` rows with «Reloaded:» the transcript holds (None: unreadable)."""
+    n = 0
+    try:
+        fh = open(path, encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    with fh:
+        for line in fh:
+            if '"local_command"' not in line or "Reloaded:" not in line:
+                continue
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(d, dict) or d.get("type") != "system" or d.get("subtype") != "local_command":
+                continue
+            run = d.get("commandRun")  # «Reloaded:» alone does not say which command ran (codex r2)
+            if not isinstance(run, dict) or run.get("command") != "reload-plugins":
+                continue
+            if "<local-command-stdout>Reloaded:" in str(d.get("content") or ""):
+                n += 1
+    return n
+
+
 def recarga(project_id, entry, espera=10.0):
     """(ok, message)."""
     pane = entry.get("pane_id")
@@ -30,15 +61,21 @@ def recarga(project_id, entry, espera=10.0):
     box, _text = deliver.read_box(pane)
     if box not in ("vacia", "sugerencia"):
         return False, "NO: la caja de %s tiene %s. No escribo encima; recarga cuando quede vacía." % (nombre, box)
-    antes = vistos(pane)  # an older «Reloaded:» still on the screen confirms nothing
-    herdr_cli.run(["agent", "prompt", pane, "/reload-plugins"])
+    path = deliver.transcript_path(entry.get("session_id") or "")
+    t_antes = filas(path) if path else None
+    if t_antes is not None:  # with a transcript, only its new row confirms (a screen count may move by itself)
+        medir, antes, donde = (lambda: filas(path) or 0), t_antes, "su transcript"
+    else:
+        medir, antes, donde = (lambda: vistos(pane)), vistos(pane), "su pantalla (no encuentro su transcript)"
+    if herdr_cli.run(["agent", "prompt", pane, "/reload-plugins"])[0] != 0:  # codex r1: nothing typed, nothing to wait
+        return False, "NO: herdr no tecleó /reload-plugins en %s. Lee su pane antes de repetirlo." % nombre
     fin = time.time() + espera
     while True:
-        if vistos(pane) > antes:
+        if medir() > antes:  # an older «Reloaded:» confirms nothing
             break
         if time.time() >= fin:
-            return False, ("Tecleé /reload-plugins en %s, sin confirmar: no veo «Reloaded:» en su pantalla en %d s. "
-                           "Lee su pane antes de repetirlo." % (nombre, espera))
+            return False, ("Tecleé /reload-plugins en %s, sin confirmar: no veo «Reloaded:» nuevo en %s en %d s. "
+                           "Lee su pane antes de repetirlo." % (nombre, donde, espera))
         time.sleep(0.5)
     reg = registry.load(project_id)
     e = reg.get("agents", {}).get(entry.get("session_id"))
@@ -46,4 +83,4 @@ def recarga(project_id, entry, espera=10.0):
         e["recargado"] = versiones.instaladas()
         e["recargado_ts"] = time.time()
         registry.save(project_id, reg)
-    return True, "Recargué los plugins de %s (vi «Reloaded:» en su pantalla)." % nombre
+    return True, "Recargué los plugins de %s (vi «Reloaded:» en %s)." % (nombre, donde.split(" (")[0])

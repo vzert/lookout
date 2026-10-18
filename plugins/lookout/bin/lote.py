@@ -687,14 +687,15 @@ def lanza_uno(project_id, common_dir, item, plan, draft, modelo, confirmar, log,
 
 
 def arranca(project_id, sid, pane, wt, nombre, sysfile, modelo, lectura, clave, trigger, confirmar, log, puerto_de=None,
-            esfuerzo="", permisos=""):
+            esfuerzo="", permisos="", resume=False):
     """Start an already-registered session in `pane` with its system prompt file, accept the trust dialog only
     for its own folder, wait for its SessionStart and its prompt box, then deliver `trigger` once (deliver.py).
-    Shared by lanza (F2) and relevo (F3). Returns (ok, message)."""
+    Shared by lanza (F2), relevo (F3) and retoma (0.13.20: `resume` starts `claude --resume <sid>`, same session id).
+    Returns (ok, message)."""
     offset = deliver.events_size(project_id)
     port = ports.de(puerto_de) if puerto_de else None  # Fase 6: its port as $PORT (a relief gets the same)
     args = ["agent", "start", nombre, "--kind", "claude", "--pane", pane, "--timeout", "60000", "--",
-            "--session-id", sid, "-n", nombre, "--append-system-prompt-file", sysfile] + exec_args(
+            "--resume" if resume else "--session-id", sid, "-n", nombre, "--append-system-prompt-file", sysfile] + exec_args(
                 modelo, lectura, {"PORT": port} if port else None, esfuerzo, permisos)
     code, out, err = herdr_cli.run(args, timeout=75)
     log("agent start rc=%s %s" % (code, (out or err).strip()[:160]))

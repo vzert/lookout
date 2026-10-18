@@ -4,6 +4,7 @@ background shell (the footer «· N shells ·»), and /exit with a live shell op
 running» dialog, which cierra-pestana and relevo left open until their timeout.
 Run: python3 -m unittest tests/test_lookout_01310.py
 """
+import json
 import os
 import sys
 import time
@@ -225,8 +226,12 @@ class RecargaConShellTest(t138.RecargaTest):
     fechado = fechado
 
     def test_a_quiet_agent_with_a_shell_gets_it(self):
+        # 0.13.24: with a transcript, the /reload-plugins row Claude Code writes there is what confirms it
+        fila = json.dumps({"type": "system", "subtype": "local_command", "commandRun": {"command": "reload-plugins"},
+                           "content": "<local-command-stdout>Reloaded: 5 plugins</local-command-stdout>"}) + "\n"
         self.stub(agent_get={"agent_status": "working", "agent_session": {"value": self.sid}}, agent_read=f2.EMPTY_BOX,
-                  read_after_prompt="  ⎿  Reloaded: 5 plugins · 20 skills\n" + f2.EMPTY_BOX)
+                  read_after_prompt="  ⎿  Reloaded: 5 plugins · 20 skills\n" + f2.EMPTY_BOX,
+                  prompt_append={"path": os.path.join(self.projects, "-tmp-x", self.sid + ".jsonl"), "line": fila})
         now = time.time()
         self.fechado(now)
         stop(self.pid, self.sid, now - 20, "bg_wait", [SHELL])

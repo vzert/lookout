@@ -1,5 +1,143 @@
 # Changelog
 
+## 0.13.26
+
+- The two findings of round 3 of the adversarial review (codex break, Sonnet hold, 2026-10-18), after which the user
+  chose to close the review: `chrt` options that take a value (`-T`, `-P`, `-D` and their long forms) no longer hide
+  the command (`chrt -d -T 100000 -P 200000 0 pkill -f claude` is denied), and the `\;`, `';'` or `";"` that ends a
+  `find -exec` is kept as one word, so `find . -exec sh -c "pkill -f claude" \;` is judged as the `sh -c` it runs.
+  A `\;` outside `find` is a literal argument, not a separator, as in bash. Still not covered (pendiente
+  p-4f3fe84d89): a kill inside a quoted string that another program runs (`xargs -I{} sh -c "pkill -f {}"`,
+  `watch "pkill -f claude"`), and sessions lookout did not register.
+
+## 0.13.25
+
+- Findings of round 2 of the adversarial review of 0.13.23 (Sonnet and codex break, 2026-10-18; 0.13.24 is another
+  session's, on its own branch):
+  - `xargs -I{} pkill {}` passed the brake: the subshell scanner turns `{}` into a separator, so `xargs` and `pkill`
+    fell into two commands. `{}` is now kept as a word before the scanner runs.
+  - `env -S "<command>"` / `--split-string` is read as the command it runs; `env -P <dir>`, `coproc`, and the
+    wrappers of the notes (`setsid`, `ionice`, `chrt` with its priority, `doas`, `watch`) are looked through; a
+    `find -exec`/`-execdir`/`-ok`/`-okdir` command is judged as a command of its own.
+  - A falsy command that is not text (`None`, `[]`, `0`, `False`, `{}`) is denied as unreadable; before, it became an
+    empty command and passed. An empty string still passes.
+  - `ramas_destino` falls back to `<remote>/main` and `<remote>/master` also when the remote's HEAD names a branch that
+    is gone; before, it returned nothing and every commit counted as unpushed.
+
+## 0.13.24
+
+- The name SendMessage takes for an agent (p-e9c8601cfb). After a relief or a `/rename` an agent's session can have
+  another name than lookout's: in 3-tier (2026-10-17) to=cambio-worktrees gave «No agent named» (the session was
+  cambio-worktrees-2) and to=correccion-snipet-de-cierre «not reachable» (the session had renamed itself). lookout now
+  reads each live session's name from Claude Code's `<config>/sessions/<pid>.json` (a file whose process is gone, that
+  has no `procStart`, or whose pid now belongs to a process started at another time, counts as none): `inicia` prints it in a `to (SendMessage)` column (`to desconocido` when it is not there), `resumen` adds
+  `[to=…]` to a row whose session name differs from lookout's, and the supervisor's relief notice and `corrige` name it.
+  The supervisa skill says to use that `to`.
+- `lookout recarga` no longer says «sin confirmar» after a reload that happened (p-eff2c277ba). Measured: in 3-tier
+  13 of 40 calls said it, and in all 13 the agent's transcript has its /reload-plugins `local_command` row «Reloaded: …»
+  written when lookout typed it, inside the 10 s wait. The defect was the screen count: `agent read --source recent` of
+  a Claude Code pane gives only its visible rows, so on a screen full of «Reloaded:» lines a new one pushes an old one
+  out and the count stays. On a test agent (2026-10-18) all 20 reloads left their transcript row and the screen count
+  missed 5: 3 on a full screen, 1 read herdr refused while the agent answered a message typed into it, and 1 after that
+  answer redrew the screen with fewer «Reloaded:» lines. Neither the 10 s wait nor a lost Enter was the cause. With a
+  transcript, only its new row confirms the reload now (a `local_command` row whose `commandRun` is reload-plugins); the screen count is used only when lookout finds no transcript,
+  and the message says which one it read. A prompt herdr did not type is said, not waited for. Nothing is typed twice.
+
+## 0.13.23
+
+- Findings of the adversarial review of 0.13.18 and 0.13.22 (codex break, Sonnet hold with notes, 2026-10-18):
+  - The pkill brake now looks through wrappers and shell keywords before judging the command: `timeout`, `nice`,
+    `env` (with -i, -u and assignments), `stdbuf`, `nohup`, `exec`, `command`, `time`, `sudo`, `xargs`, `then`, `do`,
+    `else`, `if`, `while`, `until`, and `eval`'s words. A `pkill` or `killall` whose arguments come from `xargs` is
+    denied (they are not in the text), and so is a `kill` fed by `xargs` unless a `pgrep` of the same line gives its
+    pids (that `pgrep` is judged like a `pkill`).
+  - A command the brake cannot read (not text, or an error inside the brake) is denied; before, `main()` turned the
+    exception into no output, which lets the command run.
+  - `cierra-pestana` counts a commit as upstream only when its patch is on the remote's main branch (its HEAD, else
+    main or master) or on the branch's upstream; 0.13.22 took any remote ref, so the same patch on an unrelated branch
+    let a tab close. The live 3-tier commits still give 3 upstream and 3 rebased copies (against origin/main).
+  - The supervisa skill says what to do with «copia rebasada»: compare with `git range-diff`, ask the user with
+    `lookout decision … --si-es`, act only on that choice, then repeat `cierra-pestana`; never move the branch itself.
+
+## 0.13.22
+
+- `cierra-pestana` no longer blames an agent for commits that are already upstream. Live (3-tier, 2026-10-17 17:05),
+  it refused to close pendientes-sin-id for «6 commit(s) suyo(s) sin subir»: they were the 2.58.1 commits its first
+  session (900f49bf, 2026-10-14, before its current task) left on the old branch reopen-replay-ts, whose content had
+  reached main through a rebased PR. Before counting, lookout now compares the unpushed commits with every remote ref
+  of the 30 days before the oldest: one whose patch is there (`git patch-id --stable`) does not count; one with a copy
+  of the same subject and author but another patch (a rebase that resolved a conflict) blocks as «copia rebasada»,
+  with both hashes, `git range-diff` and the branch to ask the user about, not as the agent's work; and one made only
+  by an earlier session of its chain stays its own (its chain's work to push, as since 0.13.2) and names that session
+  and the commits' dates. On the live commits this gives
+  exactly what `git cherry` gives: 3 upstream, 3 rebased copies. If git takes more than 30 s it falls back to the old
+  count.
+
+## 0.13.21
+
+- `lookout decision … --cierra dN` on a decision that is already answered says so. Live (3-tier, 2026-10-17), the
+  vigía's test modals d125 and d126 named no decision, so the hook opened each as its own entry and closed it with the
+  user's answer («Listo»), with no yes or no. The supervisor then tried `--cierra d125` and got «No hay una decisión
+  abierta d125.» (rc 5), which read as if it did not exist. Now an answered decision prints how it was answered and its
+  answer (rc 0, nothing rewritten), an unknown id says it does not exist (rc 5), and supervisor.md shows an answer with
+  no yes or no as «respondió, sin sí ni no (no autoriza nada)» instead of a bare «respondió».
+
+## 0.13.20
+
+- `lookout retoma PROYECTO AGENTE`: an agent whose session ended without anyone asking (SessionEnd «other», not a
+  `/exit`) starts again with `claude --resume <sid>`, its context intact. Live (3-tier, 2026-10-17 22:42), a stray
+  `pkill … -n` killed three reliefs; their panes stayed at a shell prompt, but they left the digest table, `relevo`
+  needs the session alive, `lanza` only opens new agents, and the supervisor asked the user to type `claude --resume`
+  by hand. `--resume` keeps the session id (measured the next morning: SessionStart with source «resume» and the same
+  id), so its marker, registry entry and task still hold. `retoma` runs it in its own pane when that pane is at a shell
+  prompt in the session's folder (another live session there, or another folder: NO with the reason), or opens a new
+  tab on that folder when the pane is gone; with the name, system prompt file, model, effort and permission mode it ran
+  with (from the registry, else its transcript; one missing: NO). Its trigger says when and why it ended, that its
+  background work died with it, and asks for 3 lines to the supervisor. Not for a relieved, closed or failed-relief
+  agent (`relevo` repeats that one), nor when its transcript lives under another folder than its registered one
+  (`--resume` would not find it). A start that fails leaves `retoma-fallida`, not `fallida`, so `lookout pendientes`
+  does not launch a new agent for its task while the digest still asks to resume it. It does not look at the session
+  cap: it gives back a slot the agent already had. `lote.arranca` takes `resume=True` for it.
+- The digest keeps such an agent in «Te necesita» on every wake: «salió sin que nadie lo pidiera HH:MM (SessionEnd
+  «other») → `lookout retoma P agente`; tú, no el usuario». The supervisa skill says the same. A live supervisor that
+  already read the skill needs `/lookout:supervisa` again after `/reload-plugins` to see it (rule 6); the digest row
+  reaches it without that. Entering «Te necesita» notifies like any other agent there: a killed agent now wakes the
+  waiter and shows a herdr notification.
+
+## 0.13.19
+
+- «hooks viejos» counts the reload lookout typed. Live (3-tier, 2026-10-16/17), prompts-repetidos stayed idle for 22 h
+  with no hook event, the last one written by hooks older than 0.13.8. The supervisor reloaded it 4 times with
+  «Reloaded:» on screen, and each time lookout was updated again the row came back as «lookout <0.13.8», the version of
+  that old event: the reload looked useless and the supervisor reloaded in a loop. A reload loads what was installed
+  then (`recargado`), so the row now takes the newer of that and the last event's version (also for the plugins its
+  hooks cite), and says «ya recargado; la X llegó después» when only a later update makes it old again.
+
+## 0.13.18
+
+- A brake on killing processes by name. Live (3-tier, 2026-10-17 22:42:47), a subagent ran
+  `pkill -f "tools/run-tests.sh" -n`: macOS's pkill stops reading options at the first pattern, so `-n` was a second
+  pattern and every process with "-n" in its command line got SIGTERM, including the three reliefs lookout had started
+  with `claude … -n <nombre>` and three test suites. The PreToolUse[Bash] hook now denies, for every registered agent
+  (and its subagents) in every mode, before anything runs: an option after the pattern of `pkill` or `pgrep`; a
+  `pkill` or `killall` pattern that matches a Claude session as lookout starts it, herdr, lookout's waiter or a shell
+  (`claude`, `session-id`, `lookout`, `bash`, `.`, the user's home…), judged on samples built with this machine's real
+  paths, not on the live process list; the same for a `pgrep` in a command that also runs `kill` or `xargs`
+  (`kill $(pgrep -f claude)`); a pattern built at run time or that is not a valid regex; and `kill -1`. Also inside
+  `sh -c '…'`, subshells and after `sudo`. Subagents' hooks arrive with their parent's session id (measured in 3-tier:
+  27 events of commands only subagents ran), so they are covered. The reason tells the agent to look with `pgrep -lf`
+  and kill by pid. A lone `pgrep` with a broad pattern still passes (a read). Not covered: a session lookout did not
+  register (the supervisor, an agent started by hand) until it is registered, and `pkill` behind `timeout`, `nice`,
+  `xargs` or `env -i`. Live agents get it after `lookout recarga`.
+
+## 0.13.17
+
+- `lookout relevo --retomar` says it takes the path of a file. Live (3-tier, 2026-10-17), the help showed only
+  `--retomar RETOMAR`, the supervisor passed the «Como retomar» text itself, and lookout died with a
+  FileNotFoundError traceback. The help now reads `--retomar ARCHIVO` with what the file holds, and a value that is
+  not a readable file (missing, a folder, not UTF-8) is refused with one line that says what it wants (rc 2),
+  before the lock or the agent are looked at.
+
 ## 0.13.16
 
 - The question of a `lookout decision --permiso` names where an agent's `git push` really goes, as lookout read it.

@@ -543,6 +543,10 @@ def grupo(events, sid, entry=None, decs=None):
     entry = entry or {}
     if entry.get("tarea_estado") == "relevo-fallido":
         return "te_necesita"  # 0.13.4: its session ended in the relief and no new one started (live 3-tier 2026-10-16)
+    import retoma
+    if retoma.salio_solo(next((ev for ev in reversed(events) if ev.get("session_id") == sid
+                               and ev.get("event") in ("start", "end")), None), entry):
+        return "te_necesita"  # 0.13.20: its session ended without anyone asking (live 3-tier 2026-10-17, a stray pkill)
     for ev in reversed(events):
         if ev.get("session_id") != sid or ev.get("event") in NO_ESTADO:
             continue
