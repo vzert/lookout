@@ -340,6 +340,26 @@ NO, no lo rodees ni lo reformules: pásale al agente el texto del NO.
 5. Cuando el agente diga que hizo el push: `lookout publica <project_id> <agente> --hecho`. Si hay otro en la
    cola, avísale lo que dice la salida. Con la cola vacía, recuérdale al usuario retirar la regla temporal.
 
+**Modo PR** (proyectos donde cada agente publica en su rama y el usuario fusiona un pull request; se fija una vez con
+`lookout publica <project_id> --modo pr`, y `--cola` lo muestra en su cabecera). Los pasos 1-4 son los mismos, con
+estas diferencias:
+- `publica` comprueba la rama del agente, no exige fast-forward sobre main y pide una versión mayor que la de main
+  que siga el orden de fusión: mayor que la de los PR que van antes y menor que la de los que van después (un PR
+  nuevo va al final; uno que se verifica otra vez tras commits nuevos conserva su lugar). `LISTA` trae la orden
+  `git push origin HEAD:refs/heads/<rama>`; después el agente
+  abre el PR (`gh pr create`, la salida dice cuál) y te da su número.
+- Paso 5: `lookout publica <project_id> <agente> --hecho --pr <N>`. Deja la publicación `pr-abierto`: no frena al
+  siguiente agente, no caduca aunque el agente termine o lo releves, y el resumen la pasa a publicada cuando el PR se
+  fusiona (o a caducada si se cierra). Si avisa de una fusión fuera de orden, díselo al usuario.
+- **Fusionar** es una decisión del usuario, aparte del push. Si quiere que la hagas tú, abre la decisión con
+  `--si-es`: `lookout decision <project_id> --abre "¿Fusiono el PR #<N> (<agente>, versión X) en main?" --agentes
+  <agente> --si-es "<etiqueta del sí>"` (el texto **debe** nombrar `#<N>`), pregúntale en tu modal y, solo si elige esa opción:
+  `lookout publica <project_id> --fusiona <N> --decision <id>`. lookout comprueba el sí, el head verificado, que
+  GitHub lo deje fusionar con los checks en verde y el orden de fusión. Solo vale la elección del usuario en tu modal
+  (una decisión que cierres tú a mano no autoriza la fusión). Si dice `FUERA-DE-ORDEN` y el usuario quiere
+  este antes, pregúntaselo y repite con `--fuera-de-orden`. Un sí vale para una fusión: si falla, pide otro. Nunca
+  corras `gh pr merge` a mano.
+
 **Otra ronda de adversario:** antes de pedirla o aceptarla, `lookout gobierno <project_id> <agente> --para ronda`.
 Con `PREGUNTA-USUARIO` (ya van 5) pregúntale al usuario antes de abrir la 6: abrir otra / registrar lo que
 queda como pendientes propuestos y cerrar / parar. Si dice abrir otra:

@@ -28,9 +28,14 @@ Subcommands (PROYECTO = a path inside the repo, or its project_id):
   gobierno PROYECTO AGENTE [--para push|ronda] [--usuario-amplia N --decision ID]
                                 goalspec governance (F3): may this agent's push go to the user? may it open one
                                 more adversary round? (from its own transcript; exit 5 = no)
-  publica PROYECTO AGENTE [--worktree RUTA] [--hecho | --retira]   publications in order (H14): verify and queue;
-                                --worktree when the agent works in a worktree its registry entry does not name
+  publica PROYECTO AGENTE [--worktree RUTA] [--hecho [--pr N] | --retira]   publications in order (H14): verify and
+                                queue; --worktree when the agent works in a worktree its registry entry does not name;
+                                in PR mode --hecho takes the number of the PR the agent opened
   publica PROYECTO --cola       the publication queue
+  publica PROYECTO --modo pr|directo  how this project publishes (0.13.27): pushes to main (directo, the default) or
+                                a branch + pull request per agent that the user merges (pr)
+  publica PROYECTO --fusiona N --decision ID [--fuera-de-orden]  merge open PR N of the queue (merge commit) on the
+                                user's yes in your modal: verified head, mergeable, checks green, first in merge order
   regla-push PROYECTO [--estado]  the temporary push rule the USER applies (H15); --estado reads whether it is on
   permisos                      the executors' permission rules (D6, F5): active or not, where the user activates them
   cierra PROYECTO AGENTE [--estado resolved|superseded|abandoned] --nota N --usuario-confirmo DECISION_ID [--sin-push RAZON]
@@ -607,13 +612,27 @@ def cmd_gobierno(a):
 
 def cmd_publica(a):
     pid, common = project(a.proyecto)
+    if getattr(a, "modo", ""):
+        with lote.project_mutex(pid):
+            publica.pon_modo(pid, a.modo)
+        print("Modo de publicación de %s: %s." % (pid, a.modo))
+        print("Un agente publica con push a su rama y un PR que fusiona el usuario (o tú, con su sí: --fusiona)."
+              if a.modo == "pr" else "Un agente publica con push directo a la rama principal de origin.")
+        return 0
+    if getattr(a, "fusiona", 0):
+        with lote.project_mutex(pid):
+            ok, code, lines = publica.fusiona(pid, a.fusiona, a.decision, getattr(a, "fuera_de_orden", False))
+        print("\n".join(lines))
+        print("")
+        print(code)
+        return 0 if ok else 5
     if a.cola or not a.agente:
         print(publica.render_cola(pid))
         return 0
     e = agent_entry(pid, a.agente)
     with lote.project_mutex(pid):
         if a.hecho:
-            ok, lines = publica.hecho(pid, e)
+            ok, lines = publica.hecho(pid, e, pr=getattr(a, "pr", 0) or None)
             print("\n".join(lines))
             return 0 if ok else 5
         if a.retira:
@@ -639,6 +658,12 @@ def cmd_publica(a):
         print("Siguiente: `lookout decision %s --abre \"<qué decide>\" --agentes %s --si-es \"<etiqueta del sí>\"` y pásale al usuario este push "
               "para que lo apruebe en un AskUserQuestion (junto con sus otras decisiones pendientes, nunca en prosa), "
               "con el resumen de arriba." % (pid, e["nombre"]))
+        if publica.modo(pid) == "pr":
+            me = publica.entry_of(publica.load(pid), e["session_id"]) or {}
+            print("Modo PR: tras el push, el agente abre el PR (`gh pr create --base %s --head %s --fill`) y te da su "
+                  "número; entonces `lookout publica %s %s --hecho --pr <N>`. Fusionarlo es otra decisión del usuario "
+                  "(`lookout publica %s --fusiona <N> --decision <id>`)." % (
+                      me.get("rama_base") or "main", me.get("rama_remota") or "<rama>", pid, e["nombre"], pid))
         if est == "aplicada":
             print("Regla temporal de push: APLICADA. Con el sí del usuario, dile al agente que corra la orden exacta, sola.")
         else:
@@ -955,6 +980,11 @@ def main():
     p = sub.add_parser("publica"); p.add_argument("proyecto"); p.add_argument("agente", nargs="?")
     p.add_argument("--hecho", action="store_true"); p.add_argument("--retira", action="store_true")
     p.add_argument("--cola", action="store_true"); p.add_argument("--worktree", default="")
+    p.add_argument("--modo", choices=list(publica.MODOS), default="")
+    p.add_argument("--pr", type=int, default=0, help="--hecho en modo PR: el número del PR que abrió el agente")
+    p.add_argument("--fusiona", type=int, default=0, metavar="N", help="fusiona el PR N de la cola con el sí del usuario")
+    p.add_argument("--decision", default="", help="--fusiona: la decisión dN que el usuario respondió con el sí")
+    p.add_argument("--fuera-de-orden", action="store_true", help="--fusiona: un PR que no es el primero en fusionar")
     p = sub.add_parser("regla-push"); p.add_argument("proyecto"); p.add_argument("--estado", action="store_true")
     sub.add_parser("permisos")
     p = sub.add_parser("cierra"); p.add_argument("proyecto"); p.add_argument("agente")

@@ -575,9 +575,9 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
             dl = dl[:6] + ["(+%d decisiones más: %s; sus preguntas: `lookout decision %s`)" % (
                 len(dl) - 6, ", ".join(it["id"] + decisiones.etiquetas(it) for it in ocultas), project_id)]
         tail += dl
-    if mark and any(p["estado"] in ("esperando", "turno", "lista") for p in publica.load(project_id)["cola"]):
-        tail += [clip(x) for x in publica.concilia(project_id)]  # Fase 9 E3
-    if any(p["estado"] in ("esperando", "turno", "lista") for p in publica.load(project_id)["cola"]):
+    if mark and any(p["estado"] in publica.EN_COLA for p in publica.load(project_id)["cola"]):
+        tail += [clip(x) for x in publica.concilia(project_id)]  # Fase 9 E3; 0.13.27: open PRs too
+    if any(p["estado"] in publica.EN_COLA for p in publica.load(project_id)["cola"]):
         cola = publica.render_cola(project_id)
         vistos_ahora["publicaciones"] = clave([cola])
         if por_waiter and antes.get("publicaciones") == vistos_ahora["publicaciones"]:

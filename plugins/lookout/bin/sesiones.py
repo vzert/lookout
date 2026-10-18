@@ -4,7 +4,7 @@
 still held the name: Claude Code called it cambio-worktrees-2), to=correccion-snipet-de-cierre gave «not reachable» (the
 session had renamed itself). Claude Code keeps each live session in <config>/sessions/<pid>.json (sessionId, name,
 messagingSocketPath, procStart); a file whose process is gone names nobody, and neither does one whose pid the system
-gave to another process since (its start time is not the file's procStart: codex r1).
+gave to another process since (its start time is not the file's procStart: codex r1) or one with no procStart (codex r2).
 """
 import glob
 import json

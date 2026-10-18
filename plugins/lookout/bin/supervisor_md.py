@@ -168,8 +168,10 @@ def render(project_id, now=None):
     tareas = cnt.get("tareas") or {}
     L += ["- %s: %d rondas (límite %s); último: %s" % (t, v.get("rondas", 0), v.get("limite", 5), v.get("ultimo", "-"))
           for t, v in tareas.items()] or ["- sin rondas de adversario"]
-    cola = [p for p in publica.load(project_id)["cola"] if p.get("estado") in ("esperando", "turno", "lista")]
-    L += ["- cola de publicación: " + (", ".join("%s (%s)" % (p.get("nombre"), p.get("estado")) for p in cola) or "vacía")]
+    led = publica.load(project_id)
+    cola = [p for p in led["cola"] if p.get("estado") in publica.EN_COLA]
+    L += ["- cola de publicación: " + (", ".join("%s (%s)" % (p.get("nombre"), " ".join(
+        x for x in (p.get("estado"), publica.pr_texto(led, p)) if x)) for p in cola) or "vacía")]
     L += ["", "## Como retomar", "```", retomar(project_id, repo, md, abiertas, len(sin_resp)), "```", ""]
     return "\n".join(L)
 

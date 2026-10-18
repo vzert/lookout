@@ -8,6 +8,15 @@ goes to the user the supervisor checks on its own, read-only, in the agent's wor
   other publication in the ledger, and no private paths in the added lines.
 Anything else is a NO with what to do (fetch + rebase + renumber + suites, then ask again).
 
+PR mode (0.13.27, p-ca286da56c): a project whose agents publish through a branch and a pull request (3-tier-memory:
+the user merges). `--modo pr` is kept in publicaciones.json; the check then runs against the agent's own branch (no
+fast-forward over main: a line says how far behind it is), the version must be above origin's and follow the merge
+order (above every PR before it, below every PR after it; a re-check of an open PR keeps its place), LISTA orders the
+push to that branch, `--hecho --pr N` reads the PR with gh and leaves it `pr-abierto`
+(it never expires with its session: the PR lives on without its agent), and concilia turns it into `publicada` when
+the PR is merged or `caducada` when it is closed. `--fusiona N --decision dK` runs the merge itself, only with the
+user's yes to that PR in the supervisor's modal, on the verified head, mergeable, checks green and in merge order.
+
 H15: auto mode refused a push the user approved through the coordinator's message. A message is not
 consent; a permission rule the user writes is. `regla` prints the exact rule text for the main
 checkout's .claude/settings.local.json (V13, 2026-10-02: that one file covers every linked worktree,
@@ -31,6 +40,13 @@ PRIVATE_RE = re.compile(r"/Users/[^/\s'\"]+|/home/[^/\s'\"]+|/root/|/var/root/|/
                         r"(?<![\w.])/tmp/|/var/tmp/|(?<![\w])~/")
 SEMVER_RE = re.compile(r"\b(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\b")
 VIVAS = ("turno", "lista")
+ABIERTO = "pr-abierto"
+EN_COLA = ("esperando",) + VIVAS + (ABIERTO,)
+MODOS = ("directo", "pr")
+GH_TIMEOUT = 60
+PR_CADA = 60  # seconds between two gh reads of the same open PR (concilia runs in every resumen)
+PR_CAMPOS = ("number,state,headRefName,headRefOid,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,"
+             "mergeCommit,url")
 
 
 def git(wt, *args, timeout=20):
@@ -39,6 +55,27 @@ def git(wt, *args, timeout=20):
     except (OSError, subprocess.TimeoutExpired):
         return 124, ""
     return out.returncode, out.stdout
+
+
+def gh(args, cwd):
+    """(rc, text): stdout on success, stderr on failure; 124 when gh is missing or hangs. Tests replace it."""
+    try:
+        out = subprocess.run(["gh"] + list(args), cwd=cwd or None, capture_output=True, text=True, timeout=GH_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired):
+        return 124, ""
+    return out.returncode, out.stdout if out.returncode == 0 else (out.stderr or out.stdout)
+
+
+def pr_view(n, cwd):
+    """The PR as gh reports it (dict), or None when gh fails or answers something else."""
+    rc, out = gh(["pr", "view", str(n), "--json", PR_CAMPOS], cwd)
+    if rc != 0:
+        return None
+    try:
+        d = json.loads(out)
+    except ValueError:
+        return None
+    return d if isinstance(d, dict) else None
 
 
 # ---------- version of a tree ----------
@@ -77,6 +114,11 @@ def version_at(wt, rev):
     return "", ""
 
 
+def vkey(v):
+    m = re.match(r"(\d+)\.(\d+)\.(\d+)", v or "")
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
 def is_version_file(path):
     base = os.path.basename(path)
     return base in ("VERSION", "package.json", "pyproject.toml", "CHANGELOG.md") or path.endswith(".claude-plugin/plugin.json")
@@ -97,7 +139,41 @@ def save(project_id, led):
 
 
 def entry_of(led, session_id):
-    return next((p for p in led["cola"] if p["session_id"] == session_id and p["estado"] not in ("publicada", "retirada")), None)
+    # an open PR is no longer the agent's live publication: the agent may ask again for new work
+    return next((p for p in led["cola"] if p["session_id"] == session_id
+                 and p["estado"] not in ("publicada", "retirada", ABIERTO)), None)
+
+
+def modo(project_id):
+    m = load(project_id).get("modo")
+    return m if m in MODOS else "directo"
+
+
+def pon_modo(project_id, m):
+    if m not in MODOS:
+        raise ValueError(m)
+    led = load(project_id)
+    led["modo"] = m
+    save(project_id, led)
+
+
+def repo_of(wt):
+    """The main checkout of the repository `wt` belongs to: gh runs there, it outlives the agent's worktree."""
+    rc, com = git(wt, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    com = com.strip().rstrip("/")
+    if rc != 0 or not com:
+        return wt
+    return os.path.dirname(com) if os.path.basename(com) == ".git" else com
+
+
+def orden_de(p):
+    """Place in the merge order: when the PR's first publication was verified (a re-check keeps it)."""
+    return p.get("orden") or p.get("verificada") or 0
+
+
+def abiertos(led):
+    """The open PRs in merge order."""
+    return sorted((p for p in led["cola"] if p["estado"] == ABIERTO), key=orden_de)
 
 
 def remote_branch(entry):
@@ -211,6 +287,8 @@ def verifica(project_id, entry, st, led, me):
             return False, "SUCIO", lines + ["NO: el worktree tiene cambios sin commit:\n" + "\n".join(propios)]
         lines.append("Aviso: el checkout es compartido; estos cambios sin commit los editó otro agente y %s no "
                      "(no van en el push, que solo lleva commits):\n%s" % (entry.get("nombre"), "\n".join(ajenos)))
+    if modo(project_id) == "pr":
+        return verifica_pr(entry, led, me, wt, lines)
     branch = remote_branch(entry)
     tip = remote_tip(wt, branch)
     if not tip:
@@ -245,13 +323,90 @@ def verifica(project_id, entry, st, led, me):
     hits = private_hits(wt, tip)
     if hits:
         return False, "RUTAS-PRIVADAS", lines + ["NO: líneas nuevas con rutas privadas:"] + ["  " + h for h in hits]
-    me.update(head=head, base=tip, version=vhead, archivo_version=vfile, rama_remota=branch, verificada=time.time())
+    me.update(head=head, base=tip, version=vhead, archivo_version=vfile, rama_remota=branch, verificada=time.time(),
+              modo="directo")
     lines += ["Base: origin/%s = %s, fast-forward: sí" % (branch, tip[:9]),
               "Commits (%d):" % len(commits.strip().splitlines())] + ["  " + c for c in commits.strip().splitlines()] + [
               ("Versión: %s (%s; origin tenía %s)" % (vhead, vfile, vbase or "-") if vhead else
                "Versión: no la cambia (%s)" % ("origin tiene %s en %s" % (vbase, vfile) if vfile else "sin archivo de versión")),
               "Rutas privadas en el diff: ninguna",
               "LISTA para pasar al usuario. Orden exacta para el agente, sola: git push origin HEAD:%s" % branch]
+    return True, "LISTA", lines
+
+
+def verifica_pr(entry, led, me, wt, lines):
+    """PR mode: the push goes to the agent's own branch and the user merges, so main may have moved on (no
+    fast-forward needed); commits, version and private paths are read from where the branch leaves main."""
+    base_branch = remote_branch(entry)
+    _, rama = git(wt, "rev-parse", "--abbrev-ref", "HEAD")
+    rama = rama.strip()
+    if not rama or rama == "HEAD" or rama == base_branch:
+        return False, "SIN-RAMA", lines + [
+            "NO: en modo PR el agente publica desde una rama propia y %s está en %s. Dile que lleve sus commits a una "
+            "rama nueva (`git switch -c <rama>`) y vuelva a pedirlo." % (wt, rama or "?")]
+    tip = remote_tip(wt, base_branch)
+    if not tip:
+        return False, "SIN-ORIGIN", lines + ["NO: no leo origin/%s (ls-remote)." % base_branch]
+    rc, mb = git(wt, "merge-base", tip, "HEAD") if git(wt, "cat-file", "-e", tip + "^{commit}")[0] == 0 else (1, "")
+    mb = mb.strip()
+    if rc != 0 or not mb:
+        return False, "BASE-DESCONOCIDA", lines + [
+            "NO: origin/%s está en %s y este árbol no tiene ese commit. Dile: `git fetch origin` y que vuelva a pedirlo "
+            "(en modo PR no hace falta rebase, salvo que GitHub diga que hay conflictos)." % (base_branch, tip[:9])]
+    _, head = git(wt, "rev-parse", "HEAD")
+    head = head.strip()
+    _, commits = git(wt, "log", "--oneline", mb + "..HEAD")
+    if not commits.strip():
+        return False, "NADA", lines + ["NO: la rama %s no tiene commits propios sobre origin/%s." % (rama, base_branch)]
+    rtip = remote_tip(wt, rama)
+    if rtip and rtip != head and (git(wt, "cat-file", "-e", rtip + "^{commit}")[0] != 0
+                                  or git(wt, "merge-base", "--is-ancestor", rtip, "HEAD")[0] != 0):
+        return False, "RAMA-DIVERGE", lines + [
+            "NO: origin/%s está en %s y la rama local no lo contiene: el push necesitaría --force, que está prohibido. "
+            "Dile: `git fetch origin`, que lleve sus commits encima de origin/%s (o que use una rama nueva) y vuelva a "
+            "pedirlo." % (rama, rtip[:9], rama)]
+    _, detras = git(wt, "rev-list", "--count", "HEAD.." + tip)
+    vfile, vhead = version_at(wt, "HEAD")
+    _, vbase = version_at(wt, tip)
+    _, touched = git(wt, "diff", "--name-only", mb + "..HEAD")
+    release = [f for f in touched.splitlines() if is_version_file(f)]
+    if vfile and not release:
+        vhead = ""
+    elif vfile:
+        kh, kb = vkey(vhead), vkey(vbase)
+        if (kh and kb and kh <= kb) or (not (kh and kb) and vhead == vbase):
+            return False, "VERSION-VIEJA", lines + [
+                "NO: la rama declara %s (%s) y origin/%s ya tiene %s. En modo PR la versión va por encima de la de main: "
+                "dile `git fetch origin`, renumera por encima de %s, corre sus suites y vuelve a pedirlo." % (
+                    vhead, vfile, base_branch, vbase, vbase)]
+        # the open PR of this same branch is this publication's own earlier check (new commits after a review): no
+        # rival, and this check keeps its place in the merge order. Versions follow that order: above every PR before
+        # it, below every PR after it.
+        propio = [p for p in led["cola"] if p is not me and p["estado"] == ABIERTO and p.get("rama_remota") == rama]
+        mi_orden = min(orden_de(p) for p in propio) if propio else float("inf")
+        otros = [p for p in led["cola"] if p is not me and p not in propio and p["estado"] in ("lista", ABIERTO)
+                 and p.get("version")]
+        for p in otros:
+            kp = vkey(p["version"])
+            antes = orden_de(p) < mi_orden
+            if p["version"] == vhead or (kp and kh and (kp >= kh if antes else kp <= kh)):
+                return False, "VERSION-USADA", lines + [
+                    "NO: la versión %s choca con la %s de %s (%s%s, %s en el orden de fusión). En modo PR las versiones "
+                    "siguen ese orden: renumera %s %s." % (
+                        vhead, p["version"], p.get("nombre"), p["estado"], " #%s" % p["pr"] if p.get("pr") else "",
+                        "antes" if antes else "después", "por encima de" if antes else "por debajo de", p["version"])]
+    hits = private_hits(wt, mb)
+    if hits:
+        return False, "RUTAS-PRIVADAS", lines + ["NO: líneas nuevas con rutas privadas:"] + ["  " + h for h in hits]
+    me.update(head=head, base=tip, merge_base=mb, version=vhead, archivo_version=vfile, rama_remota=rama,
+              rama_base=base_branch, repo=repo_of(wt), modo="pr", verificada=time.time())
+    lines += ["Base: origin/%s = %s; la rama %s sale de %s y va detrás por %s (en modo PR no hace falta fast-forward; "
+              "GitHub dirá si hay conflictos)." % (base_branch, tip[:9], rama, mb[:9], detras.strip() or "?"),
+              "Commits (%d):" % len(commits.strip().splitlines())] + ["  " + c for c in commits.strip().splitlines()] + [
+              ("Versión: %s (%s; origin/%s tiene %s)" % (vhead, vfile, base_branch, vbase or "-") if vhead else
+               "Versión: no la cambia (%s)" % ("origin tiene %s en %s" % (vbase, vfile) if vfile else "sin archivo de versión")),
+              "Rutas privadas en el diff: ninguna",
+              "LISTA para pasar al usuario. Orden exacta para el agente, sola: git push origin HEAD:refs/heads/%s" % rama]
     return True, "LISTA", lines
 
 
@@ -352,6 +507,8 @@ def caducada(project_id, p):
     `lista` that never got pushed blocked the queue for good (seen 2026-10-02)."""
     import registry
     import lote
+    if p["estado"] == ABIERTO:
+        return ""  # the PR lives on without its agent: only its merge or its closing ends it (concilia)
     e = registry.load(project_id).get("agents", {}).get(p["session_id"])
     if not e or e.get("tarea_estado") in ("relevada", "terminada", "fallida", "relevo-fallido"):
         return "su sesión ya no tiene la tarea (%s)" % ((e or {}).get("tarea_estado") or "sin registro")
@@ -368,17 +525,25 @@ def caducada(project_id, p):
     return ""
 
 
-def concilia(project_id, remote_tip=remote_tip):
+def concilia(project_id, remote_tip=remote_tip, ahora=None):
     """Fase 9 E3: bring the queue in line with reality, at `inicia` and in every `resumen` (claude-vzert: a publication
     stuck in "turno" since the day before). A live entry whose holder lost its task or session expires (caducada);
     a `lista` whose verified head is already origin's tip was pushed without `--hecho`: publicada. Asks origin
     (ls-remote) only for `lista` entries. Returns the lines that say what changed."""
     led = load(project_id)
     out = []
+    ahora = ahora or time.time()
+    leido = False
     for p in led["cola"]:
+        if p["estado"] == ABIERTO:
+            if ahora - (p.get("pr_visto") or 0) >= PR_CADA:
+                out += concilia_pr(led, p, ahora)
+                leido = True
+            continue
         if p["estado"] not in ("esperando",) + VIVAS:
             continue
-        if p["estado"] == "lista" and p.get("head"):
+        # PR mode: the branch on origin is not main; only the merge publishes (concilia_pr)
+        if p["estado"] == "lista" and p.get("head") and p.get("modo") != "pr":
             tip = remote_tip(p.get("worktree") or "", p.get("rama_remota") or "")
             if tip and tip == p["head"]:
                 p.update(estado="publicada", publicada=time.time(), motivo="conciliada: origin ya tiene su commit")
@@ -389,9 +554,32 @@ def concilia(project_id, remote_tip=remote_tip):
         if why:
             p.update(estado="caducada", motivo=why)
             out.append("Publicación de %s caducada: %s." % (p.get("nombre"), why))
-    if out:
+    if out or leido:
         save(project_id, led)
     return out
+
+
+def concilia_pr(led, p, ahora):
+    """An open PR as gh sees it: MERGED → publicada (with a warning if an earlier one is still open), CLOSED → caducada.
+    A gh that fails leaves the PR open (only pr_visto moves, so it is read again a minute later): a network error
+    never expires a PR."""
+    p["pr_visto"] = ahora
+    d = pr_view(p["pr"], p.get("repo") or p.get("worktree"))
+    if not d:
+        return []
+    if d.get("state") == "MERGED":
+        antes = [q for q in abiertos(led) if q is not p and orden_de(q) < orden_de(p)]
+        p.update(estado="publicada", publicada=ahora, motivo="PR #%s fusionado" % p["pr"],
+                 merge_commit=(d.get("mergeCommit") or {}).get("oid", ""))
+        line = "Publicación de %s: PR #%s fusionado (versión %s)." % (p.get("nombre"), p["pr"], p.get("version") or "-")
+        if antes:
+            line += " Se fusionó fuera de orden: antes iba %s." % ", ".join(
+                "%s (#%s)" % (q.get("nombre"), q.get("pr")) for q in antes)
+        return [line]
+    if d.get("state") == "CLOSED":
+        p.update(estado="caducada", motivo="PR #%s cerrado sin fusionar" % p["pr"])
+        return ["Publicación de %s caducada: el PR #%s se cerró sin fusionar." % (p.get("nombre"), p["pr"])]
+    return []
 
 
 def retira_sesion(project_id, session_id, motivo):
@@ -405,12 +593,22 @@ def retira_sesion(project_id, session_id, motivo):
         save(project_id, led)
 
 
-def hecho(project_id, entry):
-    """Confirm the push landed (origin's tip is the verified head) and hand the turn to the next one."""
+def hecho(project_id, entry, pr=None):
+    """Confirm the push landed (origin's tip is the verified head) and hand the turn to the next one. PR mode: `pr` is
+    the number of the PR the agent opened; it must be open on that branch and head (gh)."""
     led = load(project_id)
     me = entry_of(led, entry["session_id"])
     if not me or me["estado"] != "lista":
         return False, ["NO: %s no tiene una publicación lista en la cola." % entry.get("nombre")]
+    if pr and modo(project_id) != "pr":
+        return False, ["NO: --pr es del modo PR y este proyecto está en modo directo (`lookout publica <proyecto> "
+                       "--modo pr` para cambiarlo, y vuelve a pedir la publicación)."]
+    if (me.get("modo") or "directo") != modo(project_id):
+        return False, ["NO: la publicación de %s se verificó en modo %s y el proyecto está ahora en modo %s: vuelve a "
+                       "pedirla (`lookout publica <proyecto> %s`)." % (entry.get("nombre"), me.get("modo") or "directo",
+                                                                      modo(project_id), entry.get("nombre"))]
+    if me.get("modo") == "pr":
+        return hecho_pr(project_id, led, me, entry, pr)
     wt = me.get("worktree") or entry.get("worktree") or entry.get("cwd")
     tip = remote_tip(wt, me.get("rama_remota") or remote_branch(entry))
     if tip != me.get("head"):
@@ -431,6 +629,134 @@ def hecho(project_id, entry):
     return True, out
 
 
+def hecho_pr(project_id, led, me, entry, pr):
+    if not pr:
+        return False, ["NO: en modo PR, --hecho necesita el número del PR que abrió el agente (`gh pr create`): "
+                       "`lookout publica <proyecto> %s --hecho --pr N`." % entry.get("nombre")]
+    wt = me.get("worktree") or entry.get("worktree") or entry.get("cwd")
+    rama = me.get("rama_remota")
+    tip = remote_tip(wt, rama)
+    if tip != me.get("head"):
+        return False, ["NO: origin/%s está en %s, no en el commit verificado %s. ¿Se hizo el push a la rama? ¿El agente "
+                       "añadió commits después de verificar? Si cambió algo, vuelve a pedir la publicación." % (
+                           rama, tip[:9] or "(no existe)", (me.get("head") or "?")[:9])]
+    d = pr_view(pr, me.get("repo") or wt)
+    if d is None:
+        return False, ["NO: no leo el PR #%d con gh (`gh pr view %d` falló: ¿gh instalado y con sesión? ¿existe ese "
+                       "PR?)." % (pr, pr)]
+    if (d.get("headRefName"), d.get("headRefOid"), d.get("baseRefName")) != (rama, me["head"], me.get("rama_base")):
+        return False, ["NO: el PR #%d es de %s en %s hacia %s; la publicación verificada es %s en %s hacia %s." % (
+            pr, d.get("headRefName"), (d.get("headRefOid") or "?")[:9], d.get("baseRefName"), rama, me["head"][:9],
+            me.get("rama_base"))]
+    ahora = time.time()
+    if d.get("state") == "MERGED":
+        me.update(estado="publicada", publicada=ahora, pr=pr, motivo="PR #%d ya fusionado" % pr)
+        save(project_id, led)
+        return True, ["Publicada: %s versión %s, PR #%d ya fusionado." % (me["nombre"], me.get("version") or "-", pr)]
+    if d.get("state") != "OPEN":
+        return False, ["NO: el PR #%d está %s, sin fusionar. Si se abre otro, repite con su número." % (pr, d.get("state"))]
+    # the same PR checked again after new commits: the new check replaces the old one and keeps its place in the order
+    viejas = [p for p in led["cola"] if p is not me and p["estado"] == ABIERTO
+              and (p.get("pr") == pr or p.get("rama_remota") == rama)]
+    for p in viejas:
+        p.update(estado="retirada", motivo="reemplazada: el PR #%s se verificó otra vez en %s" % (pr, me["head"][:9]))
+    me.update(estado=ABIERTO, pr=pr, pr_abierto=ahora, pr_visto=ahora, url=d.get("url", ""),
+              orden=min([orden_de(p) for p in viejas] + [orden_de(me)]))
+    orden = abiertos(led).index(me) + 1
+    nxt = next((p for p in led["cola"] if p["estado"] == "esperando"), None)
+    save(project_id, led)
+    out = ["PR #%d abierto: %s versión %s, %dº en el orden de fusión. Lo fusiona el usuario, o tú con su sí en tu modal: "
+           "`lookout publica <proyecto> --fusiona %d --decision <id>`." % (pr, me["nombre"], me.get("version") or "-",
+                                                                       orden, pr)]
+    if nxt:
+        out.append("Siguiente en la cola: %s. Dile por SendMessage que vuelva a pedir la publicación; su versión debe ser "
+                   "mayor que la %s." % (nxt["nombre"], me.get("version") or "anterior"))
+    return True, out
+
+
+CHECK_OK = ("SUCCESS", "NEUTRAL", "SKIPPED")
+FUSIONABLE = ("CLEAN",)
+
+
+def checks_pendientes(rollup):
+    """Names of the checks that are not finished green (CheckRun: conclusion; StatusContext: state)."""
+    malos = []
+    for c in rollup or []:
+        if not isinstance(c, dict):
+            malos.append("?")
+        elif "state" in c and "conclusion" not in c:
+            if c.get("state") != "SUCCESS":
+                malos.append("%s=%s" % (c.get("context") or "?", c.get("state")))
+        elif c.get("status") != "COMPLETED" or c.get("conclusion") not in CHECK_OK:
+            malos.append("%s=%s" % (c.get("name") or "?", c.get("conclusion") or c.get("status") or "en curso"))
+    return malos
+
+
+def fusiona(project_id, pr, decision_id, fuera_de_orden=False):
+    """Merge an open PR of the queue on the user's yes (a decision answered in the supervisor's modal that names #pr,
+    used once). Only the verified head (--match-head-commit), mergeable, checks green, first in merge order unless
+    `fuera_de_orden`. A merge commit only: squash/rebase would leave the agent's commits outside main
+    (cierre.published). Returns (ok, code, lines)."""
+    import decisiones
+    led = load(project_id)
+    p = next((q for q in led["cola"] if q["estado"] == ABIERTO and q.get("pr") == pr), None)
+    if not p:
+        return False, "NO-EN-COLA", ["NO: el PR #%d no es un PR abierto de la cola de publicación (`lookout publica "
+                                     "<proyecto> --cola`)." % pr]
+    d = decisiones.respondida(project_id, decision_id or "")
+    # codex r1: only the user's own choice in the modal (closed by the hook: por_hook), never a `--cierra … --si` the
+    # supervisor typed, and only a plain decision (a tab-closing or permission one authorizes something else)
+    if not d or d.get("usada") or not d.get("por_hook") or not d.get("si_es") or d.get("tipo"):
+        return False, "SIN-SI", [
+            "NO: fusionar lo autoriza el usuario en tu ventana. Abre la decisión (`lookout decision <proyecto> --abre "
+            "\"¿Fusiono el PR #%d …?\" --agentes %s --si-es \"<etiqueta del sí>\"`), pregúntale en tu modal y, si elige "
+            "esa opción, repite con --decision <id>. Una decisión ya usada no vale otra vez." % (pr, p.get("nombre"))]
+    if not re.search(r"#%d\b" % pr, d.get("texto") or ""):
+        return False, "SI-DE-OTRO-PR", ["NO: la decisión %s («%s») no nombra el PR #%d." % (d["id"], d.get("texto"), pr)]
+    primero = abiertos(led)[0]
+    if primero is not p and not fuera_de_orden:
+        return False, "FUERA-DE-ORDEN", [
+            "NO: antes va %s (#%s, versión %s). Fusiona ese primero o, si el usuario quiere este antes, repite con "
+            "--fuera-de-orden." % (primero.get("nombre"), primero.get("pr"), primero.get("version") or "-")]
+    cwd = p.get("repo") or p.get("worktree")
+    v = pr_view(pr, cwd)
+    if v is None:
+        return False, "SIN-GH", ["NO: no leo el PR #%d con gh (`gh pr view` falló: ¿gh instalado y con sesión?)." % pr]
+    if (v.get("headRefName"), v.get("headRefOid"), v.get("baseRefName")) != (
+            p.get("rama_remota"), p.get("head"), p.get("rama_base")):
+        return False, "PR-CAMBIO", [
+            "NO: el PR #%d es ahora %s en %s hacia %s y lo verificado fue %s en %s hacia %s. Si tiene commits nuevos, que "
+            "el agente vuelva a pedir la publicación y repite `--hecho --pr %d`; si cambió de rama destino, pregúntale "
+            "al usuario." % (pr, v.get("headRefName"), (v.get("headRefOid") or "?")[:9], v.get("baseRefName"),
+                             p.get("rama_remota"), (p.get("head") or "?")[:9], p.get("rama_base"), pr)]
+    malos = checks_pendientes(v.get("statusCheckRollup"))
+    if (v.get("state") != "OPEN" or v.get("mergeable") != "MERGEABLE" or v.get("mergeStateStatus") not in FUSIONABLE
+            or malos):
+        return False, "PR-NO-FUSIONABLE", [
+            "NO: el PR #%d no se puede fusionar ahora: estado %s, mergeable %s, %s%s." % (
+                pr, v.get("state"), v.get("mergeable"), v.get("mergeStateStatus"),
+                "; checks sin terminar en verde: " + ", ".join(malos) if malos else "")]
+    decisiones.marca_usada(project_id, d["id"])  # before the merge: a failed merge needs a new yes (the safe side)
+    rc, out = gh(["pr", "merge", str(pr), "--merge", "--match-head-commit", p["head"]], cwd)
+    if rc != 0:
+        return False, "FUSION-FALLIDA", ["NO: la fusión del PR #%d falló en gh: %s. La decisión %s ya está usada: si el "
+                                         "usuario quiere reintentar, pídele otro sí." % (
+                                             pr, (out or "").strip()[:300] or "rc %d" % rc, d["id"])]
+    ahora = time.time()
+    p.update(estado="publicada", publicada=ahora, motivo="fusionado con el sí del usuario (%s)" % d["id"],
+             decision=d["id"], pr_visto=ahora)
+    save(project_id, led)
+    lines = ["Checks: %s." % ("sin checks en este PR (el repo no tiene CI para él)" if not v.get("statusCheckRollup")
+                              else "%d en verde" % len(v["statusCheckRollup"])),
+             "Fusionado: PR #%d (%s, versión %s) en %s con un merge commit sobre %s." % (
+                 pr, p.get("nombre"), p.get("version") or "-", p.get("rama_base") or "main", p["head"][:9])]
+    resto = abiertos(led)
+    if resto:
+        lines.append("Siguiente en el orden de fusión: %s (#%s). GitHub dirá si necesita rebase." % (
+            resto[0].get("nombre"), resto[0].get("pr")))
+    return True, "FUSIONADA", lines
+
+
 def retira(project_id, entry):
     led = load(project_id)
     me = entry_of(led, entry["session_id"])
@@ -441,14 +767,24 @@ def retira(project_id, entry):
     return True
 
 
+def pr_texto(led, p):
+    """«#7, 1º en fusionar» for an open PR, '' otherwise."""
+    orden = abiertos(led)
+    return "#%s, %dº en fusionar" % (p.get("pr"), orden.index(p) + 1) if p in orden else ""
+
+
 def render_cola(project_id):
     led = load(project_id)
     rows = [p for p in led["cola"] if p["estado"] not in ("retirada",)]
     if not rows:
         return "Publicaciones: ninguna."
-    return "Publicaciones (en orden):\n" + "\n".join(
-        "- %s | %s | versión %s | %s" % (p["nombre"], p["estado"], p.get("version") or "-",
-                                          time.strftime("%H:%M", time.localtime(p.get("pedida", 0)))) for p in rows)
+    cabeza = ("Publicaciones (modo PR; cada PR abierto dice su lugar en el orden de fusión, el de su primera "
+              "verificación):" if modo(project_id) == "pr" else "Publicaciones (en orden):")
+    return cabeza + "\n" + "\n".join(
+        "- %s | %s | versión %s | %s%s" % (p["nombre"], p["estado"], p.get("version") or "-",
+                                            time.strftime("%H:%M", time.localtime(p.get("pedida", 0))),
+                                            " | PR " + pr_texto(led, p) if p["estado"] == ABIERTO else "")
+        for p in rows)
 
 
 # ---------- H15: the temporary rule ----------

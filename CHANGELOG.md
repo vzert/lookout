@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.13.27
+
+- `lookout publica` in PR mode (p-ca286da56c). In 3-tier-memory (2026-10-17/18) every agent published through a
+  branch and a pull request that the user merges, and the queue assumed a push to main: LISTA ordered
+  `git push origin HEAD:main`, `--hecho` said NO after a branch push + PR (#39, #42), branches behind main got
+  BASE-MOVIDA, publications expired before the merge, and supervisor.md said «cola: vacía» with 5 PRs open.
+  - `lookout publica <proyecto> --modo pr|directo` keeps the mode in publicaciones.json (directo by default; nothing
+    changes for a project that never sets it).
+  - In PR mode the check runs on the agent's own branch: no fast-forward over main (a line says how far behind it is),
+    commits, version and private paths read from where the branch leaves main, a version above origin's
+    (VERSION-VIEJA) that follows the merge order: above every PR before it and below every PR after it, never equal
+    to another (VERSION-USADA). A branch that touches no version file claims no version, as in direct mode. An open
+    PR checked again after new commits (a review fix) is not its own rival: `--hecho --pr N` replaces its old entry
+    and keeps its place in the merge order. NO also for an agent on the main branch (SIN-RAMA),
+    a main tip this tree never fetched (BASE-DESCONOCIDA) or a remote branch the push could only force (RAMA-DIVERGE).
+    LISTA orders `git push origin HEAD:refs/heads/<rama>`; the supervisor is told the `gh pr create` that follows.
+  - `--hecho --pr N` checks origin/<rama> is the verified head and reads the PR with gh (same branch, head and base):
+    open → `pr-abierto`, already merged → `publicada`. A gh that fails is a NO, without a traceback.
+  - A `pr-abierto` does not hold the next agent (the queue moves to the merge), never expires with its session, a
+    relief or a closed tab, and is read again by concilia (at most once a minute per PR): MERGED → `publicada`, with a
+    warning when an earlier PR is still open (out of order); CLOSED → `caducada`; a gh error leaves the PR open and
+    it is read again a minute later. A
+    `lista` whose branch is already on origin stays `lista` in PR mode (only the merge publishes).
+  - The queue, the resumen and supervisor.md show each open PR with its number and its place in the merge order (the
+    order its publication was verified).
+  - `lookout publica <proyecto> --fusiona N --decision dK [--fuera-de-orden]`: the supervisor merges an open PR of the
+    queue when the user said yes in its modal. dK must be a plain decision opened with `--si-es`, closed by the
+    modal's hook with that exact choice (a `decision --cierra … --si` the supervisor typed does not count), name `#N`
+    and not have been used (it is marked used before the merge); the PR must still be on the verified head (also
+    passed as `--match-head-commit`), branch and base, mergeable with merge state CLEAN, every check finished green
+    (a PR without checks merges and says so), and first in merge order unless `--fuera-de-orden`. Merge commit only: squash or rebase would leave the
+    agent's commits outside main, which `cierra` reads as not published.
+
 ## 0.13.26
 
 - The two findings of round 3 of the adversarial review (codex break, Sonnet hold, 2026-10-18), after which the user
