@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.13.16
+
+- The question of a `lookout decision --permiso` names where an agent's `git push` really goes, as lookout read it.
+  Live (2026-10-17), with a local test remote, the supervisor wrote «a GitHub» and «no se puede deshacer limpio» in
+  its modal, and the user's yes rested on that text. The PermissionRequest hook now keeps the agent's cwd in the
+  `blocked` event; `decision --permiso` reads in that repo the remote the push goes to (the repository argument or
+  `--repo`, else `branch.<b>.pushRemote`, `remote.pushDefault`, `branch.<b>.remote`, `origin`, after any `git -C`) and
+  its push URLs as `git remote get-url --push --all` gives them, and prints them. The question must show each URL
+  exactly, between «», with no other «…» than the command and those URLs and nothing else in it shaped like a URL
+  (`scheme://`, `user@host:`, `host.tld:` or `host.tld/`, `www.`), or the decision does not open; `lookout aprueba` checks it again on the question the user
+  answered and presses nothing without it. A URL or a path given as the repository is shown as given (a path made
+  absolute); the user and password of an http(s) URL are shown as `***`. When lookout cannot read the destination it
+  says why, and the question must say «destino desconocido», between «», under the same rule (no other «…» than the
+  command, nothing shaped like a URL): a
+  command the shell would expand or chain, a push behind another program (`timeout`, `sudo`, `bash -c`, a path to
+  git) or behind environment variables, a global git option other than `-C`, a name that is not a remote, a literal
+  URL in a repo that rewrites URLs, a detached HEAD with no repository given, or an event without cwd (written before
+  this version). Only `git push` has a destination; other commands are as before. Tests:
+  tests/test_lookout_01316.py, with real repos.
+
 ## 0.13.15
 
 - A retry of `lookout entrega` (and of the trigger an alta or a relief types) recognises a typed `/command` already in

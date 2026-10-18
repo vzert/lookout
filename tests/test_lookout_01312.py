@@ -181,9 +181,9 @@ class ApruebaTest(f3.Base):
 
     def decision(self, respuesta="Sí, apruébalo una vez", pregunta=None):
         cmd = aprueba.pendiente(self.pid, self.entry())["comando"]
-        ok, it = aprueba.abre(self.pid, self.entry(), "¿Apruebo a uno, una vez: «%s»?" % cmd, "Sí, apruébalo una vez")
+        ok, it = aprueba.abre(self.pid, self.entry(), "¿Apruebo a uno, una vez: «%s», «destino desconocido»?" % cmd, "Sí, apruébalo una vez")
         self.assertTrue(ok, it)
-        modal(self.pid, it["id"], respuesta, pregunta if pregunta is not None else "¿Apruebo a uno, una vez: «%s»?" % cmd)
+        modal(self.pid, it["id"], respuesta, pregunta if pregunta is not None else "¿Apruebo a uno, una vez: «%s», «destino desconocido»?" % cmd)
         return it["id"]
 
     def test_the_users_yes_presses_yes_once(self):
@@ -302,7 +302,7 @@ class ApruebaTest(f3.Base):
         self.assertFalse(aprueba.abre(self.pid, self.entry(), "¿Apruebo «%s»?" % CORTO, "Sí")[0])
         ev = self.blocked()
         self.assertFalse(aprueba.abre(self.pid, self.entry(), "¿Apruebo su push?", "Sí")[0])   # no command in it
-        ok, it = aprueba.abre(self.pid, self.entry(), "¿Apruebo «%s»?" % CORTO, "Sí")
+        ok, it = aprueba.abre(self.pid, self.entry(), "¿Apruebo «%s», «destino desconocido»?" % CORTO, "Sí")
         self.assertTrue(ok)
         self.assertEqual((it["tipo"], it["permiso"]["comando"], it["permiso"]["ts"]), ("permiso", CORTO, ev["ts"]))
 
@@ -349,7 +349,7 @@ class DecisionCliTest(unittest.TestCase):
         t = T()
         t.setUp()
         try:
-            ns = dict(proyecto=t137.PID, abre="¿Apruebo a uno, una vez: «%s»?" % LARGO_CMD, agentes="uno", si_es="Sí, una vez",
+            ns = dict(proyecto=t137.PID, abre="¿Apruebo a uno, una vez: «%s», «destino desconocido»?" % LARGO_CMD, agentes="uno", si_es="Sí, una vez",
                       cierre=False, nueva=False, cierra=None, respuesta=None, si=False, no=False, lista=False,
                       permiso=True, shells_parar="", shells_dejar="")
             out = io.StringIO()

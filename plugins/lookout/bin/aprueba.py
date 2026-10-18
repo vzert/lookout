@@ -45,7 +45,10 @@ screen, and herdr reads only the visible screen of a blocked agent: then nothing
 user's focus to read a pane (`pane zoom` moves it and does not give it back, measured 2026-10-17; the user chose it,
 modal «Foco», 2026-10-17: «No tocar el foco»).
 """
+import os
 import re
+import shlex
+import subprocess
 import time
 
 import decisiones
@@ -176,6 +179,160 @@ def muestra(texto, comando):
     return bool(comando) and ("«%s»" % comando) in (texto or "")
 
 
+# 0.13.16: where a `git push` goes, read in the agent's repo (live 2026-10-17: with a local test remote the supervisor
+# wrote «a GitHub» in its modal). Only a plain command is read: anything the shell would expand or chain, or a git
+# option that can change the remote, gives no destination and says why, never a guess.
+ES_PUSH = re.compile(r"\bgit\b.*\bpush\b", re.S)
+SHELL = set(";&|<>()$`\\\n\r{}*?[]~#!")
+CON_VALOR = ("-o", "--push-option", "--receive-pack", "--exec")
+ASIGNA = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _git(base, *args):
+    """(code, stdout) of a read-only git command in `base`; (1, "") when it cannot run."""
+    try:
+        p = subprocess.run(["git", "-C", base] + list(args), capture_output=True, text=True, timeout=5,
+                           env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
+    except (OSError, subprocess.SubprocessError):
+        return 1, ""
+    return p.returncode, p.stdout
+
+
+def _sin_destino(motivo, remote=None):
+    return {"remote": remote, "urls": [], "motivo": motivo}
+
+
+def destino(comando, cwd):
+    """Where the command pushes: None when it is not a `git push`; else {"remote", "urls", "motivo"}, with `urls`
+    empty and `motivo` saying why when lookout cannot read it. `cwd` is the agent's, from its permission event."""
+    if not comando:
+        return None
+    try:
+        toks = shlex.split(comando)
+    except ValueError:
+        toks = None
+    # adversary r1 (sonnet): also as the shell reads it (`git pu''sh`)
+    if not (ES_PUSH.search(comando) or (toks and ES_PUSH.search(" ".join(toks)))):
+        return None
+    if any(c in SHELL for c in comando):
+        return _sin_destino("el shell lo expande o lo encadena (lleva %s)"
+                            % "".join(sorted(set(c for c in comando if c in SHELL))).replace("\n", "\\n"))
+    if not toks:
+        return _sin_destino("no pude partir el comando")
+    if toks[0] != "git":
+        # adversary r1 (sonnet): a push behind another program (timeout, sudo, bash -c, /usr/bin/git) is not read,
+        # and that is said
+        if ASIGNA.match(toks[0]):
+            return _sin_destino("el comando cambia variables del entorno antes de git")
+        return _sin_destino("git va detrás de otro programa (%s)" % toks[0])
+    i, base = 1, cwd or ""
+    while i < len(toks) and toks[i].startswith("-"):
+        if toks[i] != "-C" or i + 1 >= len(toks):
+            return _sin_destino("lleva la opción de git %s, que puede cambiar el destino" % toks[i])
+        base = os.path.join(base, toks[i + 1])
+        i += 2
+    if i >= len(toks) or toks[i] != "push":
+        return None
+    if not cwd:
+        return _sin_destino("no sé en qué directorio corre el agente")
+    if not os.path.isdir(base):
+        return _sin_destino("el directorio %s no existe" % base)
+    posicional, opcion, solo, j = None, None, False, i + 1
+    while j < len(toks):
+        t = toks[j]
+        if solo or not t.startswith("-") or t == "-":
+            posicional = t if posicional is None else posicional
+        elif t == "--":
+            solo = True
+        elif t == "--repo":
+            if j + 1 >= len(toks):
+                return _sin_destino("--repo sin valor")
+            opcion = toks[j + 1]
+            j += 1
+        elif t.startswith("--repo="):
+            opcion = t[len("--repo="):]
+        elif t in CON_VALOR or (not t.startswith("--") and t[1:].find("o") == len(t) - 2):
+            # -o takes the next word only when nothing follows it in its cluster (adversary r1, sonnet: `-ofoo`)
+            if j + 1 >= len(toks):
+                return _sin_destino("%s sin valor" % t)
+            j += 1
+        j += 1
+    # the repository argument wins over --repo (git push(1))
+    nombre = posicional if posicional is not None else opcion
+    remotes = _git(base, "remote")
+    if remotes[0] != 0:
+        return _sin_destino("%s no es un repo git que yo pueda leer" % base)
+    remotes = remotes[1].split()
+    if nombre is None:
+        code, rama = _git(base, "symbolic-ref", "-q", "--short", "HEAD")
+        rama = rama.strip() if code == 0 else ""
+        if not rama:
+            # adversary r1 (codex): from a detached HEAD git does not push without a repository and a refspec
+            return _sin_destino("HEAD suelta: sin rama y sin remote, git no empuja")
+        claves = ["branch.%s.pushRemote" % rama, "remote.pushDefault", "branch.%s.remote" % rama]
+        nombre = "origin"
+        for clave in claves:
+            code, valor = _git(base, "config", "--get", clave)
+            if code == 0 and valor.strip():
+                nombre = valor.strip()
+                break
+        if nombre not in remotes:
+            return _sin_destino("git push sin remote iría a «%s», que no es un remote de ese repo" % nombre)
+    if nombre in remotes:
+        code, urls = _git(base, "remote", "get-url", "--push", "--all", nombre)
+        urls = [sin_clave(u.strip()) for u in urls.splitlines() if u.strip()] if code == 0 else []
+        return {"remote": nombre, "urls": urls, "motivo": ""} if urls else \
+            _sin_destino("no pude leer la URL de push de «%s»" % nombre, nombre)
+    if _git(base, "config", "--get-regexp", r"^url\.")[1].strip():
+        return _sin_destino("«%s» no es un remote y el repo reescribe URLs (url.*.insteadOf)" % sin_clave(nombre))
+    if "://" in nombre or re.match(r"^[^/]+:", nombre):
+        return {"remote": None, "urls": [sin_clave(nombre)], "motivo": ""}
+    if "/" in nombre or nombre.startswith("."):
+        return {"remote": None, "urls": [os.path.normpath(os.path.join(base, nombre))], "motivo": ""}
+    return _sin_destino("«%s» no es un remote de ese repo" % nombre)
+
+
+def sin_clave(url):
+    """The URL without the user and password of an http(s) URL (sonnet r1: a token would go into the modal)."""
+    return re.sub(r"^(https?://)[^/@]*@", r"\1***@", url, flags=re.I)
+
+
+DESCONOCIDO = "destino desconocido"
+# a URL, an scp-like `host:path`, or a host with a dot followed by a path (adversary r2, codex)
+PARECE_URL = re.compile(r"\w+://|[\w.-]+@[\w.-]+:|\b[\w-]+(?:\.[\w-]+)+(?::|/)\S|\bwww\.\S")
+
+
+def nombra_destino(texto, dest, comando=""):
+    """True when the question says where the push goes exactly as lookout read it: every push URL between «», or
+    «destino desconocido» when lookout could not read one. Outside the command, every «…» in it is one of those, and
+    nothing else in it looks like a URL (adversary r1 and r2, codex: an invented destination next to the real one)."""
+    if not dest:
+        return True
+    propios = list(dest.get("urls") or ()) or [DESCONOCIDO]
+    resto = texto or ""
+    if comando:
+        resto = resto.replace("«%s»" % comando, " ")
+    if not all(muestra(resto, u) for u in propios):
+        return False
+    for u in propios:
+        resto = resto.replace("«%s»" % u, " ")
+    return "«" not in resto and "»" not in resto and not PARECE_URL.search(resto)
+
+
+def explica_destino(dest):
+    """One line for the supervisor: the destination lookout read, or that it could not read one."""
+    if not dest:
+        return ""
+    if dest["urls"]:
+        return ("Destino del push, leído por lookout en el repo del agente: %s%s. Nómbralo en la pregunta tal cual y "
+                "entre «», sin resumirlo («GitHub», «el remoto») ni decir si se puede deshacer; ninguna otra cita «» "
+                "que el comando y ninguna otra URL."
+                % ("remote «%s» → " % dest["remote"] if dest.get("remote") else "",
+                   ", ".join("«%s»" % u for u in dest["urls"])))
+    return ("Destino del push: lookout no lo pudo leer (%s). No digas a dónde va: pon en la pregunta «%s», tal cual "
+            "y entre «», ninguna otra cita «» que el comando y ninguna URL." % (dest["motivo"], DESCONOCIDO))
+
+
 def otra_peticion(project_id, entry, ts):
     """The first permission request of the agent written after `ts`, or None."""
     for ev in lookout_state.read_events(project_id, 0)[0]:
@@ -194,11 +351,15 @@ def abre(project_id, entry, texto, si_es, notificar=True):
         return False, ("%s no espera un permiso de Bash que yo pueda leer entero (su último evento no es un `espera "
                        "permiso` de Bash con el comando completo): que el usuario lo vea en su pane."
                        % entry.get("nombre"))
+    dest = destino(pend["comando"], pend.get("cwd"))
     if not muestra(texto, pend["comando"]):
-        return False, ("la pregunta debe mostrar el comando entero que pide %s, tal cual y entre «»:\n«%s»"
-                       % (entry.get("nombre"), pend["comando"]))
+        return False, ("la pregunta debe mostrar el comando entero que pide %s, tal cual y entre «»:\n«%s»%s"
+                       % (entry.get("nombre"), pend["comando"], ("\n" + explica_destino(dest)) if dest else ""))
+    if not nombra_destino(texto, dest, pend["comando"]):
+        return False, "la pregunta no dice a dónde va el push de %s como lo leí. %s" % (entry.get("nombre"),
+                                                                                       explica_destino(dest))
     it = decisiones.abre(project_id, texto, [entry.get("nombre")], notificar=notificar, si_es=si_es, tipo="permiso",
-                         permiso={"comando": pend["comando"], "ts": pend.get("ts")})
+                         permiso={"comando": pend["comando"], "ts": pend.get("ts"), "destino": dest})
     return True, it
 
 
@@ -215,6 +376,9 @@ def aprueba(project_id, entry, did):
         # adversary r1 (codex): the yes counts only for a modal question that showed the command (as its hook wrote it)
         return False, ("NO: la pregunta de tu modal a la que el usuario dijo sí (%s) no mostraba el comando entero: "
                        "no pulso nada. Pregúntale otra vez con el comando tal cual." % did)
+    if not nombra_destino(d.get("pregunta"), d["permiso"].get("destino"), d["permiso"]["comando"]):
+        return False, ("NO: la pregunta de tu modal a la que el usuario dijo sí (%s) no decía el destino del push como "
+                       "lo leí: no pulso nada. Pregúntale otra vez. %s" % (did, explica_destino(d["permiso"]["destino"])))
     if d.get("usada"):
         return False, "NO: el sí de %s ya se usó en un diálogo; uno por diálogo. Pregunta otra vez." % did
     permiso = d["permiso"]

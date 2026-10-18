@@ -657,7 +657,8 @@ def handle(data, marker, rules=None):
         return {"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}}
     n = notify("lookout: %s pide permiso" % who, "%s %s — %s" % (tool, detalle, why))
     # 0.13.12: the whole command, so `lookout aprueba` can compare it with the dialog after the user's yes
-    entero = {"comando": ti["command"]} if tool == "Bash" and isinstance(ti.get("command"), str) else {}
+    # 0.13.16: and the agent's cwd, where `lookout decision --permiso` reads where a push goes
+    entero = {"comando": ti["command"], "cwd": cwd} if tool == "Bash" and isinstance(ti.get("command"), str) else {}
     emit(marker, dict(base, event="blocked", motivo=why, **dict(n, **entero)))
     herdr_cli.report_metadata(base["pane"], "permiso", marker.get("display"))
     return None

@@ -826,6 +826,9 @@ def cmd_decision(a):
               "que pide %s entre «», y la opción «%s» tal cual en el modal: tu hook la cierra con lo que elija el usuario. Si "
               "dice sí, corre `lookout aprueba %s %s --decision %s`. El comando, tal cual y entre «» en la pregunta:\n«%s»"
               % (it["id"], it["id"], agentes[0], it["si_es"], pid, agentes[0], it["id"], it["permiso"]["comando"]))
+        destino = aprueba.explica_destino(it["permiso"].get("destino"))
+        if destino:
+            print(destino)
         return 0
     if a.abre:
         agentes = [x for x in (a.agentes or "").split(",") if x]

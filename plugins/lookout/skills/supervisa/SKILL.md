@@ -147,7 +147,11 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
   diálogo de Bash**: llevar el sí del usuario a ese diálogo para que no tenga que ir al pane. Abre `lookout decision
   <proyecto> --abre "¿Apruebo a <agente> este comando, una vez? «<comando entero>» (dN)" --agentes <agente> --permiso
   --si-es "<etiqueta del sí>"`: lookout la ata a la petición pendiente del agente e imprime el comando entero, que va
-  tal cual y entre «» en la pregunta (si la pregunta del modal no lo muestra así, el sí no vale y no pulsa). Un
+  tal cual y entre «» en la pregunta (si la pregunta del modal no lo muestra así, el sí no vale y no pulsa). En un
+  `git push` lookout lee además en el repo del agente a dónde va (el remote y su URL de push) e imprime cada URL: va
+  también tal cual y entre «» en la pregunta (0.13.16; sin ella no abre ni pulsa). No digas el destino con tus
+  palabras («a GitHub») ni si se puede deshacer; si lookout dice que no pudo leerlo, pon «destino desconocido» entre
+  «». Ninguna otra cita «» que el comando y el destino, y ninguna otra URL: si no, no abre ni pulsa. Un
   comando de varias líneas no se pulsa nunca: ese diálogo es del usuario en el pane. Si `aprueba` dice «AVISO AL USUARIO»
   (llegó otra petición justo después de la tecla), díselo al usuario en ese mismo turno: el «Yes» pudo caer en ella. Pon en el modal la opción del sí con esa etiqueta y una de «no, lo veo yo en su pane».
   Si el usuario elige el sí, corre `lookout aprueba <proyecto> <agente> --decision dN`: pulsa «Yes» una vez (nunca
