@@ -216,11 +216,29 @@ def clave_render(project_id):
     return [{k: v for k, v in it.items() if k != "desde"} for it in abiertas(project_id)]
 
 
-def render(project_id, now=None):
+def etiquetas(it):
+    """0.13.14: the exact labels of the modal options this decision reads (--si-es, or --shells-parar/--shells-dejar),
+    for supervisor.md, the digest and the Stop reminder: with any other label the user's yes counts as no (codex r11 on
+    0887ded). Never clipped, a newline written as \\n, and before the question, so a clip of a long question never
+    cuts it."""
+    ops = [("sí", it.get("si_es"))] + sorted((it.get("opciones") or {}).items(), key=lambda kv: kv[0] != "parar")
+    ops = ["%s = «%s»" % (k, str(v).replace("\n", "\\n")) for k, v in ops if v]
+    return " [modal: %s]" % ", ".join(ops) if ops else ""
+
+
+def render(project_id, now=None, ancho=None):
+    """`ancho` (the digest's line width): each line on one line and at most that wide, clipping only the question."""
     items = abiertas(project_id)
     if not items:
         return ""
-    return "Decisiones del usuario pendientes (%d):\n" % len(items) + "\n".join(
-        "- %s (hace %s%s): %s" % (it["id"], edad(it["desde"], now),
-                                  "; esperan: " + ", ".join(it["agentes"]) if it["agentes"] else "", it["texto"])
-        for it in items)
+    filas = []
+    for it in items:
+        cabeza = "- %s (hace %s%s)%s: " % (it["id"], edad(it["desde"], now),
+                                          "; esperan: " + ", ".join(it["agentes"]) if it["agentes"] else "", etiquetas(it))
+        texto = it["texto"]
+        if ancho:
+            texto = " ".join(str(texto).split())
+            n = max(ancho - len(cabeza), 40)
+            texto = texto if len(texto) <= n else texto[:n - 1] + "…"
+        filas.append(cabeza + texto)
+    return "Decisiones del usuario pendientes (%d):\n" % len(items) + "\n".join(filas)

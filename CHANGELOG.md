@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.13.14
+
+- supervisor.md (its pending decisions and its «Proximo paso» line), the digest and the supervisor's Stop reminder show
+  the exact label of each open decision's modal option, before its question:
+  `[modal: sí = «…»]` for a `--si-es` decision, `[modal: parar = «…», dejar = «…»]` for a `--shells-parar/--shells-dejar`
+  one. The modal's hook closes such a decision from the user's literal choice, and any other label counts as no; a
+  supervisor picking up an open decision after a relief or a compaction saw only the question and had to read
+  decisiones.json for the label (codex r11 on 0887ded). The label is never clipped (a newline in it shows as `\n`):
+  the digest clips only the question to its 160 columns, and the line that folds the decisions past the fifth names
+  each one's id and labels.
+
 ## 0.13.13
 
 - A relief whose work is not only measuring starts through goalspec (asked by the user, 2026-10-17: by hand they read

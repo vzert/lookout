@@ -549,15 +549,17 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
         if filas_bloque:  # 0.13.3: a block nobody attended is repeated on every wake, not folded into «sin cambios»
             head += ["%s:" % heuristicas.TITULO["te_necesita"]] + filas_bloque
     tail = []
-    dec = decisiones.render(project_id)
+    dec = decisiones.render(project_id, ancho=MAX_COLS)  # 0.13.14: clipped there, the modal labels whole
     if dec:
         dl = dec.splitlines()
         vistos_ahora["decisiones"] = clave([decisiones.clave_render(project_id)])
         if por_waiter and antes.get("decisiones") == vistos_ahora["decisiones"]:
             dl = ["Decisiones del usuario pendientes: %d, sin cambios (`lookout decision %s`)." % (len(dl) - 1, project_id)]
         elif not todo and len(dl) > 6:
-            dl = dl[:6] + ["(+%d decisiones más: `lookout decision %s`)" % (len(dl) - 6, project_id)]
-        tail += [clip(x) for x in dl]
+            ocultas = decisiones.abiertas(project_id)[5:]  # 0.13.14: their ids and modal labels still show (codex r2)
+            dl = dl[:6] + ["(+%d decisiones más: %s; sus preguntas: `lookout decision %s`)" % (
+                len(dl) - 6, ", ".join(it["id"] + decisiones.etiquetas(it) for it in ocultas), project_id)]
+        tail += dl
     if mark and any(p["estado"] in ("esperando", "turno", "lista") for p in publica.load(project_id)["cola"]):
         tail += [clip(x) for x in publica.concilia(project_id)]  # Fase 9 E3
     if any(p["estado"] in ("esperando", "turno", "lista") for p in publica.load(project_id)["cola"]):

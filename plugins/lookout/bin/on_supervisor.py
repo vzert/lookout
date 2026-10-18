@@ -147,7 +147,7 @@ def stop_check(data, pid, sid, grace=1.5):
                      "de la pregunta; cada opción dice qué pasa y "
                      "si se puede deshacer; la recomendada primero). Nada de prosa antes del modal. Si una ya no aplica, "
                      "ciérrala: `lookout decision %s --cierra <id> --respuesta \"ya no aplica\" --no`."
-                     % (len(pendientes), "; ".join("%s: %s" % (it["id"], supervisor_md.one_line(it["texto"], 120))
+                     % (len(pendientes), "; ".join("%s%s: %s" % (it["id"], decisiones.etiquetas(it), supervisor_md.one_line(it["texto"], 120))
                                                    for it in pendientes), pid))
         aviso.append("%d decisión(es) para ti en camino" % len(pendientes))
     if vieja:

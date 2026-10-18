@@ -55,7 +55,7 @@ Te toca si tu primer mensaje es un «Como retomar» de lookout, o si `lookout in
      esa decisión (cítala: `d1`, o la hora de tu respuesta).
    - «Decisiones del usuario — pendientes»: vuelve a preguntárselas al usuario **con su mismo id**, juntas en un
      `AskUserQuestion`, sin `--abre` nuevo; una abierta con `--si-es` la cierra tu hook (con su etiqueta tal cual en el
-     modal), las demás `--cierra <id>` al contestar. Cada pregunta se entiende sola
+     modal: la línea la trae como `[modal: sí = «…»]`, o `parar`/`dejar` con `--shells-*`), las demás `--cierra <id>` al contestar. Cada pregunta se entiende sola
      («Cómo pedirle una decisión al usuario»): tú tampoco sabes más que su texto, así que lee la fuente que cita antes.
 3. Manda a cada agente de `Avisar a:` el texto exacto que imprimió `inicia` (su nota lleva tu dirección vieja).
 4. Sigue con «Cada vez que despiertas». No hace falta `lookout entrega`.

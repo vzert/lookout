@@ -82,7 +82,8 @@ def unanswered(slog):
 
 def retomar(project_id, repo, md_path, abiertas, sin_respuesta=0):
     """3-tier format, kept under ~700 characters: a longer paste reaches Claude as pasted text (learning 10)."""
-    pend = ", ".join([d["id"] for d in abiertas] + (["%d pregunta(s) sin respuesta" % sin_respuesta] if sin_respuesta else [])) or "ninguna"
+    import decisiones
+    pend = ", ".join([d["id"] + decisiones.etiquetas(d) for d in abiertas] + (["%d pregunta(s) sin respuesta" % sin_respuesta] if sin_respuesta else [])) or "ninguna"
     return "\n".join([
         "Retomamos: supervisión lookout de %s (project_id %s); la sesión supervisora anterior terminó." % (repo, project_id),
         "Lee %s" % md_path,
@@ -147,8 +148,9 @@ def render(project_id, now=None):
               for x in directas[-8:]]
     sin_resp = unanswered(slog)
     L += ["", "## Decisiones del usuario — pendientes"]
-    L += ["- %s (abierta hace %s; esperan: %s): %s" % (d["id"], decisiones.edad(d["desde"], now),
-                                                       ", ".join(d.get("agentes") or []) or "-", one_line(d["texto"]))
+    L += ["- %s (abierta hace %s; esperan: %s)%s: %s" % (d["id"], decisiones.edad(d["desde"], now),
+                                                         ", ".join(d.get("agentes") or []) or "-",
+                                                         decisiones.etiquetas(d), one_line(d["texto"]))
           for d in abiertas] + ["- pregunta de las %s sin respuesta del usuario (AskUserQuestion): %s"
                                 % (hhmm(q["ts"]), one_line(" / ".join(q.get("preguntas") or []), 200)) for q in sin_resp] or ["- ninguna"]
     L += ["", "## Respuestas del supervisor a los agentes (últimas %d)" % LOG_KEEP]
