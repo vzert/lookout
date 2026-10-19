@@ -186,6 +186,7 @@ def read_box(pane):
 # its last event is a Stop and its transcript has nothing but the Stop's own system rows after the last row dated
 # before that Stop: a turn opened by a task-notification or a message fires no UserPromptSubmit, but writes the
 # transcript at once (2 of the 7 right refusals). Events of lookout and herdr notifications are not the agent's.
+# Since 0.13.29 a local command that already ran (its caveat, command and local_command rows) is not a turn either.
 NO_DEL_AGENTE = ("notification", "nuevo", "retomar", "repite", "correccion", "correccion_fallida", "sin_progreso", "largo")
 COLA_TRANSCRIPT = 1024 * 1024
 # Claude Code's undated bookkeeping rows (counted 2026-10-17 over 300 transcripts); every row a turn writes is dated
@@ -195,6 +196,49 @@ CONTABLES = ("last-prompt", "atis-latch", "mode", "cost-state", "permission-mode
 
 def _neutra(row):
     return row.get("type") == "system" or ("timestamp" not in row and row.get("type") in CONTABLES)
+
+
+# 0.13.29 (p-ad978476a5): a local command such as /reload-plugins (`lookout recarga`) writes after the Stop a `user`
+# row «<local-command-caveat>» (isMeta), a `user` row with only its <command-name>/<command-message>/<command-args>
+# and, once it has run, a `system` row `local_command` (bench 2026-10-18: `envia` refused an agent with a live shell
+# after a reload). A skill typed in the box writes <command-message> and <command-name> too, but no
+# local_command: it opens a turn. Only the whole set counts as quiet; a command still running has no local_command yet.
+CAVEAT = re.compile(r"<local-command-caveat>[^<]*</local-command-caveat>")
+COMANDO_LOCAL = re.compile(r"<command-name>/[\w:.-]+</command-name>\s*<command-message>[^<]*</command-message>\s*"
+                           r"<command-args>[^<]*</command-args>")
+
+
+def _texto(row):
+    m = row.get("message")
+    c = m.get("content") if isinstance(m, dict) else None
+    return c.strip() if isinstance(c, str) else None
+
+
+def _caveat(row):
+    return row.get("type") == "user" and row.get("isMeta") is True and _ts(row) is not None and \
+        CAVEAT.fullmatch(_texto(row) or "") is not None
+
+
+def _sin_turno(filas):
+    """True when every row after the Stop is neutral or part of a local command that already ran."""
+    comandos = set()
+    for i, row in enumerate(filas):
+        if row.get("type") != "user" or _ts(row) is None or not COMANDO_LOCAL.fullmatch(_texto(row) or ""):
+            continue
+        j = i + 1
+        while j < len(filas) and _caveat(filas[j]):
+            j += 1
+        con_caveat = j > i + 1 or (i > 0 and _caveat(filas[i - 1]))  # every real set has one (codex r2 of the release)
+        if con_caveat and j < len(filas) and filas[j].get("type") == "system" and \
+                filas[j].get("subtype") == "local_command":
+            comandos.add(i)
+    for i, row in enumerate(filas):
+        if _neutra(row) or i in comandos:
+            continue
+        if _caveat(row) and (i - 1 in comandos or i + 1 in comandos):
+            continue
+        return False
+    return True
 
 
 SELLO = re.compile(r"([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(\.[0-9]+)?Z")  # ASCII digits only
@@ -254,7 +298,7 @@ def quieto(project_id, entry, live, projects_dir=None):
     antes = [i for i, row in enumerate(filas) if (_ts(row) or float("inf")) <= float(last["ts"])]
     if not antes:
         return False  # the tail does not reach the Stop
-    return all(_neutra(row) for row in filas[antes[-1] + 1:])
+    return _sin_turno(filas[antes[-1] + 1:])
 
 
 def events_size(project_id):

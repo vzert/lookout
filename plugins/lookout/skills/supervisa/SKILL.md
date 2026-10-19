@@ -422,7 +422,8 @@ elección anterior a su último Stop no vale (su trabajo de fondo pudo terminar 
 rechaza por eso, pregunta otra vez. Si el diálogo aparece sin elección (un shell nuevo en medio),
 lookout lo cancela con Esc (deshace su propio `/exit`, no mata nada) y te pide lo mismo. Un shell de fondo deja a
 herdr en `working` aunque el agente esté quieto: `envia`, `entrega`, `recarga`, `relevo`, `cierra-pestana` y el alta
-lo dan por quieto si su último evento es un Stop y su transcript no cambió desde entonces.
+lo dan por quieto si su último evento es un Stop y su transcript no tiene un turno nuevo desde entonces (un
+`/reload-plugins` ya terminado, como el de `lookout recarga`, no es un turno).
 
 **Agente terminado** (su «Como retomar» dice que no queda nada, o dijo que terminó sin bloque):
 `lookout cierra-pestana <project_id> <agente>` **sin preguntar** (sin bloque: añade `--motivo "<su frase, tal cual>"`,

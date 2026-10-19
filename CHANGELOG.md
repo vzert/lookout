@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.13.29
+
+- An agent with a live background shell can take input again after `lookout recarga` (p-ad978476a5). Bench 2026-10-18
+  with 0.13.26: after a reload of an agent herdr saw `working` only because of its shell, `envia` said «NO ENTREGADO:
+  está working». `/reload-plugins` writes after the Stop a `user` row «<local-command-caveat>» (isMeta), a `user` row
+  with only its `<command-name>`/`<command-message>`/`<command-args>` and a `system` row `local_command`, and the quiet
+  check of 0.13.10 took the two `user` rows for a turn, so `envia`, `entrega`, `relevo`, `cierra-pestana` and the
+  sweep refused that agent until another turn ended (never, for a shell that does not end). Now a local command counts
+  as quiet only as that whole set: the command row, its isMeta caveat right before or after it, and its
+  `local_command` right after it (caveats in between allowed). A skill typed in the box (no `local_command`), a
+  command still running (no `local_command` yet), a command and its output with no caveat, a lone caveat, a caveat
+  that is not isMeta and a command row with any other text stay a turn. The supervisa skill and docs/plan.md say so.
+  Replayed on the bench transcript: refused before, quiet after.
+
 ## 0.13.27
 
 - `lookout publica` in PR mode (p-ca286da56c). In 3-tier-memory (2026-10-17/18) every agent published through a
