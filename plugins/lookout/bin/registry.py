@@ -153,4 +153,7 @@ def find(reg, key):
         return agents[key]
     hits = [e for sid, e in agents.items() if key in (e.get("nombre"), e.get("pane_id"), e.get("herdr_name"))]
     live = [e for e in hits if e.get("tarea_estado") != "relevada" and not e.get("retirado")]
-    return (live or hits or [None])[0]
+    # 0.13.30: a start that failed and its retry share the name (live 2026-10-18: the supervisor typed into the
+    # failed start's dead pane); the retry wins, the failed one alone is still found.
+    vivos = [e for e in live if e.get("tarea_estado") != "fallida"]
+    return (vivos or live or hits or [None])[0]

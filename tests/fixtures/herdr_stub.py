@@ -9,6 +9,8 @@ Conf keys:
                path, as the agent's UserPromptSubmit hook would ({"path", "session_id"})
   enter_event: same, for `agent send-keys … enter` (the stuck text gets submitted)
   start_event: if set, `agent start` appends a SessionStart `start` event to this path ({"path", "session_id"})
+  start_error: {"code", "message", "times"}: the next `times` calls of `agent start` fail with that herdr error
+               (exit 1, nothing started: 0.13.30)
   read_after_prompt: new `agent_read` value once a prompt or Enter was sent
   prompt_append: if set, `agent prompt` appends `line` to the file at `path` (a transcript row: 0.13.24)
   prompt_rc:   exit code of `agent prompt` (default 0)
@@ -66,6 +68,13 @@ elif args[:2] == ["agent", "get"]:
     print(json.dumps({"result": {"agent": conf.get("agent_get")}}))
 elif args[:2] == ["agent", "read"]:
     sys.stdout.write(conf.get("agent_read", ""))
+elif args[:2] == ["agent", "start"] and (conf.get("start_error") or {}).get("times", 0) > 0:
+    err = conf["start_error"]
+    err["times"] -= 1
+    with open(conf_path, "w") as fh:
+        json.dump(conf, fh)
+    print(json.dumps({"error": {"code": err["code"], "message": err.get("message", "")}, "id": "cli:agent:start"}))
+    sys.exit(1)
 elif args[:2] == ["agent", "start"]:
     if conf.get("start_event"):
         with open(conf["start_event"]["path"], "a") as fh:

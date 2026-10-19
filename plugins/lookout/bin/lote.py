@@ -15,6 +15,7 @@ Closing the pendiente is F3 (journal); nothing here writes to memory/.
 """
 import contextlib
 import fcntl
+import json
 import os
 import re
 import subprocess
@@ -329,7 +330,10 @@ def render_tarea(project_id, item, plan, items):
         # Fase 9 G: a code task on the main checkout, in its own tab. The tree is shared with the user and other
         # agents, so nothing that moves the whole tree, and no commit: the user commits (decision 2026-10-08).
         quedate = "Quédate en el checkout principal y en tu pestaña."
-        alcance = ("- Trabajas en el checkout principal `%s` (rama `%s`), en tu propia pestaña. El usuario y otros "
+        # 0.13.30: its first sentence is what `hará:` shows, so it says the agent does not commit (live 2026-10-18:
+        # the old first line was cut before it said so, the same for every code task of the batch).
+        alcance = ("- Cambias código en el checkout principal `%s` (rama `%s`), en tu propia pestaña, sin commit: el "
+                   "commit lo hace el usuario. El usuario y otros "
                    "agentes trabajan en este mismo árbol a la vez: no cambies de rama y no uses `git stash`, `reset`, "
                    "`checkout`, `switch`, `restore`, `clean`, `rebase`, `merge` ni `commit`. Tocas solo los archivos "
                    "de tu tarea; un cambio que ya estaba al empezar no es tuyo: no lo toques. La única excepción "
@@ -470,8 +474,14 @@ def que_hara(path, n=240):
             sec = fh.read().split("## Alcance / no tocar", 1)[1].split("\n## ", 1)[0]
     except (OSError, IndexError):
         return "(no pude leer la tarea: léela antes de describirla)"
-    linea = next((l.strip()[2:] for l in sec.splitlines() if l.strip().startswith("- ")), "")
-    return recorta(linea, n) or "(la tarea no trae alcance: léela antes de describirla)"
+    lineas = [l.strip()[2:] for l in sec.splitlines() if l.strip().startswith("- ")]
+    if not lineas:
+        return "(la tarea no trae alcance: léela antes de describirla)"
+    # 0.13.30: the first sentence of the scope, then the files the pendiente cites (live 2026-10-18 on claude-vzert:
+    # three code tasks on the main checkout showed the same 240 characters of the template's rules).
+    hara = lineas[0].split(". ", 1)[0].rstrip(".") + "."
+    citados = next((l for l in lineas if l.startswith("Archivos que cita el pendiente:")), "")
+    return recorta((hara + " " + citados).strip(), n)
 
 
 def render_propuesta(prop):
@@ -666,6 +676,14 @@ def lanza_uno(project_id, common_dir, item, plan, draft, modelo, confirmar, log,
     sup = lk.get("supervisor") or {}
     sysfile = system_prompt(project_id, item, draft, nota)
     reg = registry.load(project_id)
+    # 0.13.30: a start of this task that never ran is replaced by this one (live 2026-10-18: both entries stayed, with
+    # the same name, and resumen listed the agent twice). Only a start without SessionStart: a code agent that ran and
+    # failed keeps its entry until the user decides about its edits (--reintenta).
+    for e in reg.get("agents", {}).values():
+        if (e.get("tarea") == item["id"] and e.get("tarea_estado") == "fallida" and not e.get("retirado")
+                and (e.get("tarea_motivo") or "").startswith(SIN_ARRANQUE)):
+            e["retirado"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+            e["retirado_por"] = "arranque fallido; lo reemplaza el reintento %s" % sid[:8]
     reg.setdefault("agents", {})[sid] = {
         "session_id": sid, "nombre": plan["nombre"], "pane_id": pane, "tab_id": tab_id, "pestana": pestana,
         "terminal_id": "", "herdr_name": plan["nombre"],
@@ -686,6 +704,22 @@ def lanza_uno(project_id, common_dir, item, plan, draft, modelo, confirmar, log,
     return ok, msg
 
 
+# 0.13.30: herdr errors of `agent start` after which nothing runs in the pane. Others (agent_not_ready behind a
+# trust dialog, measured 2026-10-18) come with Claude already started, so those still go to the dialog and SessionStart.
+NO_ARRANCO = ("agent_pane_busy", "agent_name_taken")
+SIN_ARRANQUE = ("sin SessionStart", "herdr no arrancó")  # the tarea_motivo of a start that never ran
+PANE_BUSY_REINTENTOS = 5
+PANE_BUSY_PAUSA = 2.0
+
+
+def start_error(text):
+    """The `error.code` of herdr's JSON answer, or ''."""
+    try:
+        return (json.loads(text).get("error") or {}).get("code") or ""
+    except (ValueError, AttributeError):
+        return ""
+
+
 def arranca(project_id, sid, pane, wt, nombre, sysfile, modelo, lectura, clave, trigger, confirmar, log, puerto_de=None,
             esfuerzo="", permisos="", resume=False):
     """Start an already-registered session in `pane` with its system prompt file, accept the trust dialog only
@@ -699,6 +733,18 @@ def arranca(project_id, sid, pane, wt, nombre, sysfile, modelo, lectura, clave, 
                 modelo, lectura, {"PORT": port} if port else None, esfuerzo, permisos)
     code, out, err = herdr_cli.run(args, timeout=75)
     log("agent start rc=%s %s" % (code, (out or err).strip()[:160]))
+    # 0.13.30: right after `workspace create` the pane can still be starting its shell (live 2026-10-18: the first
+    # agent of the batch got agent_pane_busy and lookout waited 60 s for a SessionStart that could not come).
+    for _ in range(PANE_BUSY_REINTENTOS):
+        if code == 0 or start_error(out or err) != "agent_pane_busy":
+            break
+        time.sleep(PANE_BUSY_PAUSA)
+        code, out, err = herdr_cli.run(args, timeout=75)
+        log("agent start rc=%s %s" % (code, (out or err).strip()[:160]))
+    herr = start_error(out or err) if code else ""
+    if herr in NO_ARRANCO:
+        set_estado(project_id, sid, "fallida", "herdr no arrancó al agente: " + herr)
+        return False, "herdr no arrancó a %s: %s" % (nombre, (out or err).strip()[:200])
     trust = trust_dialog(pane, wt)
     log("diálogo de confianza: %s" % trust)
     if trust.startswith("otra-ruta"):

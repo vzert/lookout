@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.13.30
+
+Built as 0.13.28, never published under that number (0.13.29 went out first).
+
+Four defects found in the live run of 2026-10-18 (p-97fe1fe744). The run used the installed 0.13.26: `lookout
+pendientes` on claude-vzert, and a real supervisor with real agents in herdr on a test repo.
+
+- `hará:` of a code task on the main checkout says what that agent does. Before, every such task showed the same
+  240 characters of the template's rules, cut before they said the agent does not commit. The scope's first sentence
+  now says «Cambias código en el checkout principal … sin commit: el commit lo hace el usuario». `hará:` shows that
+  sentence followed by the files the pendiente cites.
+- A tag in brackets in front of a pendiente no longer hides its type («**[Victor] Avisar a los devs…**», claude-vzert:
+  it came out `codigo`, with edit tools; now `comunicacion`). A verb inside the brackets still counts as the verb:
+  «[Rotar] token de acceso» stays `credencial`, «[Fix] Medir…» stays `codigo`, and «[Publicar]…» keeps its high risk.
+  The text with the tag's word decides when one of the classifier's rules matches it, otherwise the text after the
+  tag; the risk is high if either reading is. A label in front of a known verb («[P1] Medir…») now reads as that verb.
+  Doubled brackets («[[P1]]») and several tags in a row («[P1] [Victor] …») are read the same way.
+- `lookout lanza` retries `agent start` while the pane of the new workspace is not a shell yet (`agent_pane_busy`;
+  up to 5 times, 2 s apart). Before, the first agent of the batch failed this way, and lookout waited 60 s and said
+  «no llegó el SessionStart … (¿cargó el plugin?)». A start that herdr refused (`agent_pane_busy` after the retries,
+  `agent_name_taken`) now fails at once, with herdr's error.
+- After a failed start and its retry, the two registry entries share a name. Lookup by name now gives the live
+  retry, not the failed one. Before, the supervisor typed into the failed start's dead pane, and `libera --fallida`
+  acted on the old entry. A new launch of the same task also retires a start of that task that never ran (no
+  SessionStart, or refused by herdr), so `resumen` lists the agent once. A code agent that ran and then failed keeps
+  its entry, as before.
+
 ## 0.13.29
 
 - An agent with a live background shell can take input again after `lookout recarga` (p-ad978476a5). Bench 2026-10-18

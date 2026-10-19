@@ -58,6 +58,7 @@ RIESGO = re.compile(r"\b(push|merge|borrar|eliminar|deploy|publicar|release|migr
 MD_LINK = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
 MD_MARCA = re.compile(r"(\*\*|__|~~|`|(?<![\w*])[*_](?=\S)|(?<=\S)[*_](?![\w*]))")
 MD_PREFIJO = re.compile(r"^[\s#>\-+*\d.)\]\[]*")
+ETIQUETA = re.compile(r"^\[+([^\[\]\n]{1,40})\]+\s+(.*)$", re.S)  # [P1] or [[P1]] (codex, delta round)
 
 
 def plano(texto):
@@ -68,22 +69,43 @@ def plano(texto):
     return MD_PREFIJO.sub("", t).strip()
 
 
-def clasifica(texto):
-    """(tipo, riesgo) of an item, read from its plain text. A credential wins over everything (it is the risky one),
-    then a message, then an investigation; the rest is code."""
-    t = plano(texto)
+def _clasifica(t):
+    """(tipo, riesgo, explicit) of a plain text; explicit is False when it fell to the default code."""
     riesgo = "alto" if RIESGO.search(t) else "normal"
     if CODIGO_VERBO.match(t.lower()):
-        return "codigo", riesgo
+        return "codigo", riesgo, True
     if CRED_VERBO.match(t) and CRED_NOMBRE.search(t) or CRED_NOMBRE.search(t) and CRED_EXPUESTA.search(t):
-        return "credencial", "alto"
+        return "credencial", "alto", True
     m = COMUNICACION.match(t)
     if m and (m.group(1).lower().startswith(("comunicar", "avisar", "notificar", "informar", "contactar"))
               or HUMANO.search(t)):
-        return "comunicacion", riesgo
+        return "comunicacion", riesgo, True
     if INVESTIGACION.match(t) and not CAMBIA_CODIGO.search(t):
-        return "investigacion", riesgo
-    return "codigo", riesgo
+        return "investigacion", riesgo, True
+    return "codigo", riesgo, False
+
+
+def _lee(t):
+    """(tipo, riesgo, explicit) of a text that may start with tags in brackets, one after another."""
+    m = ETIQUETA.match(t)
+    if not m:
+        return _clasifica(MD_PREFIJO.sub("", t).strip())
+    # 0.13.30: a verb inside the tag is still the verb («[Rotar] token…» is a credential; codex, publication round);
+    # a name or a label is not the text («[Victor] Avisar a los devs…», claude-vzert, is a message). The text with the
+    # tag's word decides when a verb makes it explicit, else the text after the tag; the risk is high if either is.
+    con = _clasifica(MD_PREFIJO.sub("", m.group(1) + " " + m.group(2)).strip())
+    sin = _lee(m.group(2).strip())
+    tipo, riesgo, explicito = con if con[2] else sin
+    return tipo, "alto" if "alto" in (con[1], sin[1]) else riesgo, explicito
+
+
+def clasifica(texto):
+    """(tipo, riesgo) of an item, read from its plain text. A credential wins over everything (it is the risky one),
+    then a message, then an investigation; the rest is code."""
+    t = MD_MARCA.sub("", MD_LINK.sub(r"\1", texto)).strip()
+    if not ETIQUETA.match(t):
+        return _clasifica(plano(texto))[:2]
+    return _lee(t)[:2]
 
 
 # Fase 9 A2/B3: files nearly every item cites. Matching on them made a task carry ~17 unrelated items (18 KB, with where
