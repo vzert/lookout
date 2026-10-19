@@ -116,7 +116,12 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
   despertar; sale de ahí cuando abres su modal con `--agentes <agente>`, lo relevas, se cierra o vuelve a trabajar.
   - `vigente` → `lookout relevo <project_id> <agente>` **sin preguntar** (con `--goalspec` según «Relevo con
     goalspec», abajo), y una línea al usuario («Relevé <pestaña>: sigue con p-…, con goalspec | solo medición»). Si
-    el relevo dice `NO: …`, pásale esa línea al usuario.
+    el relevo dice `NO: …`, pásale esa línea al usuario. Si juzgas que no toca relevarlo todavía (espera un merge, un
+    arreglo de otro agente…), eso es una decisión del usuario: ábrela al modal con `--agentes <agente>` («¿relevo ya
+    o espera a …?»). Nunca lo dejes quieto con un «quédate quieto» y una pregunta en prosa: el usuario no ve el
+    resumen (3-tier-memory, 2026-10-19: pendientes-en-sessionstart, ~15 h). Un bloque vigente o ambiguo que pasa
+    30 min sin relevo, sin modal que lo nombre y sin trabajo nuevo le manda al usuario una notificación de herdr
+    (una por bloque).
   - `ambiguo` (con su motivo) → al modal en lote con su id dN: «¿relevo, cierro o lo dejo?», abierta con `--cierre
     --si-es "<la etiqueta de cerrar>"` para que su sí a cerrarla sirva a `cierra-pestana`. No adivines. La
     opción recomendada es **«Relevarlo»** (decisión del usuario, 2026-10-15: un bloque con trabajo se releva por

@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.13.32
+
+Audit of the supervisor in 3-tier-memory (2026-10-19). It did ask every supervised agent for its `/checkpoint-3t`
+and relieved them; two finished agents still sat unseen.
+
+- An agent that closed its goalspec run stays in «Listo para revisar» after later turns without markers (a reply to
+  the supervisor, a background task's turn). Before, the next turn put it back in «Idle»:
+  decisiones-pendientes-bloqueadas was «listo» at 08:45:03 and «idle» at 08:45:08, and the digest hid it in
+  «+2 agentes más» while its last turn asked the user to merge PR #40. A later goalspec verdict without a close
+  takes it out (a new run). The user gets the «está listo para revisar» notification once, from the turn that
+  closed the run, not again on each reply.
+- A vigente or ambiguo «Como retomar» still unattended 30 min after it was left (no relief, no modal that names the
+  agent, no new work) sends the user one herdr notification per block, from the checker pass. The block is its id:
+  later replies that carry the same block again do not announce it again, and its 30 min count from the first turn
+  that left it. Before, lookout sent
+  none for a block because the supervisor attends it. pendientes-en-sessionstart's block was on every digest as
+  «→ lookout relevo» for ~15 h; the supervisor told the agent to stay still and asked the user in prose.
+- The digest row of a vigente block and the skill say it: relieve it, or open a modal with `--agentes`. Holding the
+  agent with a question in prose is not an option.
+
 ## 0.13.31
 
 - `lookout entrega --pasos reload` confirms the /reload-plugins the way `lookout recarga` has since 0.13.24: by the new

@@ -317,7 +317,8 @@ def describe(r):
 def accion(r):
     """What the supervisor does with a block (the supervise skill's rule, in the line it reads)."""
     if (r or {}).get("estado") == "vigente":
-        return "lookout relevo (--goalspec salvo que sea solo medir)"
+        # 0.13.32: not relieving it is a modal, never a held agent and a question in prose (live 3-tier 2026-10-19)
+        return "lookout relevo (--goalspec salvo que sea solo medir); si no lo relevas, modal con --agentes"
     if ((r or {}).get("motivo") or "").startswith(CERRADO):
         return "lookout cierra-pestana (terminó)"
     return "modal «¿relevo, cierro o lo dejo?»"

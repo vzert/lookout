@@ -85,6 +85,10 @@ def revisa(project_id):
                 alta.pasada(project_id)
         except Exception:
             pass
+        try:
+            heuristicas.avisa_bloques(project_id)  # 0.13.32: a block the supervisor left unattended reaches the user
+        except Exception:
+            pass
 
 
 @contextlib.contextmanager

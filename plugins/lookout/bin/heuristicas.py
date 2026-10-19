@@ -537,6 +537,74 @@ def bloque_sin_atender(ev, entry=None, decs=None):
     return r
 
 
+def cerro_su_run(events, sid):
+    """Its last idle that carries goalspec markers carries a completion review. 0.13.32: idles without markers after
+    it (a reply to the supervisor, a background task's turn) keep it finished; a later verdict alone is a new run
+    (live 3-tier 2026-10-18: decisiones-pendientes-bloqueadas was «listo» at 08:45:03 and «idle» at 08:45:08)."""
+    for ev in reversed(events):
+        if ev.get("session_id") != sid:
+            continue
+        marcas = (ev.get("marcadores") or []) if ev.get("event") == "idle" else []
+        if marcas:
+            return any("[COMPLETION-REVIEW" in m for m in marcas)
+    return False
+
+
+def avisa_bloques(project_id, now=None):
+    """0.13.32: a vigente or ambiguo «Como retomar» still unattended (no relief, no modal naming the agent, no new
+    work) MIN_BLOQUE after it was left sends the user ONE herdr notification per block. transicion() sends none for a
+    block because the supervisor attends it; live 3-tier 2026-10-18/19 the supervisor did not, for ~15 h, and the user
+    never knew (pendientes-en-sessionstart). Returns the agents announced."""
+    import herdr_cli
+    import registry
+    import decisiones
+    now = time.time() if now is None else now
+    path = os.path.join(lookout_state.project_dir(project_id), "avisos_bloque.json")
+    with mutex(project_id):
+        events = _project_events(project_id)
+        agents = registry.load(project_id).get("agents") or {}
+        decs = decisiones.load(project_id).get("items")
+        hechos = lookout_state.read_json(path) or {}
+        last = {}
+        for ev in events:
+            if ev.get("event") not in NO_ESTADO:
+                last[ev.get("session_id")] = ev
+        out = []
+        for sid, e in agents.items():
+            ev = last.get(sid)
+            if (not ev or e.get("retirado") or e.get("tarea_estado") in ("relevada", "relevando", "relevo-fallido")
+                    or ev.get("event") not in ("idle", "retomar")):
+                continue
+            r = bloque_sin_atender(ev, e, decs)
+            if not r:
+                continue
+            # adversary r1: the agent's later replies re-carry the same block on new idles; the block is its id and its
+            # age counts from the first idle that carried it (3-tier 1cb5ebc0: one bloque_id on three idles)
+            bid = r.get("bloque_id")
+            desde = min([float(x.get("ts") or 0) for x in events if bid and x.get("session_id") == sid
+                         and (x.get("retomar") or {}).get("bloque_id") == bid] or [float(ev.get("ts") or now)])
+            if now - desde < MIN_BLOQUE:
+                continue
+            firma = bid or str(ev.get("ts"))
+            if hechos.get(sid) == firma:
+                continue
+            hechos[sid] = firma
+            out.append((sid, e, r, dict(ev, ts=desde)))
+        if out:
+            lookout_state.write_json(path, hechos)
+    for sid, e, r, ev in out:
+        who = (registry.quien(e) if e.get("nombre") else "") or sid[:8]
+        body = ("Dejó un «Como retomar» (%s, %s) hace %d min y el supervisor no lo relevó ni abrió un modal después. "
+                "Pregúntale al supervisor qué hace con él." % (", ".join(r.get("pendientes") or []) or "sin pendiente",
+                                                               r.get("estado"), int((now - float(ev["ts"])) // 60)))
+        herdr_cli.run(["notification", "show", ("lookout: %s espera su relevo" % who)[:120], "--body", body[:300],
+                       "--sound", "request"], timeout=3)
+    return [e.get("nombre") or sid for sid, e, _r, _ev in out]
+
+
+MIN_BLOQUE = 30 * 60
+
+
 def grupo(events, sid, entry=None, decs=None):
     """The agent's group in the grouped view, from its last state event (fallo/aprobado/crossrepo/notification are
     in-turn noise and do not move it: a `repite` keeps it in "te necesita" while it keeps failing)."""
@@ -566,8 +634,7 @@ def grupo(events, sid, entry=None, decs=None):
         if k == "idle":
             # "Listo" = finished work: a completion review, or a task marked done. A report to the supervisor alone is
             # not (it is often a question or "waiting for you"): the supervisor already has that message (Fase 6 run 1).
-            done = any("[COMPLETION-REVIEW" in m for m in ev.get("marcadores") or []) \
-                or entry.get("tarea_estado") == "terminada"
+            done = cerro_su_run(events, sid) or entry.get("tarea_estado") == "terminada"
             return "listo" if done else "idle"
         if k in ("working", "bg_wait", "correccion", "largo"):
             return "trabajando"
@@ -609,6 +676,11 @@ def transicion(project_id, ev, notificar=True):
             return old, new, False
         # a block is the supervisor's (relief by default, or its modal): no herdr notification to the user for it
         avisa = notificar and new in AVISA and ev.get("event") not in NO_AVISA_POR and not (new == "te_necesita" and bloque_sin_atender(ev, entry, items))
+        # 0.13.32: «listo» now outlives the turn that closed the run; only that turn (or a task marked done) tells the
+        # user, not every later reply that brings the agent back from «trabajando»
+        if avisa and new == "listo" and old is not None and entry.get("tarea_estado") != "terminada" \
+                and not any("[COMPLETION-REVIEW" in m for m in ev.get("marcadores") or []):
+            avisa = False
         data[sid] = {"grupo": new, "ts": time.time(), "por": ev.get("event"), "avisado": avisa}
         lookout_state.write_json(grupos_path(project_id), data)
     if avisa:

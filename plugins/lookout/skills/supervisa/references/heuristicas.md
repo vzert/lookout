@@ -29,7 +29,7 @@ deja de listarlo; un Claude muerto (`kill -9`) no manda `SessionEnd`.
 | Grupo | Último evento de estado del agente |
 |---|---|
 | Te necesita | `ask`, `blocked`, `negado`, `repite`, `unknown`, `sin_progreso` nivel `escalar` |
-| Listo para revisar | `idle` con `[COMPLETION-REVIEW …]` en su último mensaje, o tarea `terminada` |
+| Listo para revisar | `idle` tras un `[COMPLETION-REVIEW …]` (sigue listo aunque luego conteste sin marcas; un veredicto nuevo sin cierre lo saca), o tarea `terminada` |
 | Trabajando | `working`, `bg_wait`, `correccion`, `largo`, `sin_progreso` nivel `mirar` |
 | En pausa (proveedor) | `pausa` |
 | Idle | cualquier otro `idle` (también el que ya le reportó al supervisor: suele ser una pregunta o "espero tu respuesta", y el supervisor ya tiene ese mensaje), `start` |
