@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.13.31
+
+- `lookout entrega --pasos reload` confirms the /reload-plugins the way `lookout recarga` has since 0.13.24: by the new
+  `local_command` row of /reload-plugins in the agent's transcript, and by the screen only when lookout finds no
+  transcript (p-231e8eeb51). Before, it waited with `herdr pane wait-output --match Reloaded:`, which searches the
+  screen as it already is: an older «Reloaded:» still on screen gave `reload: ok` before the new one appeared, and
+  `reload: ok` was printed even when herdr had not typed the command. Both commands now share one reader
+  (`recarga.teclea`). The output says where it looked: `reload: ok (vi «Reloaded:» en su transcript)`,
+  `reload: sin confirmar: …`, or `reload: NO: herdr no tecleó /reload-plugins …`. The wait is still 15 s.
+
 ## 0.13.30
 
 Built as 0.13.28, never published under that number (0.13.29 went out first).

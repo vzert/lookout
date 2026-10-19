@@ -49,6 +49,26 @@ def filas(path):
     return n
 
 
+def teclea(pane, session_id, espera):
+    """Type /reload-plugins and wait for its confirmation: ("ok" | "sin-confirmar" | "no-tecleado", where it looked).
+    Shared by `recarga` and the reload step of `entrega` (0.13.31, p-231e8eeb51)."""
+    path = deliver.transcript_path(session_id or "")
+    t_antes = filas(path) if path else None
+    if t_antes is not None:  # with a transcript, only its new row confirms (a screen count may move by itself)
+        medir, antes, donde = (lambda: filas(path) or 0), t_antes, "su transcript"
+    else:
+        medir, antes, donde = (lambda: vistos(pane)), vistos(pane), "su pantalla (no encuentro su transcript)"
+    if herdr_cli.run(["agent", "prompt", pane, "/reload-plugins"])[0] != 0:  # codex r1: nothing typed, nothing to wait
+        return "no-tecleado", donde
+    fin = time.time() + espera
+    while True:
+        if medir() > antes:  # an older «Reloaded:» confirms nothing
+            return "ok", donde
+        if time.time() >= fin:
+            return "sin-confirmar", donde
+        time.sleep(0.5)
+
+
 def recarga(project_id, entry, espera=10.0):
     """(ok, message)."""
     pane = entry.get("pane_id")
@@ -61,22 +81,12 @@ def recarga(project_id, entry, espera=10.0):
     box, _text = deliver.read_box(pane)
     if box not in ("vacia", "sugerencia"):
         return False, "NO: la caja de %s tiene %s. No escribo encima; recarga cuando quede vacía." % (nombre, box)
-    path = deliver.transcript_path(entry.get("session_id") or "")
-    t_antes = filas(path) if path else None
-    if t_antes is not None:  # with a transcript, only its new row confirms (a screen count may move by itself)
-        medir, antes, donde = (lambda: filas(path) or 0), t_antes, "su transcript"
-    else:
-        medir, antes, donde = (lambda: vistos(pane)), vistos(pane), "su pantalla (no encuentro su transcript)"
-    if herdr_cli.run(["agent", "prompt", pane, "/reload-plugins"])[0] != 0:  # codex r1: nothing typed, nothing to wait
+    estado, donde = teclea(pane, entry.get("session_id"), espera)
+    if estado == "no-tecleado":
         return False, "NO: herdr no tecleó /reload-plugins en %s. Lee su pane antes de repetirlo." % nombre
-    fin = time.time() + espera
-    while True:
-        if medir() > antes:  # an older «Reloaded:» confirms nothing
-            break
-        if time.time() >= fin:
-            return False, ("Tecleé /reload-plugins en %s, sin confirmar: no veo «Reloaded:» nuevo en %s en %d s. "
-                           "Lee su pane antes de repetirlo." % (nombre, donde, espera))
-        time.sleep(0.5)
+    if estado == "sin-confirmar":
+        return False, ("Tecleé /reload-plugins en %s, sin confirmar: no veo «Reloaded:» nuevo en %s en %d s. "
+                       "Lee su pane antes de repetirlo." % (nombre, donde, espera))
     reg = registry.load(project_id)
     e = reg.get("agents", {}).get(entry.get("session_id"))
     if e is not None:

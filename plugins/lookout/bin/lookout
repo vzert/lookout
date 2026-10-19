@@ -219,6 +219,7 @@ def box_state(pane):
 
 
 RENAME_ESPERA = 10  # s at most for the /rename to leave the input box (B2, 0.12.2)
+ENTREGA_RELOAD_ESPERA = 15  # s at most for the /reload-plugins row in its transcript (0.13.31; the old wait-output's 15)
 
 
 def caja_libre(pane, limite, cada=0.3):
@@ -288,9 +289,17 @@ def cmd_entrega(a):
         return 4
     pasos = [p for p in a.pasos.split(",") if p]
     if "reload" in pasos:
-        herdr_cli.run(["agent", "prompt", pane, "/reload-plugins"])
-        code, _o, _e = herdr_cli.run(["pane", "wait-output", pane, "--match", "Reloaded:", "--timeout", "15000"], timeout=20)
-        print("reload: %s" % ("ok" if code == 0 else "sin confirmar en pantalla"))
+        # 0.13.31 (p-231e8eeb51): confirmed as `lookout recarga` confirms it, by the new transcript row. wait-output
+        # matched an older «Reloaded:» already on screen, and a full screen gave false «sin confirmar».
+        import recarga
+        estado, donde = recarga.teclea(pane, entry["session_id"], ENTREGA_RELOAD_ESPERA)
+        if estado == "ok":
+            print("reload: ok (vi «Reloaded:» en %s)" % donde.split(" (")[0])
+        elif estado == "no-tecleado":
+            print("reload: NO: herdr no tecleó /reload-plugins. Lee su pane antes de repetirlo.")
+        else:
+            print("reload: sin confirmar: no veo «Reloaded:» nuevo en %s en %d s. Lee su pane antes de repetirlo." % (
+                donde, ENTREGA_RELOAD_ESPERA))
     if "rename" in pasos:
         # 0.13.1: the alta may have renamed it already; a session that carries the name gets no second /rename
         if (live.get("terminal_title_stripped") or "") != entry["nombre"]:
