@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.13.34
+
+A supervisor watches at most 10 agents at a time (user's decision 2026-10-19). Past that a human cannot answer the
+supervisor, and every Claude takes memory. An external user supervised 17. It lost its subscription access then, but
+that was a billing error, not usage: this account ran 1 301 calls in one hour, with up to 28 sessions calling within the same 10 minutes, without a cut.
+
+- The waiter registers a session it finds only while there is a free slot (`LOOKOUT_CUPO`, 10 by default). A slot is
+  held by a registered agent alive in herdr, or one lookout is starting; a retired or relieved one holds none.
+- The rest wait in `registry.json` → `espera_cupo`, in the order they were queued: no note, no rename, no mode match. Each one gets one
+  `espera_cupo` line («espera turno … sigue en su pane sin supervisor»), and `resumen` shows `CUPO: 10, lleno en la
+  última pasada · k esperan turno (…)` while someone waits. lookout does not pause a waiting agent: it keeps working, only unsupervised.
+- When a slot frees, the next pass registers the first of the queue still alive (`le tocó su turno del cupo`). One
+  gone from herdr leaves the queue.
+- A pass trusts herdr's agent list only when it is not empty and shows the supervisor itself. A failed `herdr agent
+  list` answers nothing, and the queue was emptied and re-queued in another order with a second `espera_cupo` line
+  (adversary round 1).
+- `lookout inicia` goes through the same cupo: before, it registered every agent it found (codex round 1: 12 of 12).
+  It prints a `CUPO:` line with the ones left waiting. With a herdr list it cannot trust it
+  counts every registered agent as alive and leaves the queue alone.
+- `lookout pendientes`/`lanza`: the batch cap (3, `LOOKOUT_TOPE` or `--tope`) never passes the cupo. relevo and
+  retoma swap one agent for another and do not go through it.
+
+## 0.13.33
+
+A user outside our setup saw many «Held message from another session … permission mode class doesn't match» between
+supervisor-POS_MEGAMAYOREO and its agents (2026-10-19). Claude Code holds a message between a session that bypasses
+permission prompts and one that does not, in both directions, and drops it after 5 min unanswered: the agent kept
+waiting for an answer that never came.
+
+- `lookout lanza` starts each agent in the supervisor's own mode (`--permission-mode`). Before, it passed none, and
+  an agent took the user's default mode whatever the supervisor ran in. A supervisor in bypass does not start
+  bypassing agents on its own: `lookout pendientes` prints a `MODO:` line and the batch modal asks the user;
+  `lookout lanza … --bypass` only on that answer. A supervisor in plan, or one whose mode can't be read, passes none.
+- An agent registered (`lookout inicia`, or found by the waiter) that bypasses while the supervisor does not is moved
+  with Shift+Tab through herdr, its footer read after each press, until a prompting mode that is not plan (at most 6
+  presses; none while it waits on a dialog or when its footer can't be read). Measured on a real session started with
+  `--dangerously-skip-permissions`: one press took it to auto; a message from the supervisor sent before the press
+  was held, another sent after it was delivered. Only the last lines of the screen count as its footer.
+- When it can't be matched (the supervisor bypasses, or the agent did not move), the agent's registration line says
+  `MODO DISTINTO → díselo al usuario`, and the skill says what to offer: lower the supervisor with Shift+Tab, or
+  approve each held message. lookout never moves a running agent up to bypass (a relief keeps the old agent's mode); only `lanza --bypass`
+  starts a new one there, on the user's answer.
+
 ## 0.13.32
 
 Audit of the supervisor in 3-tier-memory (2026-10-19). It did ask every supervised agent for its `/checkpoint-3t`

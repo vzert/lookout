@@ -75,6 +75,25 @@ def propose_name(agent, worktree, taken):
     return candidate
 
 
+CUPO = 10  # 0.13.34 (user's decision 2026-10-19): past 10 agents a human cannot answer the supervisor
+
+
+def cupo():
+    """Most agents one supervisor watches at a time (LOOKOUT_CUPO, at least 1)."""
+    try:
+        return max(1, int(os.environ.get("LOOKOUT_CUPO", str(CUPO))))
+    except ValueError:
+        return CUPO
+
+
+def en_cupo(reg, live):
+    """Session ids that hold a slot: registered, not retired nor relieved, and alive in herdr (`live`) or still being
+    started by lookout (no herdr session yet)."""
+    return {sid for sid, e in reg.get("agents", {}).items()
+            if not e.get("retirado") and e.get("tarea_estado") != "relevada"
+            and (sid in live or e.get("tarea_estado") in ("lanzando", "retomando"))}
+
+
 def quien(entry):
     """How to name an agent to the user: its herdr tab, which is what the user sees (a pane id says nothing).
     'Cambio DeepSeek (cambio-deepseek)' when they differ; the name alone when the tab carries it or is unknown."""

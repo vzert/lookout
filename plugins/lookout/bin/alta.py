@@ -169,6 +169,90 @@ def barre(project_id, agents):
     return out
 
 
+def turno(project_id, reg, found, todos):
+    """0.13.34: of the new sessions, those that fit in the free slots (registry.cupo), in queue order (first queued first, then herdr's order); the
+    rest wait in reg["espera_cupo"], saved here (call under the project mutex). Each one that starts waiting gets one
+    `espera_cupo` event. A waiting session gone from herdr leaves the queue. Returns (admitted, ids that waited)."""
+    live = {(t.get("agent_session") or {}).get("value") for t in todos} - {None}
+    previa = list(reg.get("espera_cupo") or [])
+    cola = [x for x in previa if x.get("session_id") in live]
+    antes = [x["session_id"] for x in cola]
+    by_sid = {f["session_id"]: f for f in found}
+    libres = max(0, registry.cupo() - len(registry.en_cupo(reg, live)))
+    entran, esperan = [], []
+    # queue order first, then the new ones. A queued session alive but missing from this pass keeps its turn: it holds
+    # the slot it would take, so no newer one passes it (codex r5)
+    for s in antes + [f["session_id"] for f in found if f["session_id"] not in antes]:
+        if libres <= 0:
+            if s in by_sid:
+                esperan.append(by_sid[s])
+        elif s in by_sid:
+            entran.append(by_sid[s])
+            libres -= 1
+        else:
+            libres -= 1
+    nuevos = [f for f in esperan if f["session_id"] not in antes]
+    desde = {x["session_id"]: x.get("desde") for x in cola}
+    # one alive but not found this pass (discover missed it) keeps its place instead of queueing again later
+    sigue = [x for x in cola if x["session_id"] not in by_sid]
+    reg["espera_cupo"] = sorted(sigue + [{"session_id": f["session_id"], "pane_id": f.get("pane_id", ""),
+                                          "pestana": f.get("pestana", ""),
+                                          "desde": desde.get(f["session_id"]) or time.time()} for f in esperan],
+                                key=lambda x: x["desde"])
+    if reg["espera_cupo"] != previa:
+        registry.save(project_id, reg)
+    for f in nuevos:
+        lookout_state.append_event(project_id, {
+            "event": "espera_cupo", "session_id": f["session_id"], "nombre": "", "pane": f.get("pane_id", ""),
+            "pestana": f.get("pestana", ""), "hook": "descubre", "cupo": registry.cupo()})
+    return entran, {f["session_id"] for f in entran if f["session_id"] in antes}
+
+
+def lista_fiable(todos, sup):
+    """herdr's agent list can be trusted when it is not empty and shows the supervisor itself (by session or pane: a
+    pane moved to another workspace gets a new id). A supervisor with no pane in the lock (outside herdr) is not asked."""
+    if not todos:
+        return False
+    if not sup.get("pane"):
+        return True
+    def es_el(t):
+        s = (t.get("agent_session") or {}).get("value")
+        # codex r3: its pane counts only while no other session holds it (a reused pane is not the supervisor)
+        return s == sup.get("session_id") or (t.get("pane_id") == sup["pane"] and not s)
+    return any(es_el(t) for t in todos)
+
+
+def filtra_cupo(project_id, found, todos, sup):
+    """`lookout inicia` registers what it finds by itself (codex r1: 12 agents, all registered). Same cupo as descubre:
+    the sessions not yet registered that do not fit leave `found` and wait in the queue. Already registered ones stay."""
+    import lote
+    known = registry.load(project_id).get("agents", {})
+    nuevos = [f for f in found if f.get("kind") == "claude" and f.get("session_id") and f["session_id"] not in known]
+    if not nuevos:
+        return found
+    if not lista_fiable(todos, sup):
+        # codex r2: an untrusted list still keeps the cupo, counting every registered agent as alive (it may be missing
+        # from the list), and leaves the queue as it is; the waiter queues the rest once herdr shows the supervisor
+        reg = registry.load(project_id)
+        libres = max(0, registry.cupo() - len(registry.en_cupo(reg, set(reg.get("agents", {})))))
+        fuera = {f["session_id"] for f in nuevos[libres:]}
+        return [f for f in found if f.get("session_id") not in fuera]
+    with lote.project_mutex(project_id):
+        entran, _ = turno(project_id, registry.load(project_id), nuevos, todos)
+    fuera = {f["session_id"] for f in nuevos} - {f["session_id"] for f in entran}
+    return [f for f in found if f.get("session_id") not in fuera]
+
+
+def sin_cola(project_id):
+    import lote
+    if not registry.load(project_id).get("espera_cupo"):
+        return
+    with lote.project_mutex(project_id):
+        reg = registry.load(project_id)
+        reg["espera_cupo"] = []
+        registry.save(project_id, reg)
+
+
 def descubre(project_id, agents=None, common_of=None, tab_of=None):
     """Register the new sessions of the project; append one `nuevo` event each. Returns those events."""
     import discover
@@ -179,12 +263,15 @@ def descubre(project_id, agents=None, common_of=None, tab_of=None):
     if not common or not sup.get("session_id"):
         return []
     todos = herdr_cli.agent_list() if agents is None else agents
+    if not lista_fiable(todos, sup):
+        return []  # 0.13.34 (adversary r1): a failed herdr answers []; the cupo's queue must not read it as «all gone»
     known = set(registry.load(project_id).get("agents", {}))
     candidatos = [a for a in todos if (a.get("agent_session") or {}).get("value")
                   and (a.get("agent_session") or {}).get("value") not in known
                   and (a.get("agent_session") or {}).get("value") != sup["session_id"]
                   and a.get("pane_id") != sup.get("pane")]
     if not candidatos:
+        sin_cola(project_id)  # a waiting session is never registered, so alive it would be a candidate
         return []
     found = [f for f in discover.discover(common, candidatos, common_of, tab_of)
              if f.get("kind") == "claude" and f.get("session_id")]
@@ -195,8 +282,10 @@ def descubre(project_id, agents=None, common_of=None, tab_of=None):
     # registry.json is rewritten by relevo, cierra-pestana and lanza under this mutex: a register from the waiter's
     # thread without it could drop their change (adversary round 1: a «retirado» lost)
     with lote.project_mutex(project_id):
-        known = set(registry.load(project_id).get("agents", {}))
+        reg = registry.load(project_id)
+        known = set(reg.get("agents", {}))
         found = [f for f in found if f["session_id"] not in known]
+        found, en_cola = turno(project_id, reg, found, todos)
         if not found:
             return []
         mine = {f["session_id"] for f in found}
@@ -214,11 +303,17 @@ def descubre(project_id, agents=None, common_of=None, tab_of=None):
                     if copias[sid].get(k):
                         e[k] = copias[sid][k]
         registry.save(project_id, reg)
+    import modo
+    modos = modo.empata(project_id, found)  # 0.13.33: outside the mutex (Shift+Tab waits on the footer)
     for f in found:
         e = reg["agents"].get(f["session_id"]) or {}
         ev = {"event": "nuevo", "session_id": f["session_id"], "nombre": e.get("nombre", ""), "pane": f.get("pane_id", ""),
               "hook": "descubre", "pestana": e.get("pestana") or f.get("pestana", ""), "estado_herdr": f.get("status", ""),
               "renombre": renombres.get(f["session_id"], "")}
+        if f["session_id"] in en_cola:
+            ev["desde_cola"] = True
+        if modos.get(f["session_id"]):
+            ev["modo"] = modos[f["session_id"]]
         lookout_state.append_event(project_id, ev)
         out.append(ev)
     retomar.al_registrar(project_id, sorted(mine))  # one already idle with a «Como retomar» (Fase 1)

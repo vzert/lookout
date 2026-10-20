@@ -202,8 +202,14 @@ def describe(ev, quien=None):
         r = ev.get("renombre") or ""
         ren = ("renombrado" if r == "hecho" else "renombrado " + r if r.startswith("a medias") else
                "sin renombrar (%s)" % r if r else "")
-        return head + ": %spestaña «%s», %s → `lookout entrega` para darle su nota" % (
-            ren + ", " if ren else "", ev.get("pestana") or "-", ev.get("estado_herdr") or "sin estado")
+        import modo
+        m = modo.describe(ev.get("modo"))  # 0.13.33
+        return head + ": %s%s%spestaña «%s», %s → `lookout entrega` para darle su nota" % (
+            "le tocó su turno del cupo; " if ev.get("desde_cola") else "",  # 0.13.34
+            m + "; " if m else "", ren + ", " if ren else "", ev.get("pestana") or "-", ev.get("estado_herdr") or "sin estado")
+    if kind == "espera_cupo":  # 0.13.34: not registered, so it has no name yet: its tab or pane
+        return "%s %s: espera turno (cupo de %s lleno); sigue en su pane sin supervisor, díselo al usuario" % (hhmmss(ev.get("ts")), ev.get("pestana") or ev.get("pane") or
+                                                          ev.get("session_id", "")[:8], ev.get("cupo") or registry.cupo())
     if kind == "retomar":  # 0.13.0: registered while already idle, with a «Como retomar» in its last turn
         import retomar
         return head + ": " + retomar.describe(ev.get("retomar"))
@@ -486,6 +492,12 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
                   or retoma.salio_solo(last_se.get(s), e))}
     head = ["Agentes (%d%s), por grupo: pestaña (nombre) | rama | tarea | último evento" % (
         len(vivos), ", +%d terminados" % (len(agents) - len(vivos)) if len(agents) > len(vivos) else "")]
+    cola = reg.get("espera_cupo") or []
+    if cola:  # 0.13.34
+        # codex r4: no count of its own (the table's rows are not the slots): a queue means the last pass found it full
+        head.insert(0, "CUPO: %d, lleno en la última pasada · %d esperan turno (%s), sin supervisor hasta que se libere "
+                       "un hueco" % (registry.cupo(), len(cola), ", ".join(x.get("pestana") or x.get("pane_id") or
+                                                                         x["session_id"][:8] for x in cola)))
     now = time.time()
     revisiones = heuristicas.ultimas_revisiones(project_id)
     by_group = {}

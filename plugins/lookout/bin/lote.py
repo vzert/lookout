@@ -26,6 +26,7 @@ import decisiones
 import deliver
 import herdr_cli
 import lookout_state
+import modo
 import pendientes
 import ports
 import requisitos
@@ -58,9 +59,10 @@ TERMINADAS = ("terminada", "fallida")
 
 def tope_default():
     try:
-        return max(1, int(os.environ.get("LOOKOUT_TOPE", "3")))
+        tope = max(1, int(os.environ.get("LOOKOUT_TOPE", "3")))
     except ValueError:
-        return 3
+        tope = 3
+    return min(tope, registry.cupo())  # 0.13.34: the cap counts every live session, so it keeps them within the cupo
 
 
 def repo_root(common_dir):
@@ -411,7 +413,7 @@ def repo_root_of(plan):
 
 def propone(project_id, common_dir, tope=None, rehacer=False):
     """Proposal dict plus the batch's prompt drafts written to disk (the supervisor may refine them)."""
-    tope = tope or tope_default()
+    tope = min(tope or tope_default(), registry.cupo())
     root = repo_root(common_dir)
     items = pendientes.parse(pendientes_file(common_dir))
     by_id = {it["id"]: it for it in items}
@@ -641,7 +643,7 @@ def titulo_pestana(item, n=TITULO_MAX):
     return out + "…" if cortado else out
 
 
-def lanza_uno(project_id, common_dir, item, plan, draft, modelo, confirmar, log, nota):
+def lanza_uno(project_id, common_dir, item, plan, draft, modelo, confirmar, log, nota, bypass=False):
     root = repo_root(common_dir)
     wt = plan["worktree"]
     if plan.get("sin_worktree"):
@@ -700,7 +702,9 @@ def lanza_uno(project_id, common_dir, item, plan, draft, modelo, confirmar, log,
                                      "display": plan["nombre"] + " (lookout)"})
     ok, msg = arranca(project_id, sid, pane, wt, plan["nombre"], sysfile, modelo, bool(plan.get("solo_lectura")),
                       "tarea:" + item["id"], TRIGGER.format(id=item["id"]), confirmar, log,
-                      clave_puerto(plan) if usa_recursos(item, plan) else None)
+                      clave_puerto(plan) if usa_recursos(item, plan) else None,
+                      # 0.13.33: the supervisor's own mode, so their messages are not held (modo.py)
+                      permisos=modo.para_lanzar(project_id, bypass))
     return ok, msg
 
 
@@ -809,13 +813,13 @@ def set_estado(project_id, sid, estado, motivo="", hooks=None):
     return e
 
 
-def lanza(project_id, common_dir, ids, nota_for, modelo=None, confirmar=30.0, tope=None, log=print):
+def lanza(project_id, common_dir, ids, nota_for, modelo=None, confirmar=30.0, tope=None, log=print, bypass=False):
     """Launch the given ids, each only if it is in the batch proposed right now (cap and coupling hold)."""
     with project_mutex(project_id):
-        return _lanza(project_id, common_dir, ids, nota_for, modelo, confirmar, tope, log)
+        return _lanza(project_id, common_dir, ids, nota_for, modelo, confirmar, tope, log, bypass)
 
 
-def _lanza(project_id, common_dir, ids, nota_for, modelo, confirmar, tope, log):
+def _lanza(project_id, common_dir, ids, nota_for, modelo, confirmar, tope, log, bypass=False):
     prop = propone(project_id, common_dir, tope)
     by_id = {it["id"]: it for it in prop["lote"]}
     queued = {it["id"]: it["motivo"] for it in prop["cola"] + prop["excluidos"]}
@@ -826,6 +830,6 @@ def _lanza(project_id, common_dir, ids, nota_for, modelo, confirmar, tope, log):
             results.append((pid_, False, "no está en el lote de ahora: %s" % queued.get(pid_, "no es un pendiente abierto")))
             continue
         ok, msg = lanza_uno(project_id, common_dir, it, it["plan"], it["prompt"], modelo, confirmar, log,
-                            nota_for(it["plan"]["nombre"]))
+                            nota_for(it["plan"]["nombre"]), bypass)
         results.append((pid_, ok, msg))
     return results

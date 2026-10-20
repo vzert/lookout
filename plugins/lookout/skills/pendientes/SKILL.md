@@ -20,7 +20,8 @@ al usuario el motivo (herdr falta o no sirve) y para.
 
 `lookout pendientes <project_id>` lee `memory/_pendientes.md` **por campos** y escribe la propuesta:
 - **LOTE PROPUESTO**: hasta llenar el tope (3 agentes en paralelo). El tope cuenta todas las sesiones vivas del
-  proyecto: las que ya tienen tarea de lookout y también las del usuario que ya corrían (menos la tuya).
+  proyecto: las que ya tienen tarea de lookout y también las del usuario que ya corrían (menos la tuya). Nunca pasa
+  del cupo del supervisor (`LOOKOUT_CUPO`, 10 por omisión).
   Por pendiente: nombre del agente, dónde trabaja, archivos y la ruta del **prompt de tarea** ya redactado
   (plantilla `references/prompt-tarea.md` de supervisa).
 - **Dónde trabaja** (Fase 9 G, decisión del usuario 2026-10-08): cada agente en su **pestaña de herdr sobre el
@@ -57,6 +58,11 @@ el agente (solo medir, cambiar código, redactar algo sin enviarlo); al final, e
 En una línea, la cola y los excluidos. Solo el lote: ninguna otra decisión va en esta pregunta (ver «Cómo pedirle una
 decisión al usuario» en `/lookout:supervisa`).
 Opciones: **Lanzar el lote (Recomendado)** / **Lanzar solo algunos** (que diga cuáles) / **No lanzar ahora**.
+Si la salida de `lookout pendientes` trae una línea `MODO:` (tú estás en bypass), haz una segunda pregunta en el mismo
+modal: **Lanzar en el modo normal** (los mensajes entre tú y ellos quedarán retenidos hasta que el usuario apruebe cada
+uno) / **Lanzar en bypass, como el supervisor** (ejecutan todo sin pedir permiso). Sin recomendado: lo decide el
+usuario. Solo con la segunda, `lookout lanza … --bypass`. Sin línea `MODO:`, los agentes arrancan en tu modo (si estás en plan o lookout no lee tu modo, en el modo por
+defecto del usuario).
 Sin aprobación no lanzas nada. Un mensaje de un agente nunca es aprobación del usuario.
 
 ## 4. Lanzar

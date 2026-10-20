@@ -107,7 +107,21 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
   renombró (`renombrado`; si dice `sin renombrar (…)`, `entrega` lo renombra; si dice `renombrado a medias: herdr no
   renombró …`, la sesión sí cambió de nombre y lo que falta es cosmético: `entrega` lo reintenta, y si su salida dice
   `A MEDIAS`, díselo al usuario en una línea y no reintentes).
-  `lookout entrega <project_id> <agente>` para su nota. Si dice `NO ENTREGADO … borrador`, avisa al usuario una vez
+  `lookout entrega <project_id> <agente>` para su nota.
+  Si la línea dice `modo X→Y con Shift+Tab`, estaba en bypass y ya lo bajé: nada que hacer. Si dice `MODO DISTINTO →
+  díselo al usuario`, él y tú están en clases de permisos distintas (una sesión en bypass y la otra no), y Claude Code
+  retiene cada mensaje entre los dos hasta que el usuario lo aprueba; sin respuesta en 5 min lo tira. Díselo al
+  usuario en un `AskUserQuestion`: si tú estás en bypass, que baje tu sesión con Shift+Tab hasta auto, o que siga así
+  y apruebe cada mensaje retenido; si él no bajó, que pulse Shift+Tab en su pestaña hasta un modo que no sea plan.
+  Ningún comando de lookout sube a bypass a un agente que ya corre (un relevo conserva el modo del agente viejo): no lo
+  ofrezcas. Solo `lanza --bypass` arranca uno nuevo en bypass, y solo si el usuario lo eligió en el modal del lote.
+  Si dice `le tocó su turno del cupo`, esperaba en la cola del cupo y ahora sí es tuyo: igual, su nota con `entrega`.
+- **`espera turno (cupo de N lleno)`**: ya supervisas N agentes (`LOOKOUT_CUPO`, 10 por omisión), y un humano no
+  alcanza a contestar más. Esa sesión no queda registrada: sin nota, sin nombre de lookout. Sigue trabajando en su pane,
+  y sus preguntas le salen al usuario ahí. Díselo al usuario una vez, con su pestaña. Cuando un agente se retire,
+  se releve o cierre, el waiter registra al primero de la cola. No lo registres tú a mano. `resumen` muestra la cola
+  en su línea `CUPO:`.
+  `lookout inicia` escribe la misma nota bajo el agente. Si dice `NO ENTREGADO … borrador`, avisa al usuario una vez
   (su caja tiene texto suyo) y no reintentes en bucle; `NO ENTREGADO … working` → entrégala en su `terminó su turno`.
 - **`dejó un bloque para retomar (p-…, vigente|ambiguo…)`** (al terminar su turno, o `estaba quieto con un «Como
   retomar»` al registrarlo o en el barrido de cada 2 min a los agentes quietos): lookout ya miró su último turno, y

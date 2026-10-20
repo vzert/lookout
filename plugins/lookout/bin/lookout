@@ -72,6 +72,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import alta  # noqa: E402
 import aprueba  # noqa: E402
 import cierre  # noqa: E402
 import decisiones  # noqa: E402
@@ -84,6 +85,7 @@ import inputbox  # noqa: E402
 import lock  # noqa: E402
 import lookout_state  # noqa: E402
 import lote  # noqa: E402
+import modo  # noqa: E402
 import pendientes  # noqa: E402
 import permisos  # noqa: E402
 import publica  # noqa: E402
@@ -149,15 +151,21 @@ def cmd_inicia(a):
     supervisor_md.mark_supervisor(me["session_id"], pid)
     lock.set_contexto_inicial(pid, me["session_id"], digest.context_tokens(me["session_id"]))
     todos = herdr_cli.agent_list()
-    found = discover.discover(common, todos)
+    found = alta.filtra_cupo(pid, discover.discover(common, todos), todos, me)  # 0.13.34
     mine = {f.get("session_id") for f in found}
     ajenos = {t.get("name") for t in todos if (t.get("agent_session") or {}).get("value") not in mine}
     reg = registry.register(pid, me, found, ajenos, todos)
     retomar.al_registrar(pid, [f.get("session_id") for f in found if f.get("session_id")])  # 0.13.0
+    modos = modo.empata(pid, [f for f in found if f.get("kind") == "claude" and f.get("session_id")])  # 0.13.33
     others = [f for f in found if f.get("kind") != "claude" or not f.get("session_id")]
     for x in publica.concilia(pid):  # Fase 9 E3
         print(x)
     print("Proyecto %s (%s). Raíces: %s" % (pid, common, ", ".join(roots)))
+    cola = registry.load(pid).get("espera_cupo") or []
+    if cola:  # 0.13.34
+        print("CUPO: %d lleno. Esperan turno, sin registrar ni supervisor (siguen en su pane): %s. Díselo al usuario; "
+              "el waiter los registra cuando se libere un hueco." % (registry.cupo(), ", ".join(
+                  x.get("pestana") or x.get("pane_id") or x["session_id"][:8] for x in cola)))
     print("Supervisor: %s → %s" % (me["nombre"], me["address"]))
     print(nombra_supervisor(me))
     print("")
@@ -172,6 +180,8 @@ def cmd_inicia(a):
         print("%s | %s | %s | %s | %s | %s | %s" % (e["nombre"], e.get("pestana") or "-", e.get("worktree") or "-",
                                                   e.get("branch") or "-", e.get("estado_herdr") or "-",
                                                   e["session_id"][:8], sesiones.to_texto(e)))
+        if modos.get(e["session_id"]):
+            print("  %s %s" % (e["nombre"], modo.describe(modos[e["session_id"]])))
     for o in others:
         print("(no registrado: pestaña %s en %s, kind=%s, sin session_id de Claude)" % (
             o.get("pestana") or o["pane_id"], o["cwd"], o["kind"]))
@@ -440,6 +450,9 @@ def cmd_pendientes(a):
         registry.save(pid, reg)
     prop = lote.propone(pid, common, a.tope, a.rehacer)
     print(lote.render_propuesta(prop))
+    aviso = modo.aviso_lanzar(pid)  # 0.13.33
+    if aviso:
+        print(aviso)
     return 0
 
 
@@ -450,7 +463,7 @@ def cmd_lanza(a):
         print("No lanzo nada: el candado de %s no es de esta sesión (corre `lookout inicia` antes)." % pid)
         return 3
     res = lote.lanza(pid, common, a.ids, nota_for(pid), a.modelo, a.confirmar, a.tope,
-                     log=lambda m: print("  " + m))
+                     log=lambda m: print("  " + m), bypass=a.bypass)
     bad = 0
     for pend, ok, msg in res:
         print("%s %s: %s" % ("OK" if ok else "FALLO", pend, msg))
@@ -975,6 +988,8 @@ def main():
     p = sub.add_parser("lanza"); p.add_argument("proyecto"); p.add_argument("ids", nargs="+")
     p.add_argument("--modelo", default=os.environ.get("LOOKOUT_MODELO")); p.add_argument("--confirmar", type=float, default=30)
     p.add_argument("--tope", type=int, default=None)
+    p.add_argument("--bypass", action="store_true",
+                   help="0.13.33: el usuario eligió lanzar en bypass, como el supervisor (modo.aviso_lanzar)")
     p = sub.add_parser("libera"); p.add_argument("proyecto"); p.add_argument("agente"); p.add_argument("--fallida", action="store_true")
     p.add_argument("--fuera", default="", metavar="ninguno|TEXTO")
     p.add_argument("--usuario-confirmo", metavar="DECISION_ID", default="")
