@@ -383,6 +383,16 @@ def cmd_resumen(a):
     print(digest.render(pid, mark=not a.no_marcar, todo=a.todo))
 
 
+def cmd_reenvia(a):
+    """0.13.39: the whole text of a message of the supervisor's that another session held and then dropped."""
+    pid, _ = project(a.proyecto)
+    import retenido
+    m = retenido.mensaje(pid, a.msg_id)
+    if m is None:
+        sys.exit("no tengo un mensaje con msg_id %s en el registro del supervisor de %s" % (a.msg_id, pid))
+    print(m)
+
+
 def cmd_espera(a):
     pid, _ = project(a.proyecto)
     import wait_event
@@ -988,6 +998,7 @@ def main():
     p = sub.add_parser("resumen"); p.add_argument("proyecto"); p.add_argument("--no-marcar", action="store_true")
     p.add_argument("--todo", action="store_true")
     p = sub.add_parser("retomar"); p.add_argument("proyecto")
+    p = sub.add_parser("reenvia"); p.add_argument("proyecto"); p.add_argument("msg_id")
     p = sub.add_parser("espera"); p.add_argument("proyecto"); p.add_argument("--timeout", type=float, default=WAITER_TIMEOUT)
     p = sub.add_parser("suelta"); p.add_argument("proyecto")
     p = sub.add_parser("pendientes"); p.add_argument("proyecto"); p.add_argument("--tope", type=int, default=None)
@@ -1071,7 +1082,7 @@ def main():
             "pendientes": cmd_pendientes, "lanza": cmd_lanza, "libera": cmd_libera, "descarta": cmd_descarta, "envia": cmd_envia,
             "gobierno": cmd_gobierno, "publica": cmd_publica, "regla-push": cmd_regla_push, "permisos": cmd_permisos, "cierra": cmd_cierra,
             "relevo": cmd_relevo, "retoma": cmd_retoma, "recarga": cmd_recarga, "cierra-pestana": cmd_cierra_pestana, "decision": cmd_decision, "aprueba": cmd_aprueba, "retomar": cmd_retomar, "corrige": cmd_corrige,
-            "puerto": cmd_puerto}[a.cmd](a) or 0
+            "puerto": cmd_puerto, "reenvia": cmd_reenvia}[a.cmd](a) or 0
 
 
 if __name__ == "__main__":

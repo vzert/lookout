@@ -292,6 +292,7 @@ def reported_this_turn(transcript_path, address, max_bytes=300000):
 
 
 LOOKOUT_TECLEA = ("/rename ", "/exit")
+AVISO_ENTREGA = "[Cross-session delivery notice]"
 # Adversary round 1: only the wrappers Claude Code itself puts around a peer's or the system's text; a prompt the user
 # types that happens to start with «<» is still the user's.
 PEGADO = re.compile(r"^<pasted_content[^>]*>\s*(.*?)\s*</pasted_content[^>]*>\s*$", re.S)
@@ -304,7 +305,8 @@ def origen_prompt(project_id, session_id, prompt):
     "lookout" (a delivery of its ledger, or a /rename or /exit it types), else "usuario": the user deciding straight
     in the agent's pane (claude-vzert: production changes decided in handoff-balanceador's pane, off the record)."""
     p = prompt.lstrip()
-    if ETIQUETA_SISTEMA.match(p):
+    # 0.13.39: Claude Code's notice about a message this session sent (held, denied) is no prompt of the user's
+    if ETIQUETA_SISTEMA.match(p) or p.startswith(AVISO_ENTREGA):
         return "par"
     if p.startswith(LOOKOUT_TECLEA):
         return "lookout"

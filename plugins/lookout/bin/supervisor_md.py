@@ -114,7 +114,7 @@ def render(project_id, now=None):
     events, _ = lookout_state.read_events(project_id, 0)
     last = {}
     for ev in events:
-        if ev.get("event") != "notification":
+        if ev.get("event") not in ("notification", "retenido"):  # 0.13.39 (codex r2): a notice of the supervisor's
             last[ev.get("session_id")] = ev
     dec = decisiones.load(project_id)["items"]
     tomadas = [d for d in dec if d.get("estado") == "respondida"]

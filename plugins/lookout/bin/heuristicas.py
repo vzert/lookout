@@ -33,9 +33,9 @@ import lookout_state
 REPITE_EN = 3          # the same error this many times -> `repite`
 MAX_CORRECCIONES = 2   # after this many failed corrections: stop and rethink
 PAUSA_ERRORS = ("rate_limit", "overloaded")
-SINTETICOS = ("repite", "correccion", "correccion_fallida", "sin_progreso", "largo")  # written by lookout, not by the agent's hooks
+SINTETICOS = ("repite", "correccion", "correccion_fallida", "sin_progreso", "largo", "retenido")  # written by lookout, not by the agent's hooks
 EN_TURNO = ("working", "aprobado", "fallo", "crossrepo")         # the agent should be producing events
-NO_ESTADO = ("notification", "aprobado", "fallo", "crossrepo", "correccion_fallida")  # events that do not change an agent's state
+NO_ESTADO = ("notification", "aprobado", "fallo", "crossrepo", "correccion_fallida", "retenido")  # events that do not change an agent's state
 
 
 def umbral(name, default):

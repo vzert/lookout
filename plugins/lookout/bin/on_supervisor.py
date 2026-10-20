@@ -33,8 +33,11 @@ def handle(data, via_async=False):
     tool = data.get("tool_name", "")
     ti = data.get("tool_input") or {}
     if ev == "PostToolUse" and tool == "SendMessage":
-        supervisor_md.log(pid, {"tipo": "respuesta", "session_id": sid, "to": ti.get("to", ""),
-                                "texto": supervisor_md.one_line(ti.get("message") or ti.get("summary"), 600)})
+        mid = msg_id(data.get("tool_response"))
+        supervisor_md.log(pid, dict({"tipo": "respuesta", "session_id": sid, "to": ti.get("to", ""),
+                                     "texto": supervisor_md.one_line(ti.get("message") or ti.get("summary"), 600)},
+                                    # 0.13.39: with its msg_id, the whole text, for `lookout reenvia` after a hold
+                                    **({"msg_id": mid, "mensaje": str(ti.get("message") or "")} if mid else {})))
     elif ev == "PreToolUse" and tool == "AskUserQuestion":
         # never decide anything here: no output means the question goes to the user as usual
         completas = [str(q.get("question") or "") for q in ti.get("questions") or []]
@@ -64,6 +67,9 @@ def handle(data, via_async=False):
     elif ev == "UserPromptSubmit":
         import vigia
         vigia.cierra(pid)  # the turn that held the modal is over
+        import retenido
+        if retenido.reacciona(pid, data.get("prompt") or ""):  # 0.13.39: a held message of its own, never the user's
+            return ""
         if not respuesta_en_chat(pid, sid, data.get("prompt") or ""):
             return ""
     elif ev == "Stop":
@@ -84,6 +90,22 @@ def handle(data, via_async=False):
         return ""
     supervisor_md.write(pid)
     return ""
+
+
+def msg_id(resp):
+    """0.13.39: the msg_id SendMessage returns (a dict, or its JSON as text), so a held-message notice names the text."""
+    if isinstance(resp, str):
+        try:
+            resp = json.loads(resp)
+        except ValueError:
+            return ""
+    if isinstance(resp, list):  # content blocks
+        for b in resp:
+            m = msg_id(b.get("text") if isinstance(b, dict) else b)
+            if m:
+                return m
+        return ""
+    return str(resp.get("msg_id") or "") if isinstance(resp, dict) else ""
 
 
 def respuesta_en_chat(pid, sid, prompt):

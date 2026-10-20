@@ -137,16 +137,21 @@ def empata(project_id, found):
             ahora = baja(f.get("pane_id", "")) if f.get("pane_id") and f.get("status") != "blocked" else ""
             r.update(estado="bajado" if ahora else "sin-bajar", **({"ahora": ahora} if ahora else {}))
             if ahora:
-                import lote
-                import registry
-                with lote.project_mutex(project_id):
-                    reg = registry.load(project_id)
-                    e = reg.get("agents", {}).get(sid)
-                    if e is not None:
-                        e["permisos"] = ahora
-                        registry.save(project_id, reg)
+                guarda(project_id, sid, ahora)
         out[sid] = r
     return out
+
+
+def guarda(project_id, sid, ahora):
+    """The registry's `permisos` of a registered agent after a Shift+Tab moved it."""
+    import lote
+    import registry
+    with lote.project_mutex(project_id):
+        reg = registry.load(project_id)
+        e = reg.get("agents", {}).get(sid)
+        if e is not None:
+            e["permisos"] = ahora
+            registry.save(project_id, reg)
 
 
 def describe(r):

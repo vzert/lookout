@@ -16,7 +16,8 @@ import sesiones
 # 0.12.2: `bg_wait` wakes only when its turn asked something (`pregunta`, wait_event): 19 of 36 wakes in 3-tier-memory
 # (2026-10-15) were background waits with nothing to answer. One that waits too long wakes as `largo` (heuristicas.revisa).
 # 0.13.36: espera_cupo too (codex r5: with the cupo full, nothing woke the supervisor to send «Espera tu turno»)
-WAKE_TYPES = "ask,blocked,negado,idle,bg_wait,unknown,crossrepo,end,repite,sin_progreso,largo,retomar,nuevo,espera_cupo"
+# 0.13.39: retenido (a message of the supervisor held by another session: retenido.reacciona)
+WAKE_TYPES = "ask,blocked,negado,idle,bg_wait,unknown,crossrepo,end,repite,sin_progreso,largo,retomar,nuevo,espera_cupo,retenido"
 ESTADO = {
     "working": "trabajando",
     "ask": "pregunta",
@@ -209,6 +210,9 @@ def describe(ev, quien=None):
             # 0.13.34; 0.13.36: it was told to wait, so after its note it is told to go on
             "le tocó su turno del cupo: tras la nota, SendMessage «Ya es tu turno»; " if ev.get("desde_cola") else "",
             m + "; " if m else "", ren + ", " if ren else "", ev.get("pestana") or "-", ev.get("estado_herdr") or "sin estado")
+    if kind == "retenido":  # 0.13.39
+        import retenido
+        return retenido.describe(ev, hhmmss(ev.get("ts")))
     if kind == "espera_cupo":  # 0.13.34: not registered, so it has no name yet: its tab or pane
         import modo
         m = modo.describe(ev.get("modo"))  # 0.13.36: a bypassing one would hold the message
@@ -298,7 +302,8 @@ def describe(ev, quien=None):
 
 MAX_LINES = 40   # Fase 4: one digest per wake, at most 40 lines
 MAX_COLS = 160   # and at most 160 characters per line (lines alone do not bound tokens)
-KEEP_ALL = ("ask", "blocked", "negado", "crossrepo", "unknown", "repite", "sin_progreso", "largo", "correccion")  # events that need an answer are never collapsed
+KEEP_ALL = ("ask", "blocked", "negado", "crossrepo", "unknown", "repite", "sin_progreso", "largo", "correccion",
+            "retenido")  # events that need an answer are never collapsed
 # Budget of the supervisor's own context, counted FROM what the session already held when `lookout inicia` ran
 # (system prompt, tools, skills, project memory: 71k on claude-vzert, 2026-10-05). A fixed 120k left that supervisor
 # 49k of work and forced a relief after 7 minutes. LOOKOUT_PRESUPUESTO (absolute tokens) still overrides.
@@ -321,9 +326,9 @@ def clip(line, n=MAX_COLS):
 
 
 def clip_evento(ev, line):
-    """An event line, clipped like any other but for `espera_cupo` (0.13.36, codex r1): its `to` and message are what
-    the supervisor must send, and nothing bounds a session's name. describe() already cuts its tab to the room left."""
-    return clip(line, max(MAX_COLS, len(" ".join(str(line).split()))) if ev.get("event") == "espera_cupo" else MAX_COLS)
+    """An event line, clipped like any other but for `espera_cupo` (0.13.36, codex r1) and `retenido` (0.13.39): its
+    `to` and message are what the supervisor must send, and nothing bounds a session's name. describe() already cuts its tab to the room left."""
+    return clip(line, max(MAX_COLS, len(" ".join(str(line).split()))) if ev.get("event") in ("espera_cupo", "retenido") else MAX_COLS)
 
 
 def context_tokens(session_id, projects_dir=None):
@@ -489,7 +494,7 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
     import heuristicas
     last_se = {}  # 0.13.20: its last start/end, what retoma.salio_solo reads (as heuristicas.grupo does)
     for ev in all_events:
-        if ev.get("event") != "notification":
+        if ev.get("event") not in ("notification", "retenido"):  # 0.13.39: a notice of the supervisor's, not the agent's
             last[ev.get("session_id")] = ev
         if ev.get("event") in ("start", "end"):
             last_se[ev.get("session_id")] = ev

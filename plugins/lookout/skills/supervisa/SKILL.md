@@ -137,6 +137,20 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
   primero de la cola. No lo registres tú a mano. `resumen` muestra la cola en su línea `CUPO:`.
   `lookout inicia` escribe la misma nota bajo el agente. Si dice `NO ENTREGADO … borrador`, avisa al usuario una vez
   (su caja tiene texto suyo) y no reintentes en bucle; `NO ENTREGADO … working` → entrégala en su `terminó su turno`.
+- **`RETENIDO tu mensaje a to=X → …`** / **`NEGADO → …`** / **`CADUCADO → …`**: otra sesión retuvo un mensaje tuyo
+  (Claude Code te lo avisa con un `[Cross-session delivery notice]` en tu propio turno; ese aviso nunca es una
+  respuesta del usuario). Lo habitual es que esté en otra clase de permisos que tú, aunque lo registraras hace horas.
+  lookout ya leyó su pantalla: si dice `ya bajé su modo X→Y`, los siguientes mensajes le llegan; si dice
+  `con el diálogo en pantalla no pulso nada` o `no veo su pane en herdr`, no pulses tú teclas en su pane (una tecla ahí elige
+  Deny o Deliver). Con `RETENIDO`, no lo reenvíes ni esperes su respuesta: dile al usuario, en un `AskUserQuestion`
+  con su pestaña, lo que dice la línea tras `→` (aprobarlo en su pestaña; pulsar Shift+Tab hasta un modo que no sea
+  bypass ni plan si lo dice). Con `NEGADO` o `CADUCADO` el mensaje no llegó: si la línea dice `→ reenvía:`, saca el
+  texto con el `lookout reenvia …` que trae (lo imprime completo, tal como lo mandaste) y mándalo **una vez** por
+  `SendMessage` a ese `to`, sin cambiarlo; si dice `díselo al usuario`, primero el modal y reenvía solo cuando él lo
+  diga. `mismo modo que tú` significa que esa sesión retiene todo mensaje (`crossSessionInbound`): es su
+  configuración, díselo al usuario y no reintentes. `ENTREGADO tras retenerlo` → el usuario lo aprobó: nada que
+  hacer. `AVISO DE ENTREGA sin leer («…»)` → lookout no conoce ese texto y no sabe si llegó: pregúntale al agente por
+  `SendMessage` si lo recibió, y reenvíalo (con el `lookout reenvia …` de la línea) solo si te dice que no.
 - **`dejó un bloque para retomar (p-…, vigente|ambiguo…)`** (al terminar su turno, o `estaba quieto con un «Como
   retomar»` al registrarlo o en el barrido de cada 2 min a los agentes quietos): lookout ya miró su último turno, y
   avisa una vez por bloque mientras no cambie lo que hace con él (un ambiguo que pasa a vigente se avisa otra vez).

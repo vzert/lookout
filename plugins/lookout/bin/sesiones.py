@@ -67,6 +67,32 @@ def de(session_id, base=None):
     return {"name": " ".join(str(mejor["name"]).split()), "socket": str(mejor.get("messagingSocketPath") or "")}
 
 
+def por_socket(socket, base=None):
+    """0.13.39: {session_id, name} of the live session listening on `socket` (a held-message notice names its
+    recipient by socket: «uds:/tmp/cc-socks/<pid>.sock»), or None."""
+    socket = str(socket or "").strip()
+    if socket.startswith("uds:"):
+        socket = socket[4:]
+    if not socket:
+        return None
+    base = base or os.path.join(requisitos.config_dir(), "sessions")
+    mejor = None
+    for f in glob.glob(os.path.join(base, "*.json")):
+        try:
+            with open(f, encoding="utf-8") as fh:
+                d = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(d, dict) or d.get("messagingSocketPath") != socket or not d.get("sessionId") \
+                or not vivo(d.get("pid"), d.get("procStart")):
+            continue
+        if mejor is None or _num(d.get("updatedAt")) > _num(mejor.get("updatedAt")):
+            mejor = d
+    if mejor is None:
+        return None
+    return {"session_id": str(mejor["sessionId"]), "name": " ".join(str(mejor.get("name") or "").split())}
+
+
 def to(entry):
     """The `to` for SendMessage to this agent, or None when lookout cannot read it."""
     s = de((entry or {}).get("session_id"))

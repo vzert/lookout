@@ -187,7 +187,8 @@ def read_box(pane):
 # before that Stop: a turn opened by a task-notification or a message fires no UserPromptSubmit, but writes the
 # transcript at once (2 of the 7 right refusals). Events of lookout and herdr notifications are not the agent's.
 # Since 0.13.29 a local command that already ran (its caveat, command and local_command rows) is not a turn either.
-NO_DEL_AGENTE = ("notification", "nuevo", "retomar", "repite", "correccion", "correccion_fallida", "sin_progreso", "largo")
+NO_DEL_AGENTE = ("notification", "nuevo", "retomar", "repite", "correccion", "correccion_fallida", "sin_progreso", "largo",
+                 "retenido")
 COLA_TRANSCRIPT = 1024 * 1024
 # Claude Code's undated bookkeeping rows (counted 2026-10-17 over 300 transcripts); every row a turn writes is dated
 # (user, queue-operation, assistant, attachment). An undated row of another type, or a bad stamp, counts as a turn.

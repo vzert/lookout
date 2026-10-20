@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.13.39
+
+- The supervisor reacts to a message of its own that another session held, not only at registration (p-c1cb6123e4).
+  0.13.33 matches an agent's permission mode when it registers it; an agent moved to bypass later holds every message
+  of the supervisor until the user approves it. Claude Code tells the sender with a `[Cross-session delivery notice]`
+  in its own session («held by that session», then «denied by the recipient user» when the dialog is closed; both
+  measured 2026-10-19). The supervisor's UserPromptSubmit hook now reads it, finds the agent by the recipient's socket
+  (`<config>/sessions/<pid>.json`, `messagingSocketPath`), and puts one `retenido` line in the digest, what to do
+  first: with no dialog on the agent's screen, a bypassing agent is lowered with Shift+Tab as at registration; with the
+  hold dialog on screen, or a pane where herdr does not show that session now, nothing is pressed and the supervisor
+  asks the user to approve it; a retired or relieved agent is never pressed. After a denial or expiry the line says to
+  resend it: SendMessage now logs its `msg_id` and whole text, and `lookout reenvia <proyecto> <msg_id>` prints that
+  text as it was sent. The line is never folded, never clipped and never taken for the agent's own state (digest nor
+  supervisor.md). Expiry and release notices were not seen: they are read by the same shape; one that says «expir»
+  counts as dropped, only «released» or «delivered» counts as delivered, and any other wording says that lookout does
+  not know whether it arrived.
+- That notice is no longer taken for the user's answer in the chat (supervisor) nor for a decision the user took in an
+  agent's pane (agent).
+
 ## 0.13.38
 
 - A publication checked again no longer keeps the reason of its earlier refusal or expiry. `lookout publica` reuses
