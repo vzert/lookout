@@ -242,6 +242,9 @@ def pide(project_id, entry, st, log=None, worktree=None):
               "rama": entry.get("branch"), "worktree": entry.get("worktree"), "estado": "esperando",
               "pedida": time.time()}
         led["cola"].append(me)
+    # 0.13.38 (p-588bbc52e4): a new request on a caducada or rechazada entry starts clean; its old reason went on
+    # into pr-abierto (PR #40 of 3-tier said «su HEAD cambió» with the PR's own head)
+    me.pop("motivo", None)
     if worktree:
         me.update(worktree=worktree[0], rama=worktree[1])
     for p in led["cola"]:

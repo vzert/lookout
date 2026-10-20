@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.13.38
+
+- A publication checked again no longer keeps the reason of its earlier refusal or expiry. `lookout publica` reuses
+  the agent's caducada or rechazada entry and never dropped its `motivo`, so `--hecho` carried it on: in 3-tier-memory
+  (2026-10-18) PR #40 sat in publicaciones.json as `pr-abierto` with «su HEAD cambió después de verificarla», although
+  its head was the PR's. Only the JSON showed it, not supervisor.md nor `--cola`.
+- Every herdr notification lookout sends (an open decision, a state change, an unattended «Como retomar», a permission
+  request or an auto mode denial, the supervisor's relief) goes through `herdr_cli.notifica`, which writes one line
+  to the project's `avisos.jsonl`: time, kind, title and herdr's exit code (plus its error when it failed). A title
+  with a broken character is written escaped. When the project's state folder cannot be written the notification
+  still goes out without its line: a failing log never stops a notification. Before,
+  `avisa_bloques` called herdr without looking at the result, so a live test could not tell the notification went out
+  unless the user looked at the screen (banco 2026-10-19). A test fails if a module calls `notification show` directly.
+- The pkill brake keeps two known limits, now written next to its code, by the user's choice (p-4f3fe84d89): a
+  pattern that only reaches sessions lookout did not start (the supervisor, an agent started by hand) passes, and a
+  kill inside a quoted string another program runs (`xargs -I{} sh -c "pkill -f {}"`, `watch "pkill -f claude"`) is
+  not read. Covering the first would mean judging every claude on the machine, the ones the user kills on purpose
+  included.
+
 ## 0.13.37
 
 - supervisor.md no longer lists the session a failed relief never started. The summary hides it since 0.13.4, but

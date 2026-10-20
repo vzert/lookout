@@ -605,8 +605,7 @@ def avisa_bloques(project_id, now=None):
         body = ("Dejó un «Como retomar» (%s, %s) hace %d min y el supervisor no lo relevó ni abrió un modal después. "
                 "Pregúntale al supervisor qué hace con él." % (", ".join(r.get("pendientes") or []) or "sin pendiente",
                                                                r.get("estado"), int((now - float(ev["ts"])) // 60)))
-        herdr_cli.run(["notification", "show", ("lookout: %s espera su relevo" % who)[:120], "--body", body[:300],
-                       "--sound", "request"], timeout=3)
+        herdr_cli.notifica(project_id, "bloque", "lookout: %s espera su relevo" % who, body)
     return [e.get("nombre") or sid for sid, e, _r, _ev in out]
 
 
@@ -695,7 +694,7 @@ def transicion(project_id, ev, notificar=True):
         who = (registry.quien(entry) if entry.get("nombre") else "") or ev.get("nombre") or sid[:8]
         title = "lookout: %s %s" % (who, "te necesita" if new == "te_necesita" else "está listo para revisar")
         import digest
-        herdr_cli.run(["notification", "show", title[:120], "--body", digest.describe(ev, {sid: who})[:300]], timeout=3)
+        herdr_cli.notifica(project_id, "transicion", title, digest.describe(ev, {sid: who}), sound=None)
     return old, new, avisa
 
 

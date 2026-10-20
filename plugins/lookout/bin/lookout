@@ -405,9 +405,9 @@ def cmd_retomar(a):
     pid, _ = project(a.proyecto)
     md = supervisor_md.write(pid)
     # The relief needs the user (/exit or /clear + paste): a line in the chat got lost on claude-vzert (2026-10-05).
-    herdr_cli.run(["notification", "show", "lookout: el supervisor necesita relevo",
-                   "--body", "Su contexto llegó al presupuesto. Abre la pestaña «Supervisor»: /exit o /clear y pega su "
-                   "«Como retomar». Mientras tanto sigue vigilando.", "--sound", "request"], timeout=3)
+    herdr_cli.notifica(pid, "relevo-supervisor", "lookout: el supervisor necesita relevo",
+                       "Su contexto llegó al presupuesto. Abre la pestaña «Supervisor»: /exit o /clear y pega su "
+                       "«Como retomar». Mientras tanto sigue vigilando.")
     print("Estado escrito en %s. Dale al usuario este bloque tal cual y pídele /exit (o /clear) y pegarlo en la sesión nueva."
           " Sigue supervisando (y relanzando tu waiter) hasta que el relevo tome el candado:" % md)
     print(supervisor_md.retomar_block(pid))

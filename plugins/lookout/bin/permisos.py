@@ -320,6 +320,10 @@ def arbol_compartido(cmd):
 # `-n` as a second pattern (macOS's pkill stops reading options at the first pattern) and killed every session lookout
 # had started with `-n <nombre>`. A pattern is judged on these samples, not on the live process list: what it would
 # hit tomorrow counts as much as what runs now.
+# Known limits, kept on purpose (0.13.38, the user's choice on p-4f3fe84d89): the samples are the sessions lookout
+# starts, so a pattern that only hits the supervisor or an agent started by hand passes; and a kill inside a quoted
+# string another program runs (`xargs -I{} sh -c "pkill -f {}"`, `watch "pkill -f claude"`) is not read. Covering the
+# first would mean judging every claude on the machine, the ones the user kills on purpose included.
 def _protegidos_linea():
     """Command lines as lookout starts them, with this machine's real paths: `pkill -f /Users/<u>` must hit them."""
     home = os.path.expanduser("~")
@@ -777,12 +781,11 @@ def reserved(cmd, worktree, cwd, rules):
 
 # ---------- side effects ----------
 
-def notify(title, body):
+def notify(project_id, tipo, title, body):
     """herdr notification for the user. Returns {notificado: send time, notif_rc: herdr's exit code}; the <10 s
     budget of Fase 5 is measured on the send time."""
     ts = time.time()
-    rc, _, _ = herdr_cli.run(["notification", "show", title[:120], "--body", body[:300], "--sound", "request"],
-                             timeout=3)
+    rc = herdr_cli.notifica(project_id, tipo, title, body)
     return {"notificado": ts, "notif_rc": rc}
 
 
@@ -858,7 +861,8 @@ def handle(data, marker, rules=None):
                                        "permissionDecisionReason": "lookout: %s es del usuario (D6)" % why}}
 
     if name == "PermissionDenied":
-        n = notify("lookout: auto mode negó una acción de %s" % who, "%s %s — %s" % (tool, detalle, data.get("reason")))
+        n = notify(marker.get("project_id", "unknown"), "negado", "lookout: auto mode negó una acción de %s" % who,
+                   "%s %s — %s" % (tool, detalle, data.get("reason")))
         emit(marker, dict(base, event="negado", motivo=str(data.get("reason") or "")[:200], **n))
         return None
 
@@ -873,7 +877,8 @@ def handle(data, marker, rules=None):
     if ok:
         emit(marker, dict(base, event="aprobado", regla=why))
         return {"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}}
-    n = notify("lookout: %s pide permiso" % who, "%s %s — %s" % (tool, detalle, why))
+    n = notify(marker.get("project_id", "unknown"), "permiso", "lookout: %s pide permiso" % who,
+               "%s %s — %s" % (tool, detalle, why))
     # 0.13.12: the whole command, so `lookout aprueba` can compare it with the dialog after the user's yes
     # 0.13.16: and the agent's cwd, where `lookout decision --permiso` reads where a push goes
     entero = {"comando": ti["command"], "cwd": cwd} if tool == "Bash" and isinstance(ti.get("command"), str) else {}

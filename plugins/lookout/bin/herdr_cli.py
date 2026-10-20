@@ -19,6 +19,26 @@ def run(args, timeout=10):
     return out.returncode, out.stdout, out.stderr
 
 
+def notifica(project_id, tipo, title, body, sound="request", timeout=3):
+    """`herdr notification show` for the user, written with herdr's exit code to the project's avisos.jsonl (0.13.38,
+    p-71e240cd2b: a live test could not tell the notification went out without looking at the screen). Returns rc."""
+    import time
+    import lookout_state
+    args = ["notification", "show", title[:120], "--body", body[:300]] + (["--sound", sound] if sound else [])
+    rc, _out, err = run(args, timeout=timeout)
+    linea = dict({"ts": time.time(), "tipo": tipo, "titulo": title[:120], "rc": rc},
+                 **({"error": err.strip()[:200]} if rc and err.strip() else {}))
+    try:
+        path = os.path.join(lookout_state.project_dir(project_id), "avisos.jsonl")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        # backslashreplace: a lone surrogate from an agent's JSON text is written escaped, not lost (codex r2)
+        with open(path, "a", encoding="utf-8", errors="backslashreplace") as fh:
+            fh.write(json.dumps(linea, ensure_ascii=False) + "\n")
+    except (OSError, TypeError):
+        pass  # the log never stops a notification (TypeError: no project id)
+    return rc
+
+
 def run_json(args, timeout=10):
     """Run a herdr command that prints JSON; return its `result` dict, or None."""
     code, out, _err = run(args, timeout)
