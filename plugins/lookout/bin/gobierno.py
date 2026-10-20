@@ -38,7 +38,7 @@ def read_items(path):
     """Ordered items of a transcript: ('text', str) for assistant text, ('round', how) per adversary run."""
     items = []
     try:
-        fh = open(path, encoding="utf-8")
+        fh = open(path, encoding="utf-8", errors="replace")
     except (OSError, TypeError):
         return items
     with fh:

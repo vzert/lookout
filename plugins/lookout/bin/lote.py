@@ -705,6 +705,14 @@ def lanza_uno(project_id, common_dir, item, plan, draft, modelo, confirmar, log,
                       clave_puerto(plan) if usa_recursos(item, plan) else None,
                       # 0.13.33: the supervisor's own mode, so their messages are not held (modo.py)
                       permisos=modo.para_lanzar(project_id, bypass))
+    if not ok and plan.get("sin_worktree"):
+        # 0.13.35 (p-9a9ef79ced, live 2026-10-18: w25 stayed open and empty): herdr's own «not started» leaves nothing
+        # in the workspace this function created; a start without SessionStart may have a Claude on screen
+        e = registry.find(registry.load(project_id), sid) or {}
+        ws = ((res or {}).get("workspace") or {}).get("workspace_id") or pane.split(":")[0]
+        if (e.get("tarea_motivo") or "").startswith(SIN_ARRANQUE[1]) and ws:
+            code = herdr_cli.run(["workspace", "close", ws], timeout=10)[0]
+            log("workspace %s vacío: %s" % (ws, "cerrado" if code == 0 else "no se pudo cerrar (rc=%s)" % code))
     return ok, msg
 
 

@@ -79,7 +79,9 @@ Qué hacer con cada salida:
 - `OK p-…`: listo; el agente ya trabaja.
 - **Cualquier otro `FALLO`** (worktree o workspace que herdr no creó, diálogo de confianza con otra ruta,
   sin `SessionStart`, carpeta que ya existe): la tarea no arrancó. No lo arregles por tu cuenta ni borres
-  nada. Mira la pantalla del agente una vez si hay pane (`herdr agent read <pane> --source visible`) y
+  nada. Si el fallo es `herdr no arrancó a …` (nada corrió en el pane), lookout ya cerró el workspace vacío que
+  había abierto en el checkout principal: no hay pane que mirar. Si no, mira la pantalla del agente una vez si hay
+  pane (`herdr agent read <pane> --source visible`) y
   pregunta al usuario en el modal (con `lookout decision … --abre … --si-es "Reintentar"` antes si hay otros agentes vivos): **Reintentar** (si quedó un worktree, él corre en su
   terminal `! git -C <repo> worktree remove <ruta del worktree>`; sin él, el pendiente vuelve a salir en
   `lookout pendientes`) / **Dejarlo fuera** (queda excluido como "ya tiene agente"). Un agente de código que falló

@@ -799,9 +799,9 @@ def cmd_puerto(a):
     if not port:
         print("No hay puerto libre en %d-%d." % (ports.base(), ports.base() + ports.span() - 1))
         return 4
-    print("%s (%s): puerto %d. Si no lo lanzó lookout (no tiene $PORT), mándale por SendMessage: \"Para tu servidor "
-          "de desarrollo usa el puerto %d (PORT=%d); otros agentes levantan los suyos a la vez.\"" % (
-              e["nombre"], wt, port, port, port))
+    print("%s (%s): puerto %d. Si no lo lanzó lookout (no tiene $PORT), mándale por SendMessage (%s): \"Para tu "
+          "servidor de desarrollo usa el puerto %d (PORT=%d); otros agentes levantan los suyos a la vez.\"" % (
+              e["nombre"], wt, port, sesiones.to_texto(e), port, port))  # 0.13.35 (p-561f1a2173): its real to
     return 0
 
 

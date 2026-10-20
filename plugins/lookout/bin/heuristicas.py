@@ -208,7 +208,7 @@ def reporte_del_agente(session_id, cita, desde, projects_dir=None):
     if not path or not want:
         return False
     try:
-        fh = open(path, encoding="utf-8")
+        fh = open(path, encoding="utf-8", errors="replace")
     except OSError:
         return False
     with fh:
@@ -525,14 +525,18 @@ TITULO = {"te_necesita": "Te necesita", "listo": "Listo para revisar", "trabajan
 
 def bloque_sin_atender(ev, entry=None, decs=None):
     """The «Como retomar» of a `retomar` or `idle` event that still needs the supervisor (vigente or ambiguo), or None.
-    A decision opened after it that names the agent attends it; a relief, a close or new work leave a later event.
-    0.13.3: the event is announced once; this keeps the agent in «Te necesita» until then (live 3-tier 2026-10-16)."""
+    A decision that names the agent and is still open when the block arrives (or opened after it) attends it; a relief,
+    a close or new work leave a later event.
+    0.13.3: the event is announced once; this keeps the agent in «Te necesita» until then (live 3-tier 2026-10-16).
+    0.13.35: d183 opened 20 s before cambio-worktrees' block and waited 13 min for the user; only one opened after the
+    block counted, and the digest said «→ lookout relevo» of an agent that waited for that answer (3-tier 2026-10-19)."""
     r = ev.get("retomar")
     if not isinstance(r, dict) or r.get("estado") not in ("vigente", "ambiguo"):
         return None
     nombre = (entry or {}).get("nombre") or ev.get("nombre")
     for it in decs or ():
-        if nombre and nombre in (it.get("agentes") or ()) and float(it.get("desde") or 0) >= float(ev.get("ts") or 0):
+        hasta = float("inf") if it.get("estado") == "abierta" else float(it.get("hasta") or it.get("desde") or 0)
+        if nombre and nombre in (it.get("agentes") or ()) and hasta >= float(ev.get("ts") or 0):
             return None
     return r
 
@@ -584,6 +588,10 @@ def avisa_bloques(project_id, now=None):
             desde = min([float(x.get("ts") or 0) for x in events if bid and x.get("session_id") == sid
                          and (x.get("retomar") or {}).get("bloque_id") == bid] or [float(ev.get("ts") or now)])
             if now - desde < MIN_BLOQUE:
+                continue
+            # 0.13.35 (p-625b4aa422): a modal naming it, opened after the first idle with the block and answered before
+            # a re-carry, already put the block before the user (the digest keeps comparing with the last idle)
+            if not bloque_sin_atender(dict(ev, ts=desde), e, decs):
                 continue
             firma = bid or str(ev.get("ts"))
             if hechos.get(sid) == firma:

@@ -256,7 +256,8 @@ def describe(ev, quien=None):
         # 0.13.8: what it waits on and who may stop it; lookout never kills a process
         res = [t.get("reservada") for t in tareas if t.get("reservada")]
         accion = ("es algo reservado al usuario (%s): pregunta al usuario si la para" % "; ".join(res) if res else
-                  "pídele por SendMessage que diga si aún la necesita y, si no, que la pare con TaskStop")
+                  "pídele por SendMessage (%s) que diga si aún la necesita y, si no, que la pare con TaskStop"
+                  % sesiones.to_texto(ev))  # 0.13.35 (p-561f1a2173): its real to, not its tab's name
         return head + ": %dh%02dm esperando su tarea de fondo «%s» → %s" % (
             ev.get("hace_s", 0) // 3600, ev.get("hace_s", 0) // 60 % 60,
             " | ".join(" ".join((t.get("description") or t.get("command") or "")[:120].split()) for t in tareas), accion)

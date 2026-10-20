@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.13.35
+
+A decision about an agent that is still open when its «Como retomar» arrives now attends that block (p-5e02bc8cf9).
+3-tier-memory, 2026-10-19: the supervisor opened d183 at 09:06:45 («¿Tecleo «aprobado» para A? (p-0ccd79fe36)»,
+`--agentes cambio-worktrees`); the agent's idle at 09:07:05 carried a vigente block for that same pendiente, and the user
+answered at 09:19:47. Only a decision opened after the block counted, so for 13 min the digest said «bloque vigente →
+lookout relevo» of an agent that waited for the user's answer. With 0.13.32's 30-min notice a longer modal would have
+sent the user a false «espera su relevo»: d205 (hook-para-checkpoint, opened 10 s before its block, answered 40 min
+later) was one.
+
+- `heuristicas.bloque_sin_atender`: a decision naming the agent attends the block when it is still open at the block's
+  time or was answered after it (opened after it, as before, too). One answered before the block does not.
+- Replayed on every real block of 3-tier: three change (d96, d129, d205), each a modal opened 10-60 s before the block
+  and answered after it.
+- `avisa_bloques` (p-625b4aa422, Sonnet's MINOR on 0.13.32): a modal naming the agent opened after the first idle with
+  the block and answered before a later idle re-carried it already put that block before the user; the 30-min notice
+  compared it with the last idle and said «ni abrió un modal después», which was false. The notice now compares with
+  the first idle of the bloque_id. The digest row still compares with the last idle, so a block re-carried after the
+  answer stays in front of the supervisor.
+- `deliver.user_texts` (p-da8bbd7dc2, Sonnet's MINOR on 0.13.15): one line of broken UTF-8 in a transcript raised
+  UnicodeDecodeError, and that read runs on every first send, so the delivery failed. It reads with replacement
+  characters now, and so do the other four transcript readers with the same strict read (`retomar.ultimo_turno`,
+  `relevo.assistant_texts`, `heuristicas.reporte_del_agente`, `gobierno.read_items`; adversary round 3): retomar,
+  retiro and relevo failed on one broken byte too.
+- `aprueba.explica_destino` (p-4c46390c7d, Sonnet r3 on 0.13.16): it printed «remote «origin» → «url»», and
+  `nombra_destino` refuses any «» other than the command and the URLs, so a supervisor that copied the line as given
+  was refused. The remote's name goes without «» now: «remote origin → «url»».
+- The publication queue («Siguiente en la cola: …») and `lookout puerto` named the agent by lookout's name next to
+  «SendMessage» (p-561f1a2173). After a relief or a /rename SendMessage does not take that name (0.13.24); both give
+  the session's `to` now, as `inicia` and `corrige` do, and so does the digest line of a long background wait
+  («pídele por SendMessage (to=…)», adversary round 5).
+- `lookout aprueba`: the NO for a newer request said «aunque sea el mismo comando» for another command too
+  (p-7730a9d0e2, live 2026-10-17). It says «con el mismo comando» or «otro comando: «…»» now.
+- `lookout lanza`: when herdr did not start the agent at all (`agent_name_taken`, `agent_pane_busy` after the
+  retries), the workspace lanza had created for it on the main checkout stayed open and empty (p-9a9ef79ced, live
+  2026-10-18: w25). It is closed now. A start without SessionStart keeps it (a Claude may be on screen), and a
+  worktree's workspace keeps it (it holds the folder). The pendientes skill and docs/plan.md say so (codex, pre-push round).
+
 ## 0.13.34
 
 A supervisor watches at most 10 agents at a time (user's decision 2026-10-19). Past that a human cannot answer the

@@ -90,7 +90,7 @@ def ultimo_turno(path):
     """(text of the assistant's last turn, timestamp of its last assistant row or None)."""
     texts, ts = [], None
     try:
-        fh = open(path, encoding="utf-8")
+        fh = open(path, encoding="utf-8", errors="replace")
     except (OSError, TypeError):
         return "", None
     with fh:

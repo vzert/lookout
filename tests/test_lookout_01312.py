@@ -280,6 +280,22 @@ class ApruebaTest(f3.Base):
         self.blocked()   # same command, another call (it asked again): the user approved the first one
         self.assert_nothing_pressed(dn, "otra petición")
 
+    def test_a_newer_request_with_another_command_names_it(self):
+        # 0.13.35 (p-7730a9d0e2, live 2026-10-17: d2 vivo-dos with vivo-cuatro on screen): it said «aunque sea el mismo
+        # comando» for another command too; it says which one now
+        self.blocked(ts=time.time() - 5)
+        dn = self.decision()
+        self.blocked("git push origin HEAD:refs/heads/otra")
+        self.assert_nothing_pressed(dn, "otro comando: «git push origin HEAD:refs/heads/otra»")
+        ok, msg = aprueba.aprueba(self.pid, self.entry(), dn)
+        self.assertNotIn("mismo comando", msg)
+
+    def test_a_newer_request_with_the_same_command_says_so(self):
+        self.blocked(ts=time.time() - 5)
+        dn = self.decision()
+        self.blocked()
+        self.assert_nothing_pressed(dn, "con el mismo comando")
+
     def test_herdr_must_see_it_blocked(self):
         self.blocked()
         dn = self.decision()

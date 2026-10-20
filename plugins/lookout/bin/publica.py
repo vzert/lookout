@@ -621,9 +621,10 @@ def hecho(project_id, entry, pr=None):
     save(project_id, led)
     out = ["Publicada: %s versión %s en %s." % (me["nombre"], me.get("version") or "-", tip[:9])]
     if nxt:
-        out.append("Siguiente en la cola: %s. Dile por SendMessage: `git fetch origin`, rebase sobre origin/%s, renumera "
-                   "la versión (la %s ya está publicada), corre sus suites y vuelve a pedir el push." % (
-                       nxt["nombre"], me.get("rama_remota"), me.get("version") or "anterior"))
+        import sesiones  # 0.13.35 (p-561f1a2173): the name SendMessage takes, not lookout's (0.13.24)
+        out.append("Siguiente en la cola: %s (%s). Dile por SendMessage: `git fetch origin`, rebase sobre origin/%s, "
+                   "renumera la versión (la %s ya está publicada), corre sus suites y vuelve a pedir el push." % (
+                       nxt["nombre"], sesiones.to_texto(nxt), me.get("rama_remota"), me.get("version") or "anterior"))
     else:
         out.append("Cola vacía. Si nadie más va a publicar, dile al usuario que retire la regla temporal de push.")
     return True, out
@@ -669,8 +670,9 @@ def hecho_pr(project_id, led, me, entry, pr):
            "`lookout publica <proyecto> --fusiona %d --decision <id>`." % (pr, me["nombre"], me.get("version") or "-",
                                                                        orden, pr)]
     if nxt:
-        out.append("Siguiente en la cola: %s. Dile por SendMessage que vuelva a pedir la publicación; su versión debe ser "
-                   "mayor que la %s." % (nxt["nombre"], me.get("version") or "anterior"))
+        import sesiones
+        out.append("Siguiente en la cola: %s (%s). Dile por SendMessage que vuelva a pedir la publicación; su versión "
+                   "debe ser mayor que la %s." % (nxt["nombre"], sesiones.to_texto(nxt), me.get("version") or "anterior"))
     return True, out
 
 

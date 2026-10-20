@@ -39,7 +39,7 @@ def assistant_texts(path):
     import json
     out = []
     try:
-        fh = open(path, encoding="utf-8")
+        fh = open(path, encoding="utf-8", errors="replace")
     except (OSError, TypeError):
         return out
     with fh:

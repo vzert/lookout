@@ -327,7 +327,8 @@ def explica_destino(dest):
         return ("Destino del push, leído por lookout en el repo del agente: %s%s. Nómbralo en la pregunta tal cual y "
                 "entre «», sin resumirlo («GitHub», «el remoto») ni decir si se puede deshacer; ninguna otra cita «» "
                 "que el comando y ninguna otra URL."
-                % ("remote «%s» → " % dest["remote"] if dest.get("remote") else "",
+                # 0.13.35 (p-4c46390c7d): the remote's name without «», or the line copied as given fails nombra_destino
+                % ("remote %s → " % dest["remote"] if dest.get("remote") else "",
                    ", ".join("«%s»" % u for u in dest["urls"])))
     return ("Destino del push: lookout no lo pudo leer (%s). No digas a dónde va: pon en la pregunta «%s», tal cual "
             "y entre «», ninguna otra cita «» que el comando y ninguna URL." % (dest["motivo"], DESCONOCIDO))
@@ -387,8 +388,11 @@ def aprueba(project_id, entry, did):
         return False, ("NO: %s ya no espera ese permiso (su último evento no es la petición que aprobó el usuario): no "
                        "pulso nada." % nombre)
     if pend.get("ts") != permiso.get("ts"):
-        return False, ("NO: %s hizo otra petición después de la que aprobó el usuario (%s), aunque sea el mismo "
-                       "comando: no pulso nada. Pregúntale otra vez con una decisión nueva." % (nombre, did))
+        # 0.13.35 (p-7730a9d0e2): say whether it is the same command or which one it is now
+        cual = ("con el mismo comando" if pend.get("comando") == permiso.get("comando") else
+                "otro comando: «%s»" % pend.get("comando"))
+        return False, ("NO: %s hizo otra petición después de la que aprobó el usuario (%s), %s: no pulso nada. "
+                       "Pregúntale otra vez con una decisión nueva." % (nombre, did, cual))
     estado = (herdr_cli.agent_get(pane) or {}).get("agent_status")
     if estado != "blocked":
         return False, "NO: herdr no ve a %s blocked (lo ve %s): no pulso nada." % (nombre, estado or "sin estado")

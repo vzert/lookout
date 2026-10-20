@@ -270,7 +270,7 @@ class DecisionCliDestinoTest(f4.Base):
         self.assertIn("«%s»" % r.otro, p.stdout)
         p = self.run_lk(*args + ["¿Apruebo a uno su push a «%s»: «%s»?" % (r.otro, cmd)])
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        self.assertIn("remote «otro» → «%s»" % r.otro, p.stdout)
+        self.assertIn("remote otro → «%s»" % r.otro, p.stdout)
 
 
 if __name__ == "__main__":

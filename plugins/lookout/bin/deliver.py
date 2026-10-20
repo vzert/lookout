@@ -104,7 +104,7 @@ def user_texts(path):
     """Text of every user message typed into the session (not tool results) in a transcript."""
     out = []
     try:
-        fh = open(path, encoding="utf-8")
+        fh = open(path, encoding="utf-8", errors="replace")  # 0.13.35: one broken byte must not fail the delivery
     except OSError:
         return out
     with fh:

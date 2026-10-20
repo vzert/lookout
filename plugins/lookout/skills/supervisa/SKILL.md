@@ -127,7 +127,8 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
   retomar»` al registrarlo o en el barrido de cada 2 min a los agentes quietos): lookout ya miró su último turno, y
   avisa una vez por bloque mientras no cambie lo que hace con él (un ambiguo que pasa a vigente se avisa otra vez).
   Mientras nadie lo atienda, la tabla lo deja en «Te necesita» con `bloque vigente|ambiguo … → <qué hacer>` en cada
-  despertar; sale de ahí cuando abres su modal con `--agentes <agente>`, lo relevas, se cierra o vuelve a trabajar.
+  despertar; sale de ahí cuando abres su modal con `--agentes <agente>` (o ya había uno abierto cuando llegó el bloque),
+  lo relevas, se cierra o vuelve a trabajar.
   - `vigente` → `lookout relevo <project_id> <agente>` **sin preguntar** (con `--goalspec` según «Relevo con
     goalspec», abajo), y una línea al usuario («Relevé <pestaña>: sigue con p-…, con goalspec | solo medición»). Si
     el relevo dice `NO: …`, pásale esa línea al usuario. Si juzgas que no toca relevarlo todavía (espera un merge, un
