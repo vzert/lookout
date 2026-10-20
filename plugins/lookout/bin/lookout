@@ -988,10 +988,11 @@ def cmd_decision(a):
             print("Decisión %s abierta (aviso de herdr mostrado). Pon «(%s)» al final de su pregunta y la opción «%s» tal "
                   "cual en el modal: tu hook la cierra con lo que elija el usuario (no hace falta --cierra)."
                   % (it["id"], it["id"], it["si_es"]))
-        else:
-            print("Decisión %s abierta (aviso de herdr mostrado). Ciérrala con `lookout decision %s --cierra %s --respuesta … "
-                  "--no` cuando el usuario conteste. Si su sí debe autorizar algo, ábrela con --si-es \"<etiqueta del sí>\": "
-                  "un sí solo vale si lo anota tu hook." % (it["id"], pid, it["id"]))
+        else:  # 0.13.42 (p-687158e30a): this one too asks for the id, like the ones above
+            print("Decisión %s abierta (aviso de herdr mostrado). Pon «(%s)» al final de su pregunta. Ciérrala con "
+                  "`lookout decision %s --cierra %s --respuesta … --no` cuando el usuario conteste. Si su sí debe "
+                  "autorizar algo, ábrela con --si-es \"<etiqueta del sí>\": un sí solo vale si lo anota tu hook."
+                  % (it["id"], it["id"], pid, it["id"]))
         return 0
     if a.cierra:
         if a.si == a.no:

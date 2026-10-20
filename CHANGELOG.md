@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.13.42
+
+- `lookout decision --abre` without `--si-es` also says «Pon «(dN)» al final de su pregunta» (p-687158e30a). Since
+  0.13.9 every opening with `--si-es` (and later `--shells-parar`, `--permiso`, `--sin-revisor`) asked for the id at the
+  end of the modal's question; the one without `--si-es` only said how to close it. A question without the id is not
+  tied to its decision by the hook, so the decision stayed open and was reminded once (the safe side).
+
 ## 0.13.41
 
 - A PR an agent opened outside lookout gets its place in the queue (p-0da4c4704f). In 3-tier-memory (2026-10-19) PR #50
