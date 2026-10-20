@@ -22,14 +22,16 @@ def load(project_id):
     return lookout_state.read_json(path(project_id)) or {"n": 0, "items": []}
 
 
-def abre(project_id, texto, agentes=(), notificar=True, si_es="", tipo="", shells=None, permiso=None):
+def abre(project_id, texto, agentes=(), notificar=True, si_es="", tipo="", shells=None, permiso=None, sin_revisor=None):
     """0.13.9: `si_es` = the label of the modal option that means yes; the modal's hook then closes the decision
     itself, aprueba = (the user's literal choice == si_es), so no `--cierra … --si` of the supervisor is needed (live
     3-tier 2026-10-16: auto mode denied that command as «Auto-Mode Bypass» for d113). `tipo` = "cierre": a decision
     about closing the tab of `agentes` (retiro.cierre_decidido accepts only that kind). 0.13.10: `shells` =
     {"parar": label, "dejar": label}: what /exit does with the background work of `agentes` (salida.eleccion); the
     hook writes down which of the two the user chose, and any other answer (wait) authorizes nothing. 0.13.12:
-    `permiso` = {"comando", "ts"} of the agent's pending permission request (aprueba.abre, tipo "permiso")."""
+    `permiso` = {"comando", "ts"} of the agent's pending permission request (aprueba.abre, tipo "permiso"). 0.13.41:
+    `sin_revisor` = {"veredicto": the verdict line the user is asked to accept, "" for none, "rondas": how many rounds} (publica.abre_sin_revisor,
+    tipo "sin-revisor")."""
     if shells:
         tipo = "shells"
     d = load(project_id)
@@ -38,7 +40,8 @@ def abre(project_id, texto, agentes=(), notificar=True, si_es="", tipo="", shell
                  "estado": "abierta"}, **({"si_es": si_es} if si_es and si_es.strip() else {}),  # as given (r10)
                 **({"tipo": tipo} if tipo else {}),
                 **({"opciones": {k: v for k, v in shells.items() if v and v.strip()}} if shells else {}),
-                **({"permiso": dict(permiso)} if permiso else {}))
+                **({"permiso": dict(permiso)} if permiso else {}),
+                **({"sin_revisor": dict(sin_revisor)} if sin_revisor is not None else {}))
     d["items"].append(item)
     lookout_state.write_json(path(project_id), d)
     if notificar:

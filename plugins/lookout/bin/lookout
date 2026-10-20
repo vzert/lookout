@@ -28,9 +28,12 @@ Subcommands (PROYECTO = a path inside the repo, or its project_id):
   gobierno PROYECTO AGENTE [--para push|ronda] [--usuario-amplia N --decision ID]
                                 goalspec governance (F3): may this agent's push go to the user? may it open one
                                 more adversary round? (from its own transcript; exit 5 = no)
-  publica PROYECTO AGENTE [--worktree RUTA] [--hecho [--pr N] | --retira]   publications in order (H14): verify and
-                                queue; --worktree when the agent works in a worktree its registry entry does not name;
-                                in PR mode --hecho takes the number of the PR the agent opened
+  publica PROYECTO AGENTE [--worktree RUTA] [--decision ID] [--hecho [--pr N] | --retira]   publications in order
+                                (H14): verify and queue; --worktree when the agent works in a worktree its registry
+                                entry does not name; --decision: the user's yes to a --sin-revisor decision (0.13.41);
+                                in PR mode --hecho takes the number of the PR the agent opened, and with no lista
+                                publication it queues a PR opened outside lookout, unverified, if its branch is the
+                                one of the agent's tree (--worktree or the registry's) (0.13.41)
   publica PROYECTO --cola       the publication queue
   publica PROYECTO --modo pr|directo  how this project publishes (0.13.27): pushes to main (directo, the default) or
                                 a branch + pull request per agent that the user merges (pr)
@@ -48,12 +51,14 @@ Subcommands (PROYECTO = a path inside the repo, or its project_id):
   retoma PROYECTO AGENTE        claude --resume of an agent whose session ended without anyone asking (SessionEnd
                                 «other», e.g. a stray kill), in its pane or a new tab on its folder (0.13.20)
   decision PROYECTO (--abre TEXTO [--agentes A,B] [--si-es ETIQUETA] [--cierre] [--shells-parar E --shells-dejar E]
-                    [--permiso]
+                    [--permiso | --sin-revisor]
                     | --cierra ID --respuesta R (--si|--no) | --lista)
                                 the user's pending decisions (T4): shown in `resumen` with their age; with --si-es
                                 the modal's hook closes it from the user's own choice (0.13.9); with --shells-parar
                                 and --shells-dejar it writes down which of the two the user chose (0.13.10); with
-                                --permiso it is tied to the agent's pending permission request (0.13.12)
+                                --permiso it is tied to the agent's pending permission request (0.13.12); with
+                                --sin-revisor it is the user's yes to publishing one agent without another adversary
+                                round, no verdict or a break with unsafe=0, tied to that verdict line (0.13.41)
   aprueba PROYECTO AGENTE --decision ID
                                 press «Yes» once in the agent's permission dialog after the user's yes in your modal,
                                 only if the dialog on screen shows exactly the command the user approved (0.13.12)
@@ -675,7 +680,13 @@ def cmd_publica(a):
     e = agent_entry(pid, a.agente)
     with lote.project_mutex(pid):
         if a.hecho:
-            ok, lines = publica.hecho(pid, e, pr=getattr(a, "pr", 0) or None)
+            wt = None
+            if getattr(a, "worktree", ""):  # 0.13.41: the tree of a PR opened outside lookout (registra_pr)
+                wt, _, why = publica.valida_worktree(common, a.worktree)
+                if why:
+                    print("NO: --worktree: %s. Pregúntale al agente la ruta de su worktree." % why)
+                    return 5
+            ok, lines = publica.hecho(pid, e, pr=getattr(a, "pr", 0) or None, worktree=wt)
             print("\n".join(lines))
             return 0 if ok else 5
         if a.retira:
@@ -690,7 +701,7 @@ def cmd_publica(a):
                 print("WORKTREE-AJENO")
                 return 5
             wt = (top, rama)
-        ok, code, lines = publica.pide(pid, e, gobierno.estado(pid, e), worktree=wt)
+        ok, code, lines = publica.pide(pid, e, gobierno.estado(pid, e), worktree=wt, decision=getattr(a, "decision", "") or "")
     print("\n".join(lines))
     print("")
     print("%s" % code)
@@ -925,6 +936,27 @@ def cmd_decision(a):
         if destino:
             print(destino)
         return 0
+    if a.abre and getattr(a, "sin_revisor", False):
+        agentes = [x for x in (a.agentes or "").split(",") if x]
+        if len(agentes) != 1 or a.cierre or getattr(a, "permiso", False) or any(
+                (getattr(a, "shells_parar", ""), getattr(a, "shells_dejar", ""))):
+            print("NO ABIERTA: una decisión --sin-revisor es de un solo agente (--agentes <agente>), con --si-es y sin "
+                  "--cierre, --permiso ni --shells-*.")
+            return 5
+        e = agent_entry(pid, agentes[0])
+        ok, it = publica.abre_sin_revisor(pid, e, a.abre, a.si_es or "", gobierno.estado(pid, e))
+        if not ok:
+            print("NO ABIERTA: " + it + ".")
+            return 5
+        supervisor_md.write(pid)
+        acepta = it["sin_revisor"]["veredicto"]
+        print("Decisión %s abierta (aviso de herdr mostrado). Pon «(%s)» al final de su pregunta y la opción «%s» tal cual "
+              "en el modal, sin marcarla como recomendada: tu hook la cierra con lo que elija el usuario. La pregunta dice "
+              "en palabras simples qué no se revisó otra vez (%s). Si dice sí: `lookout publica %s %s --decision %s` "
+              "(verifica base, versión y rutas como siempre; vale para una publicación y solo con ese veredicto)."
+              % (it["id"], it["id"], it["si_es"], acepta or "no hay ningún veredicto del adversario", pid, agentes[0],
+                 it["id"]))
+        return 0
     if a.abre:
         agentes = [x for x in (a.agentes or "").split(",") if x]
         previas = decisiones.tomadas_de(pid, agentes)
@@ -1029,7 +1061,8 @@ def main():
     p.add_argument("--modo", choices=list(publica.MODOS), default="")
     p.add_argument("--pr", type=int, default=0, help="--hecho en modo PR: el número del PR que abrió el agente")
     p.add_argument("--fusiona", type=int, default=0, metavar="N", help="fusiona el PR N de la cola con el sí del usuario")
-    p.add_argument("--decision", default="", help="--fusiona: la decisión dN que el usuario respondió con el sí")
+    p.add_argument("--decision", default="", help="--fusiona: la decisión dN que el usuario respondió con el sí; con un "
+                   "agente: su sí a una decisión --sin-revisor (publicar sin otra revisión del adversario)")
     p.add_argument("--fuera-de-orden", action="store_true", help="--fusiona: un PR que no es el primero en fusionar")
     p = sub.add_parser("regla-push"); p.add_argument("proyecto"); p.add_argument("--estado", action="store_true")
     sub.add_parser("permisos")
@@ -1069,6 +1102,9 @@ def main():
     p.add_argument("--shells-dejar", default="", help="etiqueta de la opción del modal que lo deja en segundo plano al salir")
     p.add_argument("--permiso", action="store_true",
                    help="la decisión es aprobar el permiso que espera --agentes (su petición pendiente, comando entero)")
+    p.add_argument("--sin-revisor", action="store_true",
+                   help="la decisión es publicar --agentes sin otra revisión del adversario (sin veredicto o break con "
+                        "unsafe=0); luego `publica … --decision <id>`")
     p = sub.add_parser("aprueba"); p.add_argument("proyecto"); p.add_argument("agente")
     p.add_argument("--decision", required=True, metavar="DECISION_ID",
                    help="id (dN) del sí del usuario en tu modal a una decisión --permiso de ese agente")

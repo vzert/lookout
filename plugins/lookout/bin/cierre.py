@@ -61,6 +61,14 @@ def published(entry):
     return publica.git(wt, "merge-base", "--is-ancestor", head.strip(), tip)[0] == 0 if head.strip() else False
 
 
+def publicada_sin_revisor(project_id, entry, st):
+    """0.13.41: the publication of this session the user authorized without the reviewer (publica.abre_sin_revisor),
+    already pushed (publicada or an open PR), with its last verdict still the one the user accepted; else None."""
+    p = next((q for q in reversed(publica.load(project_id)["cola"]) if q["session_id"] == entry["session_id"]
+              and q["estado"] in ("publicada", publica.ABIERTO)), None)
+    return p if p and p.get("sin_revisor") and publica.puerta_abierta(st, p) else None
+
+
 def cierra(project_id, common_dir, entry, st, estado, nota, usuario_confirmo, sin_push="", run=subprocess.run):
     """(ok, lines)."""
     tarea = entry.get("tarea")
@@ -73,7 +81,8 @@ def cierra(project_id, common_dir, entry, st, estado, nota, usuario_confirmo, si
     last = st["ultimo"]
     # Fase 9 C2: abandoning (or superseding) claims no result: no hold and no push needed, only the user's yes.
     sin_resultado = estado != "resolved"
-    if not sin_resultado and (not last or last["veredicto"] != "hold"):
+    sin_revisor = publicada_sin_revisor(project_id, entry, st)
+    if not sin_resultado and (not last or last["veredicto"] != "hold") and not sin_revisor:
         return False, ["NO: sin hold del adversario (último: %s). Verificación independiente antes de cerrar." % (
             last["linea"] if last else "ninguno")]
     if not sin_resultado and not sin_push and not entry.get("sin_worktree") and not published(entry):
@@ -83,6 +92,9 @@ def cierra(project_id, common_dir, entry, st, estado, nota, usuario_confirmo, si
     ok, lines = emite(common_dir, tarea, estado, nota_full, entry["session_id"], run)
     if lines and lines[0].startswith("NO:"):
         return False, lines
+    if sin_revisor and not sin_resultado and (not last or last["veredicto"] != "hold"):
+        lines = list(lines) + ["Sin hold del adversario: el usuario autorizó publicarlo sin otra revisión (%s)." %
+                               sin_revisor["sin_revisor"]["decision"]]
     lote.set_estado(project_id, entry["session_id"], "terminada", "cerrado por journal")
     publica.retira_sesion(project_id, entry["session_id"], "cerrada")
     return ok, lines

@@ -3,7 +3,7 @@
 H14: several agents ready to publish from the same base all wanted the same version. Here the
 publications of a project form ONE queue (publicaciones.json): one agent has the turn; before its push
 goes to the user the supervisor checks on its own, read-only, in the agent's worktree:
-  the adversary gate (gobierno.decide_push), a clean tree, the base it builds on is origin's CURRENT
+  the adversary gate (gobierno.decide_push, or since 0.13.41 the user's --sin-revisor yes), a clean tree, the base it builds on is origin's CURRENT
   tip and a fast-forward, the commit list, a version that is new against origin and against every
   other publication in the ledger, and no private paths in the added lines.
 Anything else is a NO with what to do (fetch + rebase + renumber + suites, then ask again).
@@ -213,8 +213,8 @@ def pista_worktree(wt):
             "repite con `--worktree <ruta>`." % wt]
 
 
-def private_hits(wt, base, limit=5):
-    code, out = git(wt, "diff", "--unified=0", base + "..HEAD")
+def private_hits(wt, base, limit=5, head="HEAD"):
+    code, out = git(wt, "diff", "--unified=0", base + ".." + head)
     hits = []
     for line in out.splitlines() if code == 0 else []:
         if line.startswith("+") and not line.startswith("+++") and PRIVATE_RE.search(line):
@@ -228,9 +228,11 @@ def private_hits(wt, base, limit=5):
 
 # ---------- the queue ----------
 
-def pide(project_id, entry, st, log=None, worktree=None):
-    """`worktree`: (top level, branch) from valida_worktree; it stays with this publication for --hecho and expiry."""
-    """Ask to publish. Returns (ok, code, lines). Never pushes, never fetches into the agent's tree."""
+def pide(project_id, entry, st, log=None, worktree=None, decision=""):
+    """`worktree`: (top level, branch) from valida_worktree; it stays with this publication for --hecho and expiry.
+    `decision`: 0.13.41 (p-7e4c7bdb9f), the user's yes in the supervisor's modal to publishing without the reviewer
+    (abre_sin_revisor); it lifts only the adversary gate and is used up when the check reaches LISTA.
+    Ask to publish. Returns (ok, code, lines). Never pushes, never fetches into the agent's tree."""
     if entry.get("sin_worktree"):
         # Fase 9 G: an agent on the main checkout does not commit; a push from there would carry every commit on main
         return False, "EN-MAIN", ["NO: %s trabaja en el checkout principal sin commit; el commit y el push son del "
@@ -245,6 +247,7 @@ def pide(project_id, entry, st, log=None, worktree=None):
     # 0.13.38 (p-588bbc52e4): a new request on a caducada or rechazada entry starts clean; its old reason went on
     # into pr-abierto (PR #40 of 3-tier said «su HEAD cambió» with the PR's own head)
     me.pop("motivo", None)
+    me.pop("sin_revisor", None)  # 0.13.41: a yes covers one check; asking again needs it again
     if worktree:
         me.update(worktree=worktree[0], rama=worktree[1])
     for p in led["cola"]:
@@ -263,24 +266,41 @@ def pide(project_id, entry, st, log=None, worktree=None):
                                      ahead["nombre"])]
     me["estado"] = "turno"
     save(project_id, led)
-    ok, code, lines = verifica(project_id, entry, st, led, me)
+    ok, code, lines = verifica(project_id, entry, st, led, me, decision)
     if ok:
         me["estado"] = "lista"
+        if me.get("sin_revisor"):
+            import decisiones
+            decisiones.marca_usada(project_id, me["sin_revisor"]["decision"])
     else:
         # B4 (0.12.2): a refused check frees the turn. It stayed "turno" for 6.6 h in 3-tier-memory (2026-10-15) and held
         # the queue; `pide` again re-checks from the start
         me.update(estado="rechazada", motivo=code)
+        me.pop("sin_revisor", None)  # the yes was not used: it stays for the next check
     save(project_id, led)
     return ok, code, lines
 
 
-def verifica(project_id, entry, st, led, me):
+def verifica(project_id, entry, st, led, me, decision=""):
     wt = me.get("worktree") or entry.get("worktree") or entry.get("cwd")
     lines = []
     ok, code, text = gobierno.decide_push(st)
-    lines.append("Adversario: " + text)
-    if not ok:
-        return False, code, lines
+    if not ok and decision:
+        d, why = sin_revisor_valida(project_id, entry, st, decision)
+        if not d:
+            return False, "SIN-REVISOR-NO", ["Adversario: " + text, "NO: --decision %s: %s" % (decision, why)]
+        acepta = (st["ultimo"] or {}).get("linea", "")
+        me["sin_revisor"] = dict(veredicto_de(st), decision=d["id"])
+        lines.append("Adversario: SIN REVISOR. El usuario autorizó en tu modal (%s, «%s») publicar %s. Lo que no se "
+                     "revisó otra vez queda en la cola con la publicación. El resto se verifica igual." % (
+                         d["id"], d.get("respuesta_usuario") or d.get("respuesta") or "",
+                         "con este break aceptado: " + acepta if acepta else "sin ningún veredicto del adversario"))
+    else:
+        lines.append("Adversario: " + text)
+        if not ok:
+            if not sin_revisor_porque_no(st):
+                lines.append(PISTA_SIN_REVISOR % entry.get("nombre"))
+            return False, code, lines
     rc, dirty = git(wt, "status", "--porcelain", "--untracked-files=no")
     if rc != 0:
         return False, "SIN-REPO", lines + ["NO: no puedo leer el worktree %s." % wt]
@@ -504,6 +524,82 @@ def reparte_sucios(project_id, entry, wt, dirty):
     return propios, ajenos
 
 
+# ---------- 0.13.41 (p-7e4c7bdb9f): the user's yes to publishing without the reviewer ----------
+# 3-tier-memory 2026-10-19 (d241, d243): with a break of unsafe=0 the user asked for the push with no more rounds, lookout
+# said NO, and the push went out from the agent's pane: no check of base, version or private paths, nothing in the queue.
+
+SIN_REVISOR = "sin-revisor"
+PISTA_SIN_REVISOR = ("Si el usuario pide publicar sin otra revisión: `lookout decision <proyecto> --abre \"<pregunta>\" "
+                     "--agentes %s --sin-revisor --si-es \"<etiqueta del sí>\"`, pregúntale en tu modal (nunca lo "
+                     "recomiendes tú) y, si elige esa opción, `lookout publica <proyecto> <agente> --decision <id>`.")
+
+
+def sin_revisor_porque_no(st):
+    """'' when the user may authorize publishing without the reviewer in this state; otherwise why not."""
+    ok, code, _ = gobierno.decide_push(st)
+    if ok:
+        return "el último veredicto ya deja publicar (%s): no hay revisor que saltar" % code
+    if code == "BREAK" and st["ultimo"]["unsafe"]:
+        return ("el último veredicto es un break con unsafe=%d: lo que falla hacia el lado inseguro se arregla, no se "
+                "salta" % st["ultimo"]["unsafe"])
+    return ""
+
+
+def veredicto_de(st):
+    """The verdict a yes is about: its line ("" for none) and how many adversary rounds the task had launched then.
+    Sonnet r1: a later round can repeat the same line (dozens of real (session, line) pairs do), and that round is not what the
+    user accepted. Sonnet r2: rounds, not quoted lines: an agent quotes the same verdict again with no new round
+    (goalspec asks for it at close), and a round launched but not quoted yet is already not what the user saw."""
+    return {"veredicto": (st["ultimo"] or {}).get("linea", ""), "rondas": st.get("rondas", 0)}
+
+
+def mismo_veredicto(st, acepta):
+    return veredicto_de(st) == {"veredicto": acepta.get("veredicto", ""), "rondas": acepta.get("rondas", -1)}
+
+
+def abre_sin_revisor(project_id, entry, texto, si_es, st, notificar=True):
+    """Open the decision the user answers in the modal. (ok, item | why). It names one agent and the verdict line it
+    accepts ("" for none): a later verdict, safe or not, is not what the user said yes to."""
+    import decisiones
+    if not (si_es or "").strip():
+        return False, "una decisión --sin-revisor necesita --si-es \"<etiqueta del sí>\""
+    why = sin_revisor_porque_no(st)
+    if why:
+        return False, why
+    return True, decisiones.abre(project_id, texto, [entry.get("nombre")], notificar=notificar, si_es=si_es,
+                                 tipo=SIN_REVISOR, sin_revisor=veredicto_de(st))
+
+
+def sin_revisor_valida(project_id, entry, st, did):
+    """(decision, '') when `did` is the user's own yes in the modal (por_hook) to a --sin-revisor decision about this
+    agent, not used yet, and the agent's last verdict is still the one it accepted; else (None, why)."""
+    import decisiones
+    d = decisiones.respondida(project_id, did)
+    if not (d and d.get("tipo") == SIN_REVISOR and d.get("por_hook") and entry.get("nombre") in (d.get("agentes") or ())
+            and isinstance(d.get("sin_revisor"), dict)):
+        return None, ("no es el sí del usuario en tu modal a una decisión --sin-revisor de %s. " % entry.get("nombre") +
+                      PISTA_SIN_REVISOR % entry.get("nombre"))
+    if d.get("usada"):
+        return None, "ese sí ya se usó en una publicación; uno por publicación. Pregúntale otra vez."
+    why = sin_revisor_porque_no(st)
+    if why:
+        return None, why + "."
+    if not mismo_veredicto(st, d["sin_revisor"]):
+        return None, ("el usuario aceptó «%s» con %d rondas de adversario y ahora el último es «%s» con %d rondas. "
+                      "Pregúntale otra vez." % (d["sin_revisor"].get("veredicto") or "ningún veredicto",
+                                                d["sin_revisor"].get("rondas", 0), (st["ultimo"] or {}).get("linea") or
+                                                "ninguno", st.get("rondas", 0)))
+    return d, ""
+
+
+def puerta_abierta(st, p):
+    """The adversary gate of a queued publication: a hold, or the verdict the user accepted when it was checked."""
+    if gobierno.decide_push(st)[0]:
+        return True
+    acepta = p.get("sin_revisor")
+    return bool(acepta) and not sin_revisor_porque_no(st) and mismo_veredicto(st, acepta)
+
+
 def caducada(project_id, p):
     """Why a queued publication no longer holds the turn ('' if it still does): its session was relieved or its
     task closed, its agent committed after the check, or its last verdict is no longer an OK. Without this a
@@ -523,7 +619,7 @@ def caducada(project_id, p):
         _, head = git(p.get("worktree") or e.get("worktree") or e.get("cwd"), "rev-parse", "HEAD")
         if p.get("head") and head.strip() != p["head"]:
             return "su HEAD cambió después de verificarla"
-        if not gobierno.decide_push(gobierno.estado(project_id, e, guardar=False))[0]:
+        if not puerta_abierta(gobierno.estado(project_id, e, guardar=False), p):
             return "su último veredicto ya no es un hold válido"
     return ""
 
@@ -596,11 +692,13 @@ def retira_sesion(project_id, session_id, motivo):
         save(project_id, led)
 
 
-def hecho(project_id, entry, pr=None):
+def hecho(project_id, entry, pr=None, worktree=None):
     """Confirm the push landed (origin's tip is the verified head) and hand the turn to the next one. PR mode: `pr` is
     the number of the PR the agent opened; it must be open on that branch and head (gh)."""
     led = load(project_id)
     me = entry_of(led, entry["session_id"])
+    if (not me or me["estado"] != "lista") and pr and modo(project_id) == "pr":
+        return registra_pr(project_id, led, entry, pr, worktree)
     if not me or me["estado"] != "lista":
         return False, ["NO: %s no tiene una publicación lista en la cola." % entry.get("nombre")]
     if pr and modo(project_id) != "pr":
@@ -631,6 +729,88 @@ def hecho(project_id, entry, pr=None):
     else:
         out.append("Cola vacía. Si nadie más va a publicar, dile al usuario que retire la regla temporal de push.")
     return True, out
+
+
+def registra_pr(project_id, led, entry, pr, worktree=None):
+    """0.13.41 (p-0da4c4704f): a PR the agent opened outside lookout (no lista publication) goes into the queue as it
+    is on GitHub, last in the merge order and marked `fuera_de_lookout`: lookout never checked it. What lookout can read
+    of its head in the agent's tree (version, private paths) is a warning, never a block: the PR exists either way, and
+    leaving it out of the queue only hides it from the merge order (3-tier 2026-10-19, PR #50)."""
+    otro = next((p for p in led["cola"] if p.get("pr") == pr and p["estado"] in (ABIERTO, "publicada")), None)
+    if otro:
+        return False, ["NO: el PR #%d ya está en la cola (%s, %s)." % (pr, otro.get("nombre"), otro["estado"])]
+    wt = worktree or entry.get("worktree") or entry.get("cwd")
+    repo = repo_of(wt)
+    d = pr_view(pr, repo)
+    if d is None:
+        return False, ["NO: %s no tiene una publicación lista en la cola, y no leo el PR #%d con gh (`gh pr view %d` "
+                       "falló: ¿gh instalado y con sesión? ¿existe ese PR?)." % (entry.get("nombre"), pr, pr)]
+    base = remote_branch(entry)
+    if d.get("baseRefName") != base:
+        return False, ["NO: el PR #%d va hacia %s y los PR de este proyecto van hacia %s: pregúntale al usuario." % (
+            pr, d.get("baseRefName"), base)]
+    if d.get("state") not in ("OPEN", "MERGED"):
+        return False, ["NO: el PR #%d está %s, sin fusionar: no lo pongo en la cola." % (pr, d.get("state"))]
+    head, rama = d.get("headRefOid") or "", d.get("headRefName") or ""
+    # The PR must be this agent's (Sonnet r1: a mistyped number queued another agent's PR under it). Its branch is the
+    # branch of the agent's tree, the one --worktree names or the registry's: nothing else. Reading it from git history
+    # failed both ways (Sonnet r2, Opus r3): a merged PR is in every synced agent's history, origin's tip may not be
+    # fetched here, and the real PR #50 came from an agent registered on the main checkout working in its own worktree.
+    _, local = git(wt, "rev-parse", "--abbrev-ref", "HEAD")
+    local = local.strip()
+    if not rama or rama != local:
+        return False, ["NO: el PR #%d no es de %s: es de la rama %s y %s está en la rama %s. Si el PR es suyo y trabaja "
+                       "en otro worktree, repite con --worktree <ruta de ese worktree>; si su rama local tiene otro "
+                       "nombre que la del PR, pregúntale al usuario. ¿O es otro número?" % (
+                           pr, entry.get("nombre"), rama or "?", wt, local or "?")]
+    tip = remote_tip(wt, base)
+    avisos, vfile, vhead = [], "", ""
+    if head and git(wt, "cat-file", "-e", head + "^{commit}")[0] == 0:
+        rc, mb = git(wt, "merge-base", tip, head) if tip and git(wt, "cat-file", "-e", tip + "^{commit}")[0] == 0 \
+            else (1, "")
+        mb = mb.strip() if rc == 0 else ""
+        if mb:
+            _, touched = git(wt, "diff", "--name-only", mb + ".." + head)
+            if any(is_version_file(f) for f in touched.splitlines()):
+                vfile, vhead = version_at(wt, head)
+            hits = private_hits(wt, mb, head=head)
+            if hits:
+                avisos += ["Aviso: el PR trae líneas nuevas con rutas privadas:"] + ["  " + h for h in hits]
+        else:
+            avisos.append("Aviso: no encuentro dónde sale el PR de origin/%s en este árbol (falta fetch): no leo su "
+                          "versión ni sus rutas." % base)
+        kh = vkey(vhead)
+        _, vbase = version_at(wt, tip) if mb else ("", "")
+        if kh and vkey(vbase) and kh <= vkey(vbase):
+            avisos.append("Aviso: su versión %s no va por encima de la de origin/%s (%s). Dile al agente que renumere."
+                          % (vhead, base, vbase))
+        antes = [p for p in led["cola"] if p["estado"] in ("lista", ABIERTO) and p.get("version")
+                 and kh and vkey(p["version"]) and vkey(p["version"]) >= kh]
+        if antes:
+            avisos.append("Aviso: su versión %s no sigue el orden de fusión: antes va %s. Dile al agente que renumere "
+                          "por encima." % (vhead, ", ".join("%s (versión %s)" % (p.get("nombre"), p["version"])
+                                                            for p in antes)))
+    else:
+        avisos.append("Aviso: el commit %s del PR no está en el árbol de %s: no leo su versión ni sus rutas." % (
+            head[:9] or "?", entry.get("nombre")))
+    ahora = time.time()
+    p = {"session_id": entry["session_id"], "nombre": entry.get("nombre"), "tarea": entry.get("tarea"),
+         "rama": entry.get("branch"), "worktree": wt, "repo": repo, "pedida": ahora, "orden": ahora, "pr": pr,
+         "head": head, "rama_remota": rama, "rama_base": base, "version": vhead, "archivo_version": vfile, "modo": "pr",
+         "fuera_de_lookout": True, "url": d.get("url", ""), "pr_visto": ahora}
+    led["cola"].append(p)
+    if d.get("state") == "MERGED":
+        p.update(estado="publicada", publicada=ahora, motivo="PR #%d ya fusionado (abierto fuera de lookout)" % pr)
+        save(project_id, led)
+        return True, ["Publicada: %s, PR #%d ya fusionado. Se abrió fuera de lookout: lookout no lo verificó." % (
+            entry.get("nombre"), pr)] + avisos
+    p.update(estado=ABIERTO, pr_abierto=ahora)
+    orden = abiertos(led).index(p) + 1
+    save(project_id, led)
+    return True, ["PR #%d en la cola: %s, %s en %s, versión %s, %dº en el orden de fusión. Se abrió fuera de lookout: "
+                  "lookout no lo verificó (ni adversario, ni base, ni versión, ni rutas), díselo al usuario. Lo fusiona "
+                  "el usuario, o tú con su sí en tu modal: `lookout publica <proyecto> --fusiona %d --decision <id>`." % (
+                      pr, entry.get("nombre"), rama, head[:9], vhead or "-", orden, pr)] + avisos
 
 
 def hecho_pr(project_id, led, me, entry, pr):
@@ -755,6 +935,8 @@ def fusiona(project_id, pr, decision_id, fuera_de_orden=False):
                               else "%d en verde" % len(v["statusCheckRollup"])),
              "Fusionado: PR #%d (%s, versión %s) en %s con un merge commit sobre %s." % (
                  pr, p.get("nombre"), p.get("version") or "-", p.get("rama_base") or "main", p["head"][:9])]
+    if p.get("fuera_de_lookout"):
+        lines.append("Ese PR se abrió fuera de lookout: lookout no lo verificó antes de fusionarlo.")
     resto = abiertos(led)
     if resto:
         lines.append("Siguiente en el orden de fusión: %s (#%s). GitHub dirá si necesita rebase." % (
@@ -788,7 +970,10 @@ def render_cola(project_id):
     return cabeza + "\n" + "\n".join(
         "- %s | %s | versión %s | %s%s" % (p["nombre"], p["estado"], p.get("version") or "-",
                                             time.strftime("%H:%M", time.localtime(p.get("pedida", 0))),
-                                            " | PR " + pr_texto(led, p) if p["estado"] == ABIERTO else "")
+                                            (" | PR " + pr_texto(led, p) if p["estado"] == ABIERTO else "") +
+                                            (" | sin revisor (%s)" % p["sin_revisor"]["decision"]
+                                             if p.get("sin_revisor") else "") +
+                                            (" | fuera de lookout, sin verificar" if p.get("fuera_de_lookout") else ""))
         for p in rows)
 
 

@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.13.41
+
+- A PR an agent opened outside lookout gets its place in the queue (p-0da4c4704f). In 3-tier-memory (2026-10-19) PR #50
+  was pushed and opened from the agent's pane; `--hecho --pr 50` answered «no tiene una publicación lista en la cola»,
+  so the merge order, the out-of-order warning, `--fusiona` and the merged/closed reading never saw it. Now, in PR mode,
+  `lookout publica <proyecto> <agente> --hecho --pr N [--worktree <ruta>]` with no lista publication reads the PR with
+  gh and queues it as it is on GitHub: last in the merge order, marked «fuera de lookout, sin verificar» in its output, in `--cola` and in
+  the `--fusiona` output. A PR already merged goes in as publicada. What lookout can read of the PR's head in the
+  agent's tree (its version against main and the queue, private paths) comes back as a warning, never as a block. It
+  is a NO for a PR that is not the agent's (its branch is not the branch of the agent's tree: the one `--worktree` names,
+  checked as in `publica --worktree`, or the registry's; git history decides nothing, since a merged PR is in every
+  synced agent's history), a closed PR, a PR to another base branch, a PR already in the queue, or a gh that fails.
+- The user can authorize, in the supervisor's modal, publishing an agent without another adversary round: with no
+  verdict at all, or with a last verdict that is a break with unsafe=0 (p-7e4c7bdb9f). In 3-tier-memory (2026-10-19,
+  d241 and d243) the user asked for the push with no more rounds, lookout kept saying NO, and the push went out from
+  the agent's pane: nobody checked base, version or private paths, and the queue did not record it. Now the supervisor
+  opens `lookout decision … --agentes <agente> --sin-revisor --si-es "<etiqueta>"` and asks in its modal; if the user
+  chooses that option, `lookout publica <proyecto> <agente> --decision <id>` passes the adversary gate and checks
+  everything else as always (clean tree, base, version, private paths). The yes counts only as the user's own choice
+  in the modal (closed by its hook), for that one agent, once, and only for the verdict it was asked about (its line
+  and how many adversary rounds the task had launched then): another round, even one that repeats the same line or
+  has not been quoted yet, or a break with unsafe ≥ 1, is a NO again; quoting the accepted verdict once more is not a
+  new round. The yes is not tied to a commit: commits after it go through the same check and appear in
+  the push question the user still answers. The queue keeps the decision and the accepted verdict (`--cola`
+  shows «sin revisor (dN)»). A lista with that yes does not expire because of its accepted break, but does when its
+  HEAD changes or another round is launched (unless that round ends in a hold). `cierra` closes that task once it is
+  published, without a hold, while no new round has been launched.
+
 ## 0.13.40
 
 - A Stop now carries its «Como retomar» even when the hook reads the transcript before Claude Code has written the

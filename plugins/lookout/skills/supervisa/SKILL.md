@@ -365,6 +365,15 @@ NO, no lo rodees ni lo reformules: pásale al agente el texto del NO.
      cambió), o dame una razón. Criterio de corte: lo que falla hacia el lado inseguro (`unsafe` > 0) se
      arregla sí o sí; lo seguro y caro puede quedar como pendiente propuesto.
    - `SIN-VEREDICTO`: pídele la ronda. Si da una razón para no hacerla, pásala al usuario como razón, no como hold.
+   - **El usuario pide publicar sin otra revisión** (con `SIN-VEREDICTO` o con un `BREAK` de `unsafe=0`; con
+     `unsafe` > 0 lookout no lo deja ni preguntar): no lo rodees ni lo recomiendes tú. Abre `lookout decision
+     <project_id> --abre "<pregunta>" --agentes <agente> --sin-revisor --si-es "<etiqueta del sí>"`. Luego pregúntale en
+     tu modal qué no se revisó otra vez, en palabras simples, con esa opción sin «(Recomendado)». Si la elige: `lookout
+     publica <project_id> <agente> --decision <id>` (con `--worktree` si hace falta). lookout verifica base, versión y
+     rutas como siempre, y anota en la cola el sí y el veredicto aceptado. El sí vale para una publicación y solo para
+     ese veredicto: si llega otra ronda (aunque repita la misma línea) o si la publicación caduca, hace falta otro sí.
+     El push sigue siendo otra pregunta al usuario, con los commits que muestra `publica`. Después, `cierra` acepta esa tarea
+     sin hold mientras no haya otra ronda.
    - `OK`: el último veredicto es hold. **Qué rondas hacían falta (con qué modelo, con qué backends) es regla de
      goalspec, no tuya ni de lookout**: no la juzgues ni la repitas. goalspec la aplica en la sesión del agente.
    - `SIN-GOALSPEC`: goalspec no está instalado; no hay ronda que pedir. Sigue con el paso 2, y en la pregunta al
@@ -402,6 +411,11 @@ estas diferencias:
 - Paso 5: `lookout publica <project_id> <agente> --hecho --pr <N>`. Deja la publicación `pr-abierto`: no frena al
   siguiente agente, no caduca aunque el agente termine o lo releves, y el resumen la pasa a publicada cuando el PR se
   fusiona (o a caducada si se cierra). Si avisa de una fusión fuera de orden, díselo al usuario.
+- **Un PR que el agente abrió fuera de lookout** (sin `LISTA`: hizo push y `gh pr create` desde su pane): el mismo
+  `lookout publica <project_id> <agente> --hecho --pr <N>` lo pone en la cola, al final del orden de fusión, como «fuera
+  de lookout, sin verificar». Si el agente trabaja en un worktree propio, añade `--worktree <ruta>`: lookout acepta el PR
+  solo si su rama es la de ese árbol. Pásale al usuario los avisos de la salida (versión, rutas privadas) y dile que lookout no
+  lo verificó; para fusionarlo sigue haciendo falta su sí.
 - **Fusionar** es una decisión del usuario, aparte del push. Si quiere que la hagas tú, abre la decisión con
   `--si-es`: `lookout decision <project_id> --abre "¿Fusiono el PR #<N> (<agente>, versión X) en main?" --agentes
   <agente> --si-es "<etiqueta del sí>"` (el texto **debe** nombrar `#<N>`), pregúntale en tu modal y, solo si elige esa opción:
@@ -416,7 +430,8 @@ Con `PREGUNTA-USUARIO` (ya van 5) pregúntale al usuario antes de abrir la 6: ab
 queda como pendientes propuestos y cerrar / parar. Si dice abrir otra:
 `lookout gobierno <project_id> <agente> --usuario-amplia <n> --decision <id>` (el id de una decisión abierta con `--si-es` cuya opción eligió el usuario).
 
-**Cerrar el pendiente de un agente** (terminado, publicado o sin necesidad de push, con hold):
+**Cerrar el pendiente de un agente** (terminado, publicado o sin necesidad de push, con hold o publicado con el sí
+del usuario sin otra revisión):
 abre la decisión (`lookout decision … --abre … --agentes <agente> --si-es "<etiqueta del sí>"`) y pregunta al usuario en
 el modal. Si elige esa opción, tu hook la cierra con su sí, y: `lookout cierra <project_id> <agente> --nota "<qué quedó hecho y cómo se verificó>" --usuario-confirmo <id>` (añade `--sin-push "<razón>"` si la tarea no necesitaba push).
 Escribe solo un evento `pendiente.resolve` en el journal; `_pendientes.md` cambia al compactar. Nunca edites
