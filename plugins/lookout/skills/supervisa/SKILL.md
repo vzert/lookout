@@ -253,7 +253,9 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
 
 **Vista por grupos.** `resumen` agrupa a los agentes: **Te necesita**, **Listo para revisar**, **Trabajando**,
 **En pausa** e **Idle**. El usuario recibe un aviso de herdr solo cuando un agente entra en "Te necesita" o en "Listo"
-(no por cada evento). Detalle de las señales y umbrales: `references/heuristicas.md`.
+(no por cada evento). Detalle de las señales y umbrales: `references/heuristicas.md`. Cada aviso de herdr que lookout
+le manda al usuario deja una línea en `avisos.jsonl`, con el código de salida de herdr: si el usuario dice que no le
+llegó un aviso, míralo ahí (dónde está y qué trae cada línea: `references/heuristicas.md`, «Límites conocidos»).
 
 **Puertos.** Cada agente de código tiene su puerto de servidor de desarrollo (también dos en el mismo checkout): un agente lanzado por lookout ya lo tiene en
 `$PORT` y en su tarea. Para un agente que ya corría: `lookout puerto <project_id> <agente>` y mándale lo que imprime.

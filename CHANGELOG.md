@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.13.43
+
+- The supervisa skill says where `avisos.jsonl` lives and what each line means (p-a323ee9360). Since 0.13.38 every
+  herdr notification lookout sends the user leaves a line there with herdr's exit code, but only the CHANGELOG said so,
+  and a live test did not know where to look. `references/heuristicas.md` («Límites conocidos») gives the path, the
+  fields, what `rc` means, the six kinds (`decision`, `transicion`, `bloque`, `permiso`, `negado`,
+  `relevo-supervisor`) and that a missing line does not prove the notification failed; SKILL.md points there. A test
+  takes the kinds from the code's `notifica`/`notify` calls: a new kind fails its guard (the list of six), and once the
+  guard lists it, the reference must name it.
+
 ## 0.13.42
 
 - `lookout decision --abre` without `--si-es` also says «Pon «(dN)» al final de su pregunta» (p-687158e30a). Since

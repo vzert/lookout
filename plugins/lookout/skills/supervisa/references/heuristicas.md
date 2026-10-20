@@ -65,3 +65,14 @@ su tarea, con un sufijo (el nombre de esa clave) para nombres de bases de datos 
   `revisa.log`), pero avisa una sola vez por nivel.
 - `revisa.log` (carpeta del proyecto en el estado de lookout) guarda una línea por agente revisado: qué vio (herdr,
   proceso, segundos sin eventos) y qué decidió. Sirve para distinguir "no avisó" de "no revisó".
+- `avisos.jsonl` (desde 0.13.38, en `$LOOKOUT_STATE_DIR` o `~/.local/state/lookout`, archivo
+  `projects/<project_id>/avisos.jsonl`) guarda una línea por cada aviso de herdr que lookout le manda **al usuario**
+  (`herdr notification show`). No son los eventos `notification` que herdr manda sobre un agente (`idle_prompt` y
+  otros), que `resumen` cuenta. Cada línea trae `ts` (hora de envío), `tipo`, `titulo` y `rc` (código de salida de
+  herdr), más `error` cuando `rc` no es 0 y herdr escribió algo en su salida de error. `rc` 0: herdr aceptó el aviso;
+  124: herdr no está o no contestó a tiempo; otro: el error propio de herdr. Los tipos: `decision` (se abrió una
+  decisión), `transicion` (un agente entró en "Te necesita" o "Listo"), `bloque` (un «Como retomar» sin relevar),
+  `permiso` (un agente pide permiso), `negado` (auto mode negó una acción) y `relevo-supervisor` (`lookout retomar`).
+  Sirve para que una prueba en vivo vea si el aviso salió sin mirar la pantalla. Una línea con `rc` distinto de 0
+  prueba que el aviso falló. Que falte una línea no prueba que no salió: si la carpeta no se puede escribir, el aviso
+  sale igual, sin línea.
