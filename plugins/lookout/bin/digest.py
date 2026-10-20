@@ -15,7 +15,8 @@ import sesiones
 # `pausa` (provider limit) does not wake: it is not something to answer (Fase 6). `fallo` neither: only its 3rd repeat.
 # 0.12.2: `bg_wait` wakes only when its turn asked something (`pregunta`, wait_event): 19 of 36 wakes in 3-tier-memory
 # (2026-10-15) were background waits with nothing to answer. One that waits too long wakes as `largo` (heuristicas.revisa).
-WAKE_TYPES = "ask,blocked,negado,idle,bg_wait,unknown,crossrepo,end,repite,sin_progreso,largo,retomar,nuevo"
+# 0.13.36: espera_cupo too (codex r5: with the cupo full, nothing woke the supervisor to send «Espera tu turno»)
+WAKE_TYPES = "ask,blocked,negado,idle,bg_wait,unknown,crossrepo,end,repite,sin_progreso,largo,retomar,nuevo,espera_cupo"
 ESTADO = {
     "working": "trabajando",
     "ask": "pregunta",
@@ -205,11 +206,30 @@ def describe(ev, quien=None):
         import modo
         m = modo.describe(ev.get("modo"))  # 0.13.33
         return head + ": %s%s%spestaña «%s», %s → `lookout entrega` para darle su nota" % (
-            "le tocó su turno del cupo; " if ev.get("desde_cola") else "",  # 0.13.34
+            # 0.13.34; 0.13.36: it was told to wait, so after its note it is told to go on
+            "le tocó su turno del cupo: tras la nota, SendMessage «Ya es tu turno»; " if ev.get("desde_cola") else "",
             m + "; " if m else "", ren + ", " if ren else "", ev.get("pestana") or "-", ev.get("estado_herdr") or "sin estado")
     if kind == "espera_cupo":  # 0.13.34: not registered, so it has no name yet: its tab or pane
-        return "%s %s: espera turno (cupo de %s lleno); sigue en su pane sin supervisor, díselo al usuario" % (hhmmss(ev.get("ts")), ev.get("pestana") or ev.get("pane") or
-                                                          ev.get("session_id", "")[:8], ev.get("cupo") or registry.cupo())
+        import modo
+        m = modo.describe(ev.get("modo"))  # 0.13.36: a bypassing one would hold the message
+        # 0.13.36 (user's decision 2026-10-19): it does not keep working unsupervised; the supervisor tells it to wait
+        r = ev.get("modo") or {}
+        if not ev.get("to"):
+            que = "sin to (no leo su sesión): pregúntale al usuario si lo para él en su pane"
+        elif r.get("estado") in ("sin-bajar", "supervisor-bypass"):
+            # adversaries r2, r3; codex r5: it is sent anyway. With Claude Code's default settings a message between a
+            # bypassing session and one that is not is held (measured 2026-10-19) until the user approves it.
+            que = "MODO DISTINTO (él %s, tú %s) → SendMessage to=%s «Espera tu turno»; se retendrá: pide al usuario " \
+                  "aprobarlo" % (r.get("agente") or "?", r.get("supervisor") or "?", ev["to"])
+            m = ""
+        else:
+            que = "SendMessage to=%s «Espera tu turno»" % ev["to"]
+        # the digest clips at 160 (adversaries r1-r3): what to do first, then its tab cut to the room left (at least
+        # 12), and the matched mode's note last
+        cabeza = "%s cupo de %s lleno → %s · " % (hhmmss(ev.get("ts")), ev.get("cupo") or registry.cupo(), que)
+        quien_es = ev.get("pestana") or ev.get("pane") or ev.get("session_id", "")[:8]
+        quien_es = quien_es[:max(12, MAX_COLS - 1 - len(" ".join(cabeza.split())))]
+        return cabeza + quien_es + ("; " + m if m else "")
     if kind == "retomar":  # 0.13.0: registered while already idle, with a «Como retomar» in its last turn
         import retomar
         return head + ": " + retomar.describe(ev.get("retomar"))
@@ -298,6 +318,12 @@ VENTANA_BASE = 200000
 def clip(line, n=MAX_COLS):
     line = " ".join(str(line).split())
     return line if len(line) <= n else line[:n - 1] + "…"
+
+
+def clip_evento(ev, line):
+    """An event line, clipped like any other but for `espera_cupo` (0.13.36, codex r1): its `to` and message are what
+    the supervisor must send, and nothing bounds a session's name. describe() already cuts its tab to the room left."""
+    return clip(line, max(MAX_COLS, len(" ".join(str(line).split()))) if ev.get("event") == "espera_cupo" else MAX_COLS)
 
 
 def context_tokens(session_id, projects_dir=None):
@@ -496,8 +522,8 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
     cola = reg.get("espera_cupo") or []
     if cola:  # 0.13.34
         # codex r4: no count of its own (the table's rows are not the slots): a queue means the last pass found it full
-        head.insert(0, "CUPO: %d, lleno en la última pasada · %d esperan turno (%s), sin supervisor hasta que se libere "
-                       "un hueco" % (registry.cupo(), len(cola), ", ".join(x.get("pestana") or x.get("pane_id") or
+        head.insert(0, "CUPO: %d, lleno en la última pasada · %d esperan turno (%s), avisados de esperar hasta que se "
+                       "libere un hueco" % (registry.cupo(), len(cola), ", ".join(x.get("pestana") or x.get("pane_id") or
                                                                          x["session_id"][:8] for x in cola)))
     now = time.time()
     revisiones = heuristicas.ultimas_revisiones(project_id)
@@ -633,7 +659,7 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
             notas.append("%d ecos de tus mensajes y avisos sin mostrar" % len(ecos))
         body.append("Eventos nuevos (%d%s):" % (len(new), "".join("; " + n for n in notas)))
         for ev, n in shown:
-            body.append(clip("- " + describe(ev, quien) + (" (+%d antes)" % n if n else "")))
+            body.append(clip_evento(ev, "- " + describe(ev, quien) + (" (+%d antes)" % n if n else "")))
         if len(items) > len(shown):
             recortados = [ev for ev, _n in items[:len(items) - len(shown)]]
             body.append("(+%d eventos más antiguos sin mostrar: vuelven en el siguiente resumen; ya: `lookout resumen %s "

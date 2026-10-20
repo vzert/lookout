@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.13.36
+
+A queued agent is told by the supervisor to wait its turn, instead of being left to work unsupervised (user's decision
+2026-10-19, after 0.13.34 was published: that gap was not acceptable). It is a message: lookout does not register or
+pause the agent.
+
+- When an agent starts waiting for a slot, the waiter matches its permission mode as at a registration (a message
+  between a bypassing session and one that is not is held) and puts its SendMessage `to` in the `espera_cupo` event.
+- The line says `cupo de N lleno → SendMessage to=X «Espera tu turno»`, and the supervisa skill carries the text: finish
+  the current step, leave the work consistent, start nothing new, and wait until «Ya es tu turno». Without a `to`, the
+  supervisor asks the user to stop it in its pane. `lookout inicia` asks the same for the ones it leaves waiting.
+- When its turn comes, after its note the supervisor sends «Ya es tu turno» to go on.
+- `espera_cupo` wakes the supervisor (codex round 5: with the cupo full, nothing did). With a mode it could not match,
+  the message is sent anyway and the user is asked to approve it while it is held; only without a `to` the user is
+  asked whether to stop the agent in its pane.
+- lookout's scripts cannot call SendMessage (a tool of the supervisor's Claude session): the waiter writes the line
+  with the `to`, and the supervisor sends the message, as with every other note of lookout.
+- `lookout inicia` asks the message again for the ones that were already waiting under the previous supervisor
+  (codex round 4); with a herdr list it cannot trust, a queued one is never admitted, only new ones up to the free
+  slots left after the queue.
+- The line puts what to do and the `to` first and the tab after it, cut to the room left in the line: the digest clips at 160, and a
+  long tab cut the `to` (adversary round 1). That line is never clipped itself: nothing bounds a session's name
+  (codex round 1). `lookout inicia` with a herdr list it cannot trust adds the ones left
+  out at the end of the queue and warns them too. It is a message, not a forced pause: the skill says so.
+
 ## 0.13.35
 
 A decision about an agent that is still open when its «Como retomar» arrives now attends that block (p-5e02bc8cf9).

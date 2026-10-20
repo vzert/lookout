@@ -170,9 +170,10 @@ def barre(project_id, agents):
 
 
 def turno(project_id, reg, found, todos):
-    """0.13.34: of the new sessions, those that fit in the free slots (registry.cupo), in queue order (first queued first, then herdr's order); the
-    rest wait in reg["espera_cupo"], saved here (call under the project mutex). Each one that starts waiting gets one
-    `espera_cupo` event. A waiting session gone from herdr leaves the queue. Returns (admitted, ids that waited)."""
+    """0.13.34: of the new sessions, those that fit in the free slots (registry.cupo), in queue order (first queued
+    first, then herdr's order); the rest wait in reg["espera_cupo"], saved here (call under the project mutex). A
+    waiting session gone from herdr leaves the queue. Returns (admitted, ids that waited, the ones that start waiting
+    now); since 0.13.36 the caller gives the last ones to avisa_cola, outside the mutex, for their `espera_cupo` event."""
     live = {(t.get("agent_session") or {}).get("value") for t in todos} - {None}
     previa = list(reg.get("espera_cupo") or [])
     cola = [x for x in previa if x.get("session_id") in live]
@@ -201,11 +202,25 @@ def turno(project_id, reg, found, todos):
                                 key=lambda x: x["desde"])
     if reg["espera_cupo"] != previa:
         registry.save(project_id, reg)
+    return entran, {f["session_id"] for f in entran if f["session_id"] in antes}, nuevos
+
+
+def avisa_cola(project_id, nuevos):
+    """One `espera_cupo` event per session that starts waiting (call outside the project mutex: modo.empata takes it).
+    0.13.36: the supervisor tells it by SendMessage to wait its turn, so its event carries the `to` and the result of
+    matching its permission mode (a message between a bypassing session and one that is not is held)."""
+    if not nuevos:
+        return
+    import modo
+    import sesiones
+    modos = modo.empata(project_id, nuevos)
     for f in nuevos:
-        lookout_state.append_event(project_id, {
-            "event": "espera_cupo", "session_id": f["session_id"], "nombre": "", "pane": f.get("pane_id", ""),
-            "pestana": f.get("pestana", ""), "hook": "descubre", "cupo": registry.cupo()})
-    return entran, {f["session_id"] for f in entran if f["session_id"] in antes}
+        ev = {"event": "espera_cupo", "session_id": f["session_id"], "nombre": "", "pane": f.get("pane_id", ""),
+              "pestana": f.get("pestana", ""), "hook": "descubre", "cupo": registry.cupo(),
+              "to": sesiones.to({"session_id": f["session_id"]})}
+        if modos.get(f["session_id"]):
+            ev["modo"] = modos[f["session_id"]]
+        lookout_state.append_event(project_id, ev)
 
 
 def lista_fiable(todos, sup):
@@ -233,12 +248,28 @@ def filtra_cupo(project_id, found, todos, sup):
     if not lista_fiable(todos, sup):
         # codex r2: an untrusted list still keeps the cupo, counting every registered agent as alive (it may be missing
         # from the list), and leaves the queue as it is; the waiter queues the rest once herdr shows the supervisor
-        reg = registry.load(project_id)
-        libres = max(0, registry.cupo() - len(registry.en_cupo(reg, set(reg.get("agents", {})))))
-        fuera = {f["session_id"] for f in nuevos[libres:]}
+        # 0.13.36 (adversary r1): those left out are queued at the end (nothing removed) and warned like any other
+        with lote.project_mutex(project_id):
+            reg = registry.load(project_id)
+            cola = list(reg.get("espera_cupo") or [])
+            # every queued one keeps a slot ahead of the new ones (codex r3: a new one passed the queue)
+            libres = max(0, registry.cupo() - len(registry.en_cupo(reg, set(reg.get("agents", {})))) - len(cola))
+            ya = {x["session_id"] for x in cola}
+            # a queued one is never admitted here: it waits for a pass with a list it can trust (codex r4: one admitted
+            # here stayed in the queue too)
+            libres_nuevos = [f for f in nuevos if f["session_id"] not in ya]
+            entran = libres_nuevos[:libres]
+            sobran = libres_nuevos[libres:]
+            if sobran:
+                reg["espera_cupo"] = cola + [{"session_id": f["session_id"], "pane_id": f.get("pane_id", ""),
+                                              "pestana": f.get("pestana", ""), "desde": time.time()} for f in sobran]
+                registry.save(project_id, reg)
+        avisa_cola(project_id, sobran)
+        fuera = {f["session_id"] for f in nuevos} - {f["session_id"] for f in entran}
         return [f for f in found if f.get("session_id") not in fuera]
     with lote.project_mutex(project_id):
-        entran, _ = turno(project_id, registry.load(project_id), nuevos, todos)
+        entran, _, en_cola = turno(project_id, registry.load(project_id), nuevos, todos)
+    avisa_cola(project_id, en_cola)
     fuera = {f["session_id"] for f in nuevos} - {f["session_id"] for f in entran}
     return [f for f in found if f.get("session_id") not in fuera]
 
@@ -285,12 +316,14 @@ def descubre(project_id, agents=None, common_of=None, tab_of=None):
         reg = registry.load(project_id)
         known = set(reg.get("agents", {}))
         found = [f for f in found if f["session_id"] not in known]
-        found, en_cola = turno(project_id, reg, found, todos)
-        if not found:
-            return []
-        mine = {f["session_id"] for f in found}
-        ajenos = {t.get("name") for t in todos if (t.get("agent_session") or {}).get("value") not in mine}
-        reg = registry.register(project_id, sup, found, ajenos, todos)
+        found, en_cola, nuevos_en_cola = turno(project_id, reg, found, todos)
+        if found:
+            mine = {f["session_id"] for f in found}
+            ajenos = {t.get("name") for t in todos if (t.get("agent_session") or {}).get("value") not in mine}
+            reg = registry.register(project_id, sup, found, ajenos, todos)
+    avisa_cola(project_id, nuevos_en_cola)  # 0.13.36: outside the mutex, which modo.empata takes
+    if not found:
+        return []
     copias = {f["session_id"]: dict(reg["agents"].get(f["session_id"]) or {}) for f in found}
     renombres = {sid: renombra(c, tab_of) for sid, c in copias.items()}
     with lote.project_mutex(project_id):  # herdr calls above run outside the mutex; only the save is inside

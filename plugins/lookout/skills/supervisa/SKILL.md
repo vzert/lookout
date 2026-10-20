@@ -115,12 +115,26 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
   y apruebe cada mensaje retenido; si él no bajó, que pulse Shift+Tab en su pestaña hasta un modo que no sea plan.
   Ningún comando de lookout sube a bypass a un agente que ya corre (un relevo conserva el modo del agente viejo): no lo
   ofrezcas. Solo `lanza --bypass` arranca uno nuevo en bypass, y solo si el usuario lo eligió en el modal del lote.
-  Si dice `le tocó su turno del cupo`, esperaba en la cola del cupo y ahora sí es tuyo: igual, su nota con `entrega`.
-- **`espera turno (cupo de N lleno)`**: ya supervisas N agentes (`LOOKOUT_CUPO`, 10 por omisión), y un humano no
-  alcanza a contestar más. Esa sesión no queda registrada: sin nota, sin nombre de lookout. Sigue trabajando en su pane,
-  y sus preguntas le salen al usuario ahí. Díselo al usuario una vez, con su pestaña. Cuando un agente se retire,
-  se releve o cierre, el waiter registra al primero de la cola. No lo registres tú a mano. `resumen` muestra la cola
-  en su línea `CUPO:`.
+  Si dice `le tocó su turno del cupo`, esperaba en la cola del cupo y ahora sí es tuyo: su nota con `entrega`, y
+  después, por `SendMessage` (to = la columna `to` de `resumen`), este texto tal cual:
+  «Ya es tu turno: desde ahora te supervisa lookout (la nota que acabas de recibir dice cómo reportar). Sigue con tu
+  trabajo donde lo dejaste.»
+- **`cupo de N lleno → SendMessage to=X «Espera tu turno»`**: ya supervisas N agentes (`LOOKOUT_CUPO`, 10 por
+  omisión), y un humano no alcanza a contestar más. Esa sesión no queda registrada: sin nota, sin nombre de lookout.
+  No la dejes trabajar sola: mándale **una vez** (la línea sale una vez por agente), por `SendMessage` a ese `to`,
+  este texto tal cual:
+  «Espera tu turno: soy el supervisor de lookout de este proyecto y ya superviso el máximo de N agentes. Termina el
+  paso que estás haciendo, deja tu trabajo en un estado consistente y no empieces nada nuevo. Después espera sin hacer
+  nada más hasta que te escriba «Ya es tu turno». Si algo no puede esperar, dímelo por SendMessage.»
+  Si al final dice `modo X→Y con Shift+Tab`, lookout ya bajó su modo: manda el mensaje igual. Si la línea dice
+  `MODO DISTINTO (él …, tú …) → SendMessage … se retendrá`, mándalo igual: con la configuración por omisión de Claude
+  Code, un mensaje entre una sesión en bypass y otra que no lo está queda retenido hasta que el usuario lo aprueba
+  (medido el 2026-10-19), así que dile al usuario, con su pestaña, que apruebe ese mensaje retenido. Si dice
+  `sin to`, no hay a quién escribir: pregúntale al usuario en un `AskUserQuestion`, con su pestaña, si lo para él en
+  su pane. Un mensaje suyo mientras espera es
+  una pregunta normal: contéstala, pero no le des trabajo. Es un mensaje, no una pausa a la fuerza: si ves que sigue
+  trabajando (su pestaña en working tras contestarte), pregúntale al usuario en un `AskUserQuestion` si lo para él. Cuando un agente se retire, se releve o cierre, el waiter registra al
+  primero de la cola. No lo registres tú a mano. `resumen` muestra la cola en su línea `CUPO:`.
   `lookout inicia` escribe la misma nota bajo el agente. Si dice `NO ENTREGADO … borrador`, avisa al usuario una vez
   (su caja tiene texto suyo) y no reintentes en bucle; `NO ENTREGADO … working` → entrégala en su `terminó su turno`.
 - **`dejó un bloque para retomar (p-…, vigente|ambiguo…)`** (al terminar su turno, o `estaba quieto con un «Como

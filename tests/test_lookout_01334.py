@@ -2,7 +2,8 @@
 human cannot answer the supervisor, and every Claude takes memory. An external user supervised 17 agents.
 - `alta.descubre` (the only path that registers a session it did not start) registers up to the free slots, first
   queued first. The rest go to registry.json `espera_cupo`: no note, no rename, no mode match. They keep working in
-  their panes (lookout does not pause them), only without a supervisor. One `espera_cupo` event each, once.
+  their panes (lookout does not pause them), only without a supervisor (0.13.36: the supervisor now tells each one
+  to wait its turn, tests/test_lookout_01336.py). One `espera_cupo` event each, once.
 - A slot frees when a registered agent is retired, relieved or its session is gone from herdr; the next pass registers
   the first of the queue still alive (`nuevo` with `desde_cola`).
 - `lanza`/`pendientes`: the batch cap never passes the cupo (that cap already counts every live session of the project).
@@ -138,7 +139,8 @@ class DescubreTest(Env):
         found = [{"kind": "claude", "session_id": s} for s in ("s-k", "s-x", "s-y")]
         out = alta.filtra_cupo(PID, found, todos, {"session_id": f4.SUP, "pane": "w1:p99"})
         self.assertEqual([f["session_id"] for f in out], ["s-k", "s-x"])
-        self.assertIsNone(registry.load(PID).get("espera_cupo"))  # the queue is not touched
+        # nothing leaves the queue; since 0.13.36 the one left out is added at its end (and warned)
+        self.assertEqual([x["session_id"] for x in registry.load(PID)["espera_cupo"]], ["s-y"])
 
     def test_the_supervisors_pane_held_by_another_session_is_not_it(self):
         import alta
@@ -154,7 +156,7 @@ class DescubreTest(Env):
         self.descubre(["s-a", "s-b", "s-c"])
         reg = registry.load(PID)
         todos = [herdr(s, "w1:p%d" % n) for n, s in enumerate(["s-b", "s-c"], 11)]  # s-a gone: one slot free
-        entran, _ = alta.turno(PID, reg, [{"session_id": "s-c", "pane_id": "w1:p12"}], todos)
+        entran, _, _ = alta.turno(PID, reg, [{"session_id": "s-c", "pane_id": "w1:p12"}], todos)
         self.assertEqual(entran, [])
         self.assertEqual([x["session_id"] for x in registry.load(PID)["espera_cupo"]], ["s-b", "s-c"])
 
@@ -173,12 +175,12 @@ class DescubreTest(Env):
 
 
 class DigestTest(Env):
-    def test_the_waiting_event_says_it_keeps_working_unsupervised(self):
+    def test_the_waiting_event_names_its_tab_and_the_cupo(self):
         line = digest.describe({"event": "espera_cupo", "session_id": "s-c", "nombre": "", "pestana": "Cambio X",
                                 "pane": "w1:p12", "cupo": 10})
         self.assertIn("Cambio X", line)
         self.assertIn("10", line)
-        self.assertIn("sin supervisor", line)
+        self.assertIn("pregúntale al usuario", line)  # 0.13.36: without its `to`
 
     def test_a_turn_from_the_queue_says_so(self):
         line = digest.describe({"event": "nuevo", "session_id": "s-b", "nombre": "b", "pestana": "b",

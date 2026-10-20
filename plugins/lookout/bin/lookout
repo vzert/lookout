@@ -151,6 +151,7 @@ def cmd_inicia(a):
     supervisor_md.mark_supervisor(me["session_id"], pid)
     lock.set_contexto_inicial(pid, me["session_id"], digest.context_tokens(me["session_id"]))
     todos = herdr_cli.agent_list()
+    cola_antes = {x["session_id"] for x in registry.load(pid).get("espera_cupo") or []}  # 0.13.36
     found = alta.filtra_cupo(pid, discover.discover(common, todos), todos, me)  # 0.13.34
     mine = {f.get("session_id") for f in found}
     ajenos = {t.get("name") for t in todos if (t.get("agent_session") or {}).get("value") not in mine}
@@ -163,9 +164,19 @@ def cmd_inicia(a):
     print("Proyecto %s (%s). Raíces: %s" % (pid, common, ", ".join(roots)))
     cola = registry.load(pid).get("espera_cupo") or []
     if cola:  # 0.13.34
-        print("CUPO: %d lleno. Esperan turno, sin registrar ni supervisor (siguen en su pane): %s. Díselo al usuario; "
-              "el waiter los registra cuando se libere un hueco." % (registry.cupo(), ", ".join(
-                  x.get("pestana") or x.get("pane_id") or x["session_id"][:8] for x in cola)))
+        # 0.13.36: a new one in the queue gets its `cupo de N lleno` line in the next resumen (adversary r1); one queued
+        # before this inicia had it under the previous supervisor, maybe never sent: it is asked here (codex r4)
+        print("CUPO: %d lleno. Esperan turno, sin registrar: %s. El waiter los registra cuando se libere un hueco."
+              % (registry.cupo(), ", ".join(x.get("pestana") or x.get("pane_id") or x["session_id"][:8] for x in cola)))
+        nuevos_cola = [x for x in cola if x["session_id"] not in cola_antes]
+        viejos_cola = [x for x in cola if x["session_id"] in cola_antes]
+        if nuevos_cola:
+            print("  Los nuevos en la cola salen en el próximo `resumen` con su línea `cupo de %d lleno`: manda desde "
+                  "ahí «Espera tu turno»." % registry.cupo())
+        for x in viejos_cola:
+            print("  Ya esperaba antes de este inicia: %s (%s). Mándale «Espera tu turno» por SendMessage (texto en la "
+                  "skill); sin to, pregúntale al usuario si lo para él." % (
+                      x.get("pestana") or x.get("pane_id") or x["session_id"][:8], sesiones.to_texto(x)))
     print("Supervisor: %s → %s" % (me["nombre"], me["address"]))
     print(nombra_supervisor(me))
     print("")
