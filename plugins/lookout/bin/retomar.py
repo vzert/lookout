@@ -280,14 +280,20 @@ def config(path):
     return out
 
 
-def para_agente(project_id, session_id, transcript_path=None, cwd=""):
+def para_agente(project_id, session_id, transcript_path=None, cwd="", ultimo=None):
     """The `retomar` field for a registered agent's last turn, or None. The project's memory is looked up in the
-    agent's checkout first, then in the supervised roots; the other agents are the registered ones still alive."""
+    agent's checkout first, then in the supervised roots; the other agents are the registered ones still alive.
+    `ultimo` is the turn's last message as the Stop hook got it (last_assistant_message)."""
     import deliver
     import lock
     import registry
     path = transcript_path or deliver.transcript_path(session_id)
     text, ts = ultimo_turno(path)
+    if ultimo and ultimo.strip() and not " ".join(text.split()).endswith(" ".join(ultimo.split())):
+        # 0.13.40 (p-fab08d3d95, banco 2026-10-19): the Stop hook read the transcript before Claude Code wrote the
+        # turn's last row (127 ms after it was created): no block, or the previous turn's one. The hook's message is
+        # the end of this turn; it ends now.
+        text, ts = ultimo, time.time()
     if not text:
         return None
     reg = registry.load(project_id)

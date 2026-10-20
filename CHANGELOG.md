@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.13.40
+
+- A Stop now carries its «Como retomar» even when the hook reads the transcript before Claude Code has written the
+  turn's last row. `retomar.para_agente` takes the hook's `last_assistant_message`: when the transcript does not end
+  with it, that message is the end of the turn, dated now. On a bench (2026-10-19) the first Stop of a newly registered
+  agent came without `retomar` 127 ms after its text row was created; the waiter's sweep found the block 61 s later.
+  The most likely cause is that the row was not on disk yet; a swallowed error is not ruled out (see below). With
+  only the previous turn on disk, the Stop carried that turn's block as `vigente`.
+- An error while reading the block is no longer silent: the Stop event says it in `retomar_error`.
+
 ## 0.13.39
 
 - The supervisor reacts to a message of its own that another session held, not only at registration (p-c1cb6123e4).
