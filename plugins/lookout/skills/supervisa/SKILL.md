@@ -145,7 +145,10 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
   lo relevas, se cierra o vuelve a trabajar.
   - `vigente` → `lookout relevo <project_id> <agente>` **sin preguntar** (con `--goalspec` según «Relevo con
     goalspec», abajo), y una línea al usuario («Relevé <pestaña>: sigue con p-…, con goalspec | solo medición»). Si
-    el relevo dice `NO: …`, pásale esa línea al usuario. Si juzgas que no toca relevarlo todavía (espera un merge, un
+    el relevo dice `NO: …`, pásale esa línea al usuario. No afirmes qué hay en su caja (un borrador, texto del
+    usuario) por algo que viste antes: `relevo` la lee ahora y, si tiene texto, responde `NO: la caja de … tiene …`
+    sin escribir encima; esa línea es la que va al usuario. Una lectura vieja no es motivo para preguntar en vez de
+    relevar (3-tier-memory, 2026-10-16, d42: un borrador visto 18 h antes). Si juzgas que no toca relevarlo todavía (espera un merge, un
     arreglo de otro agente…), eso es una decisión del usuario: ábrela al modal con `--agentes <agente>` («¿relevo ya
     o espera a …?»). Nunca lo dejes quieto con un «quédate quieto» y una pregunta en prosa: el usuario no ve el
     resumen (3-tier-memory, 2026-10-19: pendientes-en-sessionstart, ~15 h). Un bloque vigente o ambiguo que pasa

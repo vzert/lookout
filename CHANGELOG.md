@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.13.37
+
+- supervisor.md no longer lists the session a failed relief never started. The summary hides it since 0.13.4, but
+  `supervisor_md.render` only skipped relieved and retired agents, so «agente-3-tier-memory-prueba-de-l~3b9909 |
+  fallida | sin eventos» stayed in 3-tier-memory's supervisor.md from 2026-10-16 to 2026-10-19. The agent whose relief
+  failed still shows, and so does a failed launch that was no relief.
+- The supervise skill tells the supervisor not to state what an agent's input box holds from an earlier reading:
+  `lookout relevo` reads it at that moment and answers `NO: la caja de … tiene …` when it has text, and that line is
+  what goes to the user. In 3-tier-memory (2026-10-16, d42) the supervisor said the box held a user draft, from a
+  reading 18 h old, and asked instead of relieving.
+
 ## 0.13.36
 
 A queued agent is told by the supervisor to wait its turn, instead of being left to work unsupervised (user's decision

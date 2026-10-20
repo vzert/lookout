@@ -133,6 +133,10 @@ def render(project_id, now=None):
     for sid, e in reg.get("agents", {}).items():
         if e.get("tarea_estado") == "relevada" or e.get("retirado"):
             continue
+        # 0.13.37: the session a failed relief never started is no agent, as in digest.py since 0.13.4 (3-tier
+        # 2026-10-19: «x~3b9909 | fallida | sin eventos» stayed here three days)
+        if e.get("relevo_de") and e.get("tarea_estado") == "fallida" and sid not in last:
+            continue
         ev = last.get(sid)
         L.append("%s | %s | %s | %s | %s" % (
             registry.quien(e), e.get("branch") or "-", e.get("tarea") or "-", e.get("tarea_estado") or "-",
