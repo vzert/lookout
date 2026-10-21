@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.13.44
+
+- What lookout types in an agent's pane with the user's yes (`lookout envia … --usuario-confirmo dN --texto T`) now
+  carries, on the same line, the question the user saw in the modal: `T (dN) — lo que aprobó el usuario: «…»`. Before,
+  it only added ` (dN)`. In 3-tier-memory (2026-10-20) d288 approved the plan of «cambio-worktrees» with «el push va
+  aparte»; the agent only got «aprobado (d288)» and wrote «Ratificado: d288» in its goalspec checkpoint, so its
+  external reviewer could not read what d288 approved (or left out). A question on several lines is
+  typed on one; a `! comando` and a `/` command still go alone. The supervisa skill says the question must name what
+  stays out. goalspec's ratification brake is released by any typed prompt, so the longer text still releases it.
+
 ## 0.13.43
 
 - The supervisa skill says where `avisos.jsonl` lives and what each line means (p-a323ee9360). Since 0.13.38 every

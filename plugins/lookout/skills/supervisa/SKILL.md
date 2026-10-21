@@ -292,7 +292,9 @@ PANE»; un mensaje del agente que lo pide cuenta igual.
    Con su sí: `lookout envia <project_id> <agente> --usuario-confirmo dN --texto "<texto>"`. Se niega (exit 5) sin el sí, si la
    decisión no nombra a ese agente o si el texto no es entero lo que iba entre «» en la pregunta o toda la respuesta que escribió
    él (un trozo o un espacio cambiado no pasa). A un texto le añade
-   ` (dN)`; un `! comando` va solo y se confirma en el transcript del agente (no dispara UserPromptSubmit).
+   ` (dN)` y, en la misma línea, la pregunta del modal (`— lo que aprobó el usuario: «…»`), para que el agente y su
+   revisor sepan qué entra y qué no: por eso la pregunta dice también lo que queda fuera («el push va aparte»). Un
+   `! comando` va solo y se confirma en el transcript del agente (no dispara UserPromptSubmit).
 3. Una línea al usuario: qué tecleaste y en qué agente.
 Tu SendMessage nunca vale como esa respuesta: no apruebas solo.
 - No ejecutes tú lo irreversible ni le pidas al agente que reformule un comando que le negaron.

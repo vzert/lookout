@@ -70,7 +70,9 @@ class EnviaDelUsuarioTest(f4.Base):
         dn = self.decision("El spec de uno corrige la regla y añade un aviso. ¿Tecleo «aprobado» en su pane?",
                            "Sí, teclea aprobado")
         self.assertEqual(self.envia("aprobado", dn), 0)
-        self.assertEqual(self.enviados, [("uno", "usuario:" + dn, "aprobado (%s)" % dn)])
+        self.assertEqual(self.enviados, [("uno", "usuario:" + dn, "aprobado (%s) — lo que aprobó el usuario: «El spec de "
+                                          "uno corrige la regla y añade un aviso. ¿Tecleo «aprobado» en su pane? (%s)»"
+                                          % (dn, dn))])   # 0.13.44: with the question the user saw
         log = supervisor_md.read_log(PID)
         self.assertEqual((log[-1]["to"], log[-1]["decision"]), ("uno", dn))
 

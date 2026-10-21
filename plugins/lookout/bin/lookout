@@ -593,6 +593,11 @@ def texto_del_usuario(pid, e, did, texto):
                             "en Other." % (texto, did))
     if not deliver.es_comando(texto) and not texto.lstrip().startswith("/"):
         texto = "%s (%s)" % (texto.strip(), did)  # the agent sees whose decision it is
+        # 0.13.44: and what the user approved, in one line: d288 (3-tier-memory, 2026-10-20) approved a plan with «el
+        # push va aparte», the agent only got «aprobado (d288)» and wrote «push y PR pedidos» in its goal-spec
+        pregunta = " ".join(str(d.get("pregunta") or "").split())
+        if pregunta:
+            texto += " — lo que aprobó el usuario: «%s»" % pregunta
     return "usuario:" + did, texto, None
 
 
