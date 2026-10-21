@@ -602,10 +602,11 @@ def avisa_bloques(project_id, now=None):
             lookout_state.write_json(path, hechos)
     for sid, e, r, ev in out:
         who = (registry.quien(e) if e.get("nombre") else "") or sid[:8]
-        body = ("Dejó un «Como retomar» (%s, %s) hace %d min y el supervisor no lo relevó ni abrió un modal después. "
-                "Pregúntale al supervisor qué hace con él." % (", ".join(r.get("pendientes") or []) or "sin pendiente",
-                                                               r.get("estado"), int((now - float(ev["ts"])) // 60)))
-        herdr_cli.notifica(project_id, "bloque", "lookout: %s espera su relevo" % who, body)
+        # 0.13.45: in plain words; the user does not know «Como retomar», «relevo» or «vigente» (Valdespin, 2026-10-20)
+        # codex r1: no pendiente ids either; the supervisor names the work when the user asks
+        body = ("Dejó trabajo por seguir hace %d min y el supervisor todavía no lo reinició ni te preguntó. "
+                "Pregúntale al supervisor qué hace con él." % int((now - float(ev["ts"])) // 60))
+        herdr_cli.notifica(project_id, "bloque", "Supervisor: %s tiene trabajo por seguir" % who, body)
     return [e.get("nombre") or sid for sid, e, _r, _ev in out]
 
 
@@ -692,9 +693,12 @@ def transicion(project_id, ev, notificar=True):
         lookout_state.write_json(grupos_path(project_id), data)
     if avisa:
         who = (registry.quien(entry) if entry.get("nombre") else "") or ev.get("nombre") or sid[:8]
-        title = "lookout: %s %s" % (who, "te necesita" if new == "te_necesita" else "está listo para revisar")
-        import digest
-        herdr_cli.notifica(project_id, "transicion", title, digest.describe(ev, {sid: who}), sound=None)
+        title = "Supervisor: %s %s" % (who, "te necesita" if new == "te_necesita" else "está listo para revisar")
+        # 0.13.45 (adversary r3): the user gets a plain sentence, not digest.describe(), which is the supervisor's own
+        # line («→ `lookout corrige …`», «ESPERA ALGO TECLEADO EN SU PANE … dN»); the supervisor explains it in its tab
+        body = ("Abre la pestaña del supervisor: ahí te explico qué necesita." if new == "te_necesita" else
+                "Terminó su trabajo. Abre la pestaña del supervisor para revisarlo.")
+        herdr_cli.notifica(project_id, "transicion", title, body, sound=None)
     return old, new, avisa
 
 

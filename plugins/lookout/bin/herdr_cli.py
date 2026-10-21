@@ -24,6 +24,13 @@ def notifica(project_id, tipo, title, body, sound="request", timeout=3):
     p-71e240cd2b: a live test could not tell the notification went out without looking at the screen). Returns rc."""
     import time
     import lookout_state
+    # 0.13.45 (the user's choice): every title starts «Supervisor: », the tab the user sees, never «lookout:»; set here,
+    # the one path to `notification show`, so no caller's formatting can skip it (adversary r5)
+    t = (title or "").strip()
+    for viejo in ("lookout:", "supervisor:"):
+        if t.lower().startswith(viejo):
+            t = t[len(viejo):].strip()
+    title = "Supervisor: " + t
     args = ["notification", "show", title[:120], "--body", body[:300]] + (["--sound", sound] if sound else [])
     rc, _out, err = run(args, timeout=timeout)
     linea = dict({"ts": time.time(), "tipo": tipo, "titulo": title[:120], "rc": rc},

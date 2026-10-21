@@ -53,7 +53,7 @@ class AvisosTest(AvisosCase):
         av = self.avisos()
         self.assertEqual(len(av), 1, av)
         self.assertEqual((av[0]["tipo"], av[0]["rc"]), ("decision", 1))
-        self.assertIn("decisión tuya pendiente", av[0]["titulo"])
+        self.assertIn("tienes una decisión pendiente", av[0]["titulo"])
         self.assertIn("boom", av[0].get("error", ""))
         self.assertIn("ts", av[0])
 
@@ -70,7 +70,7 @@ class AvisosTest(AvisosCase):
         self.assertEqual(rc, 0)
         av = self.avisos()
         self.assertEqual([(a["tipo"], a["rc"]) for a in av], [("transicion", 0)])
-        self.assertIn("lookout: uno", av[0]["titulo"])
+        self.assertIn("Supervisor: uno", av[0]["titulo"])  # 0.13.45: notifica sets the prefix
 
     def test_no_module_sends_a_notification_without_going_through_the_log(self):
         directos = []

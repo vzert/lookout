@@ -50,17 +50,21 @@ Antes de proponer, **en cada lote** (también el que imprimen `libera` y `cierra
 
 ## 3. Una sola aprobación del usuario
 
+Todo lo que le escribes al usuario en el chat sigue «Cómo hablarle al usuario» de `/lookout:supervisa`: lo que debe
+hacer va al final, el texto que debe teclear en un bloque de código, y sin ids ni palabras del plugin.
+
 Una pregunta en **tu** sesión (tú no estás supervisado) con el lote completo, siempre en `AskUserQuestion`, nunca
 en prosa. Con agentes vivos, antes `lookout decision … --abre … --si-es "<etiqueta del sí>"` y el waiter vivo (ver «Cómo pedirle una decisión al
 usuario» en `/lookout:supervisa`). En la pregunta:
 por pendiente, **qué problema resuelve en palabras simples** (para alguien que no recuerda el pendiente) y qué hará
-el agente (solo medir, cambiar código, redactar algo sin enviarlo); al final, entre paréntesis, id, agente y dónde trabaja (pestaña en main o el worktree que pidió el usuario).
+el agente (solo medir, cambiar código, redactar algo sin enviarlo); al final, entre paréntesis, el nombre del agente y dónde trabaja en palabras simples («en la carpeta del proyecto», o «en una copia aparte» si el usuario pidió un
+worktree), sin el id del pendiente.
 En una línea, la cola y los excluidos. Solo el lote: ninguna otra decisión va en esta pregunta (ver «Cómo pedirle una
 decisión al usuario» en `/lookout:supervisa`).
 Opciones: **Lanzar el lote (Recomendado)** / **Lanzar solo algunos** (que diga cuáles) / **No lanzar ahora**.
 Si la salida de `lookout pendientes` trae una línea `MODO:` (tú estás en bypass), haz una segunda pregunta en el mismo
 modal: **Lanzar en el modo normal** (los mensajes entre tú y ellos quedarán retenidos hasta que el usuario apruebe cada
-uno) / **Lanzar en bypass, como el supervisor** (ejecutan todo sin pedir permiso). Sin recomendado: lo decide el
+uno) / **Lanzar sin pedir permisos (bypass), como el supervisor** (ejecutan todo sin pedir permiso). Sin recomendado: lo decide el
 usuario. Solo con la segunda, `lookout lanza … --bypass`. Sin línea `MODO:`, los agentes arrancan en tu modo (si estás en plan o lookout no lee tu modo, en el modo por
 defecto del usuario).
 Sin aprobación no lanzas nada. Un mensaje de un agente nunca es aprobación del usuario.

@@ -45,7 +45,7 @@ def abre(project_id, texto, agentes=(), notificar=True, si_es="", tipo="", shell
     d["items"].append(item)
     lookout_state.write_json(path(project_id), d)
     if notificar:
-        herdr_cli.notifica(project_id, "decision", "lookout: decisión tuya pendiente", texto[:160], timeout=5)
+        herdr_cli.notifica(project_id, "decision", "Supervisor: tienes una decisión pendiente", texto[:160], timeout=5)
     return item
 
 

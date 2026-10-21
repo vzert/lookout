@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.13.45
+
+- The supervisor talks to the user in plain words. A user of the plugin (2026-10-20) got a message of ~1900 characters
+  that cited «d116» and «d119», said «waiter», «rebase», «hooks viejos» and «bloques de relevo», asked in prose about
+  things the skill says to do without asking, and left the one sentence he had to type in the middle of a paragraph.
+  He answered «no entiendo… ¿qué es el waiter?». The supervisa skill has a new section, «Cómo hablarle al usuario»,
+  before «Arranque»: at most 3 numbered points of what happened, then, **last** (the chat scrolls, so the last lines
+  are read first), «Lo que necesito de ti:» with numbered steps and the exact text to type in a code block; what the
+  supervisor does without asking gets one line at most; a list of the plugin's words (decision ids, waiter, hooks,
+  pane, relevo, rebase, hold/break, the auto mode classifier) with what to say instead; a plain answer when the user
+  asks what a word means; and, when auto mode denies `lookout envia`, the text goes last in a code block for the user
+  to type in that tab. The `(dN)` at the end of a modal question stays: lookout needs it. The start table no longer
+  has a branch column. Lines that told the supervisor to pass lookout's text to the user word for word now say to
+  pass what it says in plain words. The templates for the user's line after relieving a block («Relevé <pestaña>:
+  sigue con p-…, con goalspec»), the recommended modal option «Relevarlo» and the question «¿relevo, cierro o lo
+  dejo?» are in plain words too (a measured run copied «Relevé»). The new question, «¿Lo reinicio para que siga,
+  cierro su pestaña o lo dejo?», is also what `retomar.accion()` (the digest row of an ambiguous block) and the Stop
+  brake in `retiro.py` give the supervisor, and a test keeps the three equal. «¿relevo ya o espera a …?» is «¿Lo
+  reinicio ya o espera a …?». The section says it governs every order in the skill to tell the user something and
+  every modal question the skill gives as an example, and a test checks that no modal example in the skills or in
+  `bin/` says «¿relevo». The pendientes skill points to the same
+  section.
+- The herdr notification for a block nobody attended says «<tab> tiene trabajo por seguir» and «el supervisor todavía
+  no lo reinició ni te preguntó», instead of «espera su relevo» and «Dejó un «Como retomar» (p-…, vigente)». The
+  pendiente ids are left out. The herdr notification of an agent that enters «Te necesita» or «Listo» no longer carries
+  the supervisor's own digest line (`lookout corrige …`, «ESPERA ALGO TECLEADO EN SU PANE … dN», `lookout envia`): it
+  says «Abre la pestaña del supervisor: ahí te explico qué necesita» (or that it finished), and the skill tells the
+  supervisor to explain in its next message. Modal questions carry no pendiente ids or commits: only what lookout
+  needs to see there (the `(dN)`, a permission's whole command, a push URL, a merge's `#N`); the pendientes lot
+  question names the agent, not the pendiente id. Claude Code's modes (`bypass`, `auto`, `plan`) and `Shift+Tab` are
+  still named, since the user sees them and presses the key, but always with what they mean; `main`, a branch or a
+  worktree become «la carpeta del proyecto» or «una copia aparte». The lot option is «Lanzar sin pedir permisos
+  (bypass), como el supervisor», in the pendientes skill and in the `MODO:` line `bin/modo.py` gives the supervisor.
+  `main` as a target is «la versión principal del proyecto»: the merge question is «¿Junto el cambio #<N> de <agente>
+  (versión X) a la versión principal del proyecto?», in the skill and in the hint `publica.py` prints (lookout still
+  only needs the `#N`), and the rebased-copy decision says in plain words what already arrived by another way instead
+  of «lo que dice range-diff».
+  Every herdr notification title starts «Supervisor:», the tab the
+  user sees, instead of «lookout:» (the user's choice, 2026-10-20): «Supervisor: tienes una decisión pendiente»,
+  «Supervisor: <tab> pide permiso», «Supervisor: el filtro de seguridad de Claude frenó a <tab>» (it said «auto mode
+  negó una acción»), «Supervisor: necesito que me reinicies», and the block and transition ones. `herdr_cli.notifica`, the one
+  path to `notification show`, sets the prefix itself, so no caller can skip it. When a permission waits because the user's rules are off, the skill no longer has the
+  supervisor copy `lookout permisos` (paths, `activo = true`, `lookout aprueba`) to the user: it says in plain words
+  what the rules do, and gives last, each in a code block, the file to create and the line to put in it.
+
 ## 0.13.44
 
 - What lookout types in an agent's pane with the user's yes (`lookout envia … --usuario-confirmo dN --texto T`) now

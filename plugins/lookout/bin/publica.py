@@ -894,7 +894,7 @@ def fusiona(project_id, pr, decision_id, fuera_de_orden=False):
     if not d or d.get("usada") or not d.get("por_hook") or not d.get("si_es") or d.get("tipo"):
         return False, "SIN-SI", [
             "NO: fusionar lo autoriza el usuario en tu ventana. Abre la decisión (`lookout decision <proyecto> --abre "
-            "\"¿Fusiono el PR #%d …?\" --agentes %s --si-es \"<etiqueta del sí>\"`), pregúntale en tu modal y, si elige "
+            "\"¿Junto el cambio #%d …?\" --agentes %s --si-es \"<etiqueta del sí>\"`), pregúntale en tu modal y, si elige "
             "esa opción, repite con --decision <id>. Una decisión ya usada no vale otra vez." % (pr, p.get("nombre"))]
     if not re.search(r"#%d\b" % pr, d.get("texto") or ""):
         return False, "SI-DE-OTRO-PR", ["NO: la decisión %s («%s») no nombra el PR #%d." % (d["id"], d.get("texto"), pr)]

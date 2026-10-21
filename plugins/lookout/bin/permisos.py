@@ -861,7 +861,7 @@ def handle(data, marker, rules=None):
                                        "permissionDecisionReason": "lookout: %s es del usuario (D6)" % why}}
 
     if name == "PermissionDenied":
-        n = notify(marker.get("project_id", "unknown"), "negado", "lookout: auto mode negó una acción de %s" % who,
+        n = notify(marker.get("project_id", "unknown"), "negado", "Supervisor: el filtro de seguridad de Claude frenó a %s" % who,
                    "%s %s — %s" % (tool, detalle, data.get("reason")))
         emit(marker, dict(base, event="negado", motivo=str(data.get("reason") or "")[:200], **n))
         return None
@@ -877,7 +877,7 @@ def handle(data, marker, rules=None):
     if ok:
         emit(marker, dict(base, event="aprobado", regla=why))
         return {"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}}
-    n = notify(marker.get("project_id", "unknown"), "permiso", "lookout: %s pide permiso" % who,
+    n = notify(marker.get("project_id", "unknown"), "permiso", "Supervisor: %s pide permiso" % who,
                "%s %s — %s" % (tool, detalle, why))
     # 0.13.12: the whole command, so `lookout aprueba` can compare it with the dialog after the user's yes
     # 0.13.16: and the agent's cwd, where `lookout decision --permiso` reads where a push goes

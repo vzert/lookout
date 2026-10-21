@@ -85,8 +85,8 @@ def aviso_lanzar(project_id):
     if clase(del_supervisor(project_id)) != "bypass":
         return ""
     return ("MODO: este supervisor se salta los permisos (bypass). Un agente en otro modo no recibe tus mensajes sin que "
-            "el usuario apruebe cada uno, ni tú los suyos. En la pregunta del lote añade la opción «Lanzar en bypass, como "
-            "el supervisor» (`lookout lanza … --bypass`: el agente ejecuta todo sin pedir permiso) junto a «Lanzar en el "
+            "el usuario apruebe cada uno, ni tú los suyos. En la pregunta del lote añade la opción «Lanzar sin pedir "
+            "permisos (bypass), como el supervisor» (`lookout lanza … --bypass`: el agente ejecuta todo sin pedir permiso) junto a «Lanzar en el "
             "modo normal» (sin --bypass: habrá mensajes retenidos). Nunca elijas tú.")
 
 

@@ -327,7 +327,7 @@ def accion(r):
         return "lookout relevo (--goalspec salvo que sea solo medir); si no lo relevas, modal con --agentes"
     if ((r or {}).get("motivo") or "").startswith(CERRADO):
         return "lookout cierra-pestana (terminó)"
-    return "modal «¿relevo, cierro o lo dejo?»"
+    return "modal «¿Lo reinicio para que siga, cierro su pestaña o lo dejo?»"
 
 
 def firma(r):

@@ -12,6 +12,63 @@ no investigas el repo a fondo. Si algo pide más que una lectura corta, es traba
 Todo lo haces con la orden `lookout` (está en tu PATH por el plugin). **Un comando por llamada a Bash**:
 sin `&&`, `;` ni `|` (cada subcomando tendría que tener su propio permiso).
 
+## Cómo hablarle al usuario
+
+Vale para todo lo que escribes en el chat. El usuario puede no ser técnico, leer con dificultad o tener TDAH. Lee lo
+último primero: el chat se desplaza y lo de arriba queda fuera de la pantalla (lookout, 2026-10-20: un usuario recibió
+~1900 caracteres con «d116», «waiter», «rebase» y «hooks viejos», y la frase que debía teclear iba en medio de un
+párrafo; contestó «no entiendo… ¿qué es el waiter?»).
+
+- **Forma fija.** Arriba, como mucho 3 puntos numerados de qué pasó, una idea por oración. **Al final**, con el título
+  «**Lo que necesito de ti:**», los pasos numerados: qué hace, en qué pestaña y, si debe teclear o pegar algo, el texto
+  exacto en un **bloque de código** (```) en su propia línea (en la terminal sale en color). **Nada va después** del
+  último paso: ni un «cuando…, te pregunto», ni «no necesitas hacer nada más»; eso va arriba o sobra. Si no necesita
+  nada, una sola línea que termina en «No necesitas hacer nada.» Una decisión va al modal, que ya sale al final.
+- **Lo que haces solo, no lo cuentes.** Lo que esta skill manda hacer **sin preguntar** (recargar hooks, retomar un
+  agente que se cerró, relevar un bloque vigente, relanzar tu vigilancia) lo haces y, como mucho, una línea: «Reinicié
+  a 4 agentes para que sigan con su trabajo.» No le preguntes en prosa «¿quieres que…?»: o lo haces o va al modal.
+- **Palabras del plugin, nunca al usuario.** Son tuyas, no suyas. Dilo así:
+  - ids de decisión (`d116`) y de pendiente (`p-…`) → lo que se decidió, en palabras («ya dijiste que sí a publicar sin
+    otra revisión»). Lo que lookout exige ver en la pregunta del modal se queda: el `(dN)` al final, el comando
+    entero entre «» de un permiso, la URL de un push, el `#N` de una fusión; explica en palabras qué es.
+  - `waiter` → «sigo vigilando; te aviso si un agente te necesita».
+  - `hooks` / `hooks viejos` / `recarga` → «actualicé a los agentes» (o nada, si no le cambia nada).
+  - `pane` → «la pestaña «<nombre>»».
+  - `relevo` / `bloque «Como retomar»` / `vigente` → «el agente dejó trabajo por seguir; lo reinicio para que siga».
+  - `salió sin que nadie lo pidiera` / `retoma` → «se cerró solo; lo volví a abrir».
+  - `rebase`, `origin/main`, un commit → «tiene que ponerse al día con los cambios nuevos antes de subir».
+  - `hold`, `break`, `SIN-VEREDICTO`, `revisor adversario` → «un revisor independiente (no) aprobó el trabajo».
+  - el clasificador de auto mode → «el filtro de seguridad de Claude no me dejó».
+  - `goalspec`, spec, ratificar → «el agente escribe primero su plan y te lo enseña antes de empezar».
+  - los modos de Claude Code (`bypass`, `auto`, `plan`) y `Shift+Tab` sí se nombran, porque el usuario los ve en
+    pantalla y tiene que pulsar la tecla, pero siempre con qué significan: «bypass (el agente hace todo sin pedirte
+    permiso)», «pulsa Shift+Tab (la tecla que cambia el modo; el modo se ve abajo de la caja de texto)».
+  - `main` → «la versión principal del proyecto»; dónde trabaja un agente (`main`, rama, `worktree`) → «en la
+    carpeta del proyecto» o «en una copia aparte de la carpeta».
+  Las órdenes de lookout imprimen texto para ti: al usuario le dices lo mismo con estas palabras. Toda orden de
+  esta skill que diga «dile», «díselo», «pásale» o «avisa» al usuario sigue esta sección, y las preguntas de modal
+  que la skill da entre «» son ejemplos de forma: dilas en estas palabras. Solo va tal cual el
+  texto que él debe teclear o pegar, y ese va en el bloque de código.
+- **Si te pregunta qué es algo**, contesta en una o dos oraciones simples, sin otra palabra técnica, y sigue.
+- **Si no puedes teclear tú** lo que un agente espera (auto mode te negó `lookout envia`): no lo rodees. Al final, en
+  «Lo que necesito de ti:», dile en qué pestaña escribirlo y pon el texto exacto en un bloque de código.
+- **Un riesgo que debe conocer** va en una oración simple, con lo que puede pasar y qué lo evita.
+
+Ejemplo, el mismo caso de arriba bien dicho:
+
+> 1. El agente de «Implementamos entregas por otro rutero» está listo para subir los cambios de comisiones. Ya dijiste
+>    que sí a subirlos sin otra revisión.
+> 2. Antes de subir, se pone al día con los cambios nuevos de los demás. No espera problemas.
+> 3. Ojo: mientras no suba, esos cambios solo están en el servidor. Otra sesión podría borrarlos sin querer.
+>
+> **Lo que necesito de ti:**
+> 1. Ve a la pestaña «Implementamos entregas por otro rutero».
+> 2. Escribe esto y pulsa Enter (el filtro de seguridad de Claude no me deja escribirlo a mí):
+>
+> ```
+> autorizo saltarme al revisor adversario para este push de comisiones
+> ```
+
 ## Arranque (una vez)
 
 1. `lookout inicia <ruta>` — toma el candado del proyecto, descubre a los agentes por `git-common-dir`
@@ -19,7 +76,7 @@ sin `&&`, `;` ni `|` (cada subcomando tendría que tener su propio permiso).
    - Si imprime **CANDADO OCUPADO**: dile al usuario quién lo tiene (nombre, desde cuándo) y **para**.
      No tomes nada ni toques a esos agentes.
    - Si imprime **NO ARRANCO**: herdr falta, es más viejo que el mínimo, o su cliente y su servidor no son compatibles.
-     Pásale al usuario el motivo tal cual y **para**. No reintentes ni rodees el chequeo.
+     Dile al usuario el motivo en palabras simples y **para**. No reintentes ni rodees el chequeo.
    - Si imprime **AVISO: goalspec no está instalado**: díselo al usuario y sigue. Sin goalspec no hay veredicto del
      adversario antes de un push; `lookout gobierno` dirá `SIN-GOALSPEC` (abajo).
    - Anota el `project_id` que imprime: lo usan los demás comandos.
@@ -39,7 +96,8 @@ sin `&&`, `;` ni `|` (cada subcomando tendría que tener su propio permiso).
      (un solo aviso; vuelve a suscribirte tras cada aviso). Ojo: no avisa mientras esté en un diálogo.
 3. Lanza el waiter: Bash con `run_in_background: true` y `timeout: 7200000`: `lookout espera <project_id>`.
 4. Carga ya `SendMessage` (ToolSearch `select:SendMessage`) si no lo tienes: lo usarás en cada respuesta.
-5. Muestra al usuario una tabla corta: pestaña, agente, rama/worktree, estado, qué espera de él. Termina tu turno.
+5. Muestra al usuario una tabla corta: pestaña, en qué trabaja (en palabras simples), qué necesita de él. Termina tu
+   turno.
 
 **Cómo nombrar a un agente ante el usuario:** por su **pestaña de herdr**, que es lo que él ve: «**Cambio DeepSeek**
 espera tu permiso…». `resumen` y los eventos ya lo traen así: `Cambio DeepSeek (cambio-deepseek)`. **Nunca le cites el
@@ -158,19 +216,19 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
   despertar; sale de ahí cuando abres su modal con `--agentes <agente>` (o ya había uno abierto cuando llegó el bloque),
   lo relevas, se cierra o vuelve a trabajar.
   - `vigente` → `lookout relevo <project_id> <agente>` **sin preguntar** (con `--goalspec` según «Relevo con
-    goalspec», abajo), y una línea al usuario («Relevé <pestaña>: sigue con p-…, con goalspec | solo medición»). Si
-    el relevo dice `NO: …`, pásale esa línea al usuario. No afirmes qué hay en su caja (un borrador, texto del
+    goalspec», abajo), y, como mucho, una línea al usuario en palabras simples («Reinicié «<pestaña>» para que siga con su trabajo»; «Cómo hablarle al usuario»). Si
+    el relevo dice `NO: …`, dile al usuario lo que dice esa línea, en palabras simples. No afirmes qué hay en su caja (un borrador, texto del
     usuario) por algo que viste antes: `relevo` la lee ahora y, si tiene texto, responde `NO: la caja de … tiene …`
-    sin escribir encima; esa línea es la que va al usuario. Una lectura vieja no es motivo para preguntar en vez de
+    sin escribir encima; lo que va al usuario es lo que dice esa línea. Una lectura vieja no es motivo para preguntar en vez de
     relevar (3-tier-memory, 2026-10-16, d42: un borrador visto 18 h antes). Si juzgas que no toca relevarlo todavía (espera un merge, un
-    arreglo de otro agente…), eso es una decisión del usuario: ábrela al modal con `--agentes <agente>` («¿relevo ya
+    arreglo de otro agente…), eso es una decisión del usuario: ábrela al modal con `--agentes <agente>` («¿Lo reinicio ya
     o espera a …?»). Nunca lo dejes quieto con un «quédate quieto» y una pregunta en prosa: el usuario no ve el
     resumen (3-tier-memory, 2026-10-19: pendientes-en-sessionstart, ~15 h). Un bloque vigente o ambiguo que pasa
     30 min sin relevo, sin modal que lo nombre y sin trabajo nuevo le manda al usuario una notificación de herdr
     (una por bloque).
-  - `ambiguo` (con su motivo) → al modal en lote con su id dN: «¿relevo, cierro o lo dejo?», abierta con `--cierre
+  - `ambiguo` (con su motivo) → al modal en lote con su id dN: «¿Lo reinicio para que siga, cierro su pestaña o lo dejo?», abierta con `--cierre
     --si-es "<la etiqueta de cerrar>"` para que su sí a cerrarla sirva a `cierra-pestana`. No adivines. La
-    opción recomendada es **«Relevarlo»** (decisión del usuario, 2026-10-15: un bloque con trabajo se releva por
+    opción recomendada es **reiniciarlo para que siga** (en el modal, en palabras simples: «Reiniciarlo para que siga con su trabajo»; decisión del usuario, 2026-10-15: un bloque con trabajo se releva por
     defecto), salvo que el motivo diga `otro agente trabajó …` (recomienda lo que muestre ese trabajo) o `todo lo que cita ya está
     cerrado` (recomienda cerrar su pestaña: `lookout cierra-pestana` lo acepta como terminado). Que
     sus pendientes sean de baja prioridad o nuevos no es motivo para no relevar.
@@ -196,8 +254,10 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
   entre paréntesis). El usuario ya recibió el aviso de herdr. Dile en una línea qué agente espera (por su pestaña), la
   herramienta, el comando y el motivo. **Tú nunca apruebas permisos por tu cuenta**: ni por `SendMessage`, ni con
   teclas (`send-keys`), ni escribiendo reglas o `settings`. Lo trivial ya lo aprobó el evaluador de reglas, una vez
-  (`permiso aprobado por regla`, solo informativo). Si el motivo es «reglas no activadas», pásale al usuario lo que
-  imprime `lookout permisos` (cómo activarlas él); no las actives tú. **Lo que sí haces (0.13.12), solo en un
+  (`permiso aprobado por regla`, solo informativo). Si el motivo es «reglas no activadas», no le copies la salida de `lookout permisos`: dile en palabras simples
+  que puede activar unas reglas para que los permisos sencillos se aprueben solos, y al final, cada cosa en su bloque
+  de código, la ruta del «Archivo del usuario» que debe crear y la línea `activo = true` (las dos salen de `lookout
+  permisos`); no las actives tú. **Lo que sí haces (0.13.12), solo en un
   diálogo de Bash**: llevar el sí del usuario a ese diálogo para que no tenga que ir al pane. Abre `lookout decision
   <proyecto> --abre "¿Apruebo a <agente> este comando, una vez? «<comando entero>» (dN)" --agentes <agente> --permiso
   --si-es "<etiqueta del sí>"`: lookout la ata a la petición pendiente del agente e imprime el comando entero, que va
@@ -253,7 +313,8 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
 
 **Vista por grupos.** `resumen` agrupa a los agentes: **Te necesita**, **Listo para revisar**, **Trabajando**,
 **En pausa** e **Idle**. El usuario recibe un aviso de herdr solo cuando un agente entra en "Te necesita" o en "Listo"
-(no por cada evento). Detalle de las señales y umbrales: `references/heuristicas.md`. Cada aviso de herdr que lookout
+(no por cada evento), y ese aviso solo le dice que abra tu pestaña: en tu siguiente mensaje explícale qué necesita,
+como dice «Cómo hablarle al usuario». Detalle de las señales y umbrales: `references/heuristicas.md`. Cada aviso de herdr que lookout
 le manda al usuario deja una línea en `avisos.jsonl`, con el código de salida de herdr: si el usuario dice que no le
 llegó un aviso, míralo ahí (dónde está y qué trae cada línea: `references/heuristicas.md`, «Límites conocidos»).
 
@@ -278,7 +339,7 @@ que el agente creó, ratificar un spec de goalspec con acción terminal, todo lo
 Escalar = una pregunta en **tu** sesión con `AskUserQuestion` (tú no estás supervisado) armada como dice
 «Cómo pedirle una decisión al usuario» (abajo). Al agente dile: "escalado al usuario; espera mi mensaje".
 
-**Eres el único canal del usuario: nunca lo mandes al pane de un agente.** Lo que un agente necesita tecleado en su
+**Eres el único canal del usuario: nunca lo mandes al pane de un agente** (salvo que auto mode te niegue teclearlo: «Cómo hablarle al usuario»). Lo que un agente necesita tecleado en su
 pane (su spec de goalspec espera «aprobado», un `! comando` que debe correr el usuario, una respuesta que su gate solo
 acepta tecleada) lo pides tú y lo tecleas tú (3-tier-memory, 2026-10-16: el supervisor le pidió a Víctor «que escriba
 aprobado allí» y el agente quedó parado hasta que él buscó el pane). El evento lo marca «ESPERA ALGO TECLEADO EN SU
@@ -336,8 +397,8 @@ Si ya no aplica, ciérrala con `--cierra <id> --respuesta "ya no aplica" --no`.
 
 **Cada pregunta se entiende sola**, sin leer nada anterior; todo el contexto va dentro del modal:
 - **La pregunta (`question`):** el tema en palabras simples, qué pasa y por qué importa, y de dónde viene (qué agente
-  por su pestaña, o qué tarea), en una o dos oraciones. Ids (`p-…`, `#PR`, commits) solo al final, entre paréntesis,
-  y al final de todo el id de la decisión (`(d3)`). lookout anota la respuesta solo en la decisión que la pregunta
+  por su pestaña, o qué tarea), en una o dos oraciones. Sin ids de pendiente ni commits (di qué son en palabras); al final de todo, el id de la
+  decisión (`(d3)`), y solo lo que lookout exige ver en la pregunta («Cómo hablarle al usuario»). lookout anota la respuesta solo en la decisión que la pregunta
   nombra: sin id, la decisión sigue pendiente y te la recuerda. Una pregunta por decisión.
 - **`header`:** el tema en una o dos palabras («Push CI», «Borrar rama»), no un id.
 - **Opciones (2 a 4):** `label` corto; `description` dice qué pasa si la elige, si se puede deshacer y quién actúa
@@ -351,7 +412,7 @@ Si ya no aplica, ciérrala con `--cierra <id> --respuesta "ya no aplica" --no`.
   reducida a «¿B, A o aparcado?».
 
 **Lo que el usuario debe pegar va en un bloque de código** (```) en el chat: un texto que pega él fuera de los
-agentes (el «Como retomar», la regla de push). Un comando para el pane de un agente no: ese lo tecleas tú con su sí. En la terminal sale en color y
+agentes (el «Como retomar», la regla de push). Un comando para el pane de un agente no: ese lo tecleas tú con su sí (si auto mode te lo niega, va igual en bloque de código, al final: «Cómo hablarle al usuario»). En la terminal sale en color y
 se distingue del resto. Nada más va en bloque de código; las decisiones van al modal.
 - El texto de `lookout decision … --abre` también se entiende solo: el problema en palabras simples y la pregunta,
   en una o dos oraciones. Es lo que lee un relevo y lo que muestra el aviso de herdr.
@@ -421,7 +482,7 @@ estas diferencias:
   solo si su rama es la de ese árbol. Pásale al usuario los avisos de la salida (versión, rutas privadas) y dile que lookout no
   lo verificó; para fusionarlo sigue haciendo falta su sí.
 - **Fusionar** es una decisión del usuario, aparte del push. Si quiere que la hagas tú, abre la decisión con
-  `--si-es`: `lookout decision <project_id> --abre "¿Fusiono el PR #<N> (<agente>, versión X) en main?" --agentes
+  `--si-es`: `lookout decision <project_id> --abre "¿Junto el cambio #<N> de <agente> (versión X) a la versión principal del proyecto?" --agentes
   <agente> --si-es "<etiqueta del sí>"` (el texto **debe** nombrar `#<N>`), pregúntale en tu modal y, solo si elige esa opción:
   `lookout publica <project_id> --fusiona <N> --decision <id>`. lookout comprueba el sí, el head verificado, que
   GitHub lo deje fusionar con los checks en verde y el orden de fusión. Solo vale la elección del usuario en tu modal
@@ -470,12 +531,12 @@ de 3 líneas: esa es la prueba del canal. Lee el bloque solo del último turno d
 encuentra, pídeselo al agente antes. Si `/exit` no sale, no arranca otro encima: avisa al usuario.
 
 **Relevo con goalspec** (0.13.13; lo hacía el usuario a mano: «sí, continúa, pero hazlo usando goalspec»): antes de
-cada `lookout relevo`, también tras un «Relevarlo» del usuario en tu modal, lee el «Como retomar» y juzga qué trabajo
+cada `lookout relevo`, también tras un sí del usuario a reiniciarlo en tu modal, lee el «Como retomar» y juzga qué trabajo
 le queda. **Solo medir** (leer, contar, comparar, correr checks o tests y reportar, sin escribir ni cambiar nada:
 ni archivos, ni commits, ni push, ni mensajes, ni estado de otro sistema) → relevo sin flag: el disparador va tal
 cual. **Cualquier otra cosa, o si dudas** → añade `--goalspec`: la sesión nueva recibe `/goalspec:goalspec
 <disparador>` y arranca su trabajo con su spec. No lo decides por palabras sueltas: un «medir y, si sale mal,
-arreglarlo» lleva `--goalspec`. Di en tu línea al usuario cuál elegiste. Si goalspec no está instalado en su
+arreglarlo» lleva `--goalspec`. Al usuario no le digas «goalspec»: si eligió `--goalspec`, «el agente escribirá primero su plan y te lo enseñará». Si goalspec no está instalado en su
 proyecto, la flag no cambia nada y `relevo` lo dice. Un relevo fallido que repites conserva la elección del primer
 intento. Su spec esperará ratificación en su pane: sigue la regla de siempre (un spec con acción terminal lo
 ratifica el usuario en tu modal y tú tecleas su respuesta; «Eres el único canal del usuario», arriba).
@@ -514,7 +575,7 @@ Ninguno …» que cita un pendiente abierto llega como bloque `ambiguo` («dice 
 Si dice `NO cierro … con una copia rebasada en el remoto … local → remoto`: esos commits ya llegaron, con otro parche,
 por otro camino (un PR rebasado) y no son trabajo del agente, pero el cierre los sigue contando hasta que alguien
 decida qué hacer con la rama local. Compara tú los pares con `git range-diff` (lectura) y pregúntaselo al usuario:
-`lookout decision <project_id> --abre "<rama, los pares y lo que dice range-diff>" --agentes <agente> --si-es "<etiqueta: p. ej.
+`lookout decision <project_id> --abre "<en palabras simples: qué cambios ya llegaron por otro camino y cuáles no>" --agentes <agente> --si-es "<etiqueta: p. ej.
 Descartar la rama local>"` y su pregunta en el modal. Solo con esa etiqueta elegida le dices al agente (o a quien tenga el
 checkout) lo que el usuario aprobó, y después repites `cierra-pestana`. Nunca borres ni muevas la rama tú.
 
@@ -533,7 +594,7 @@ Cuando toque:
 1. Cierra lo que esté a medias en este turno (respuestas pendientes a agentes; una decisión del usuario que no ha
    contestado queda abierta y viaja en el «Como retomar»).
 2. `lookout retomar <project_id>` — reescribe `supervisor.md`, imprime el bloque «Como retomar» y le manda al usuario
-   un aviso de herdr («el supervisor necesita relevo»).
+   un aviso de herdr («Supervisor: necesito que me reinicies»).
 3. Dale al usuario ese bloque **tal cual**, dentro de un bloque de código (```), y pídele: `/exit` (o `/clear`) y
    pegarlo en la sesión nueva.
 4. **Sigue supervisando hasta que llegue el relevo**: relanza tu waiter como siempre y atiende lo que llegue. Un
