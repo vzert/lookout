@@ -97,6 +97,12 @@ class FrenoPorElHookTest(unittest.TestCase):
             data["tool_input"]["command"] = 'pkill -f "tools/run-tests.sh"'
             p = subprocess.run(["sh", guard, "permisos.py"], input=json.dumps(data), capture_output=True, text=True,
                                env=env, timeout=30)
+            # 0.13.46: the first Bash in auto mode carries the one-time notice (additionalContext), never a decision
+            out = json.loads(p.stdout or "{}").get("hookSpecificOutput") or {}
+            self.assertNotIn("permissionDecision", out, p.stdout)
+            self.assertIn("no le pidas al usuario que lo copie", out.get("additionalContext", ""))
+            p = subprocess.run(["sh", guard, "permisos.py"], input=json.dumps(data), capture_output=True, text=True,
+                               env=env, timeout=30)
             self.assertEqual(p.stdout.strip(), "")
 
 

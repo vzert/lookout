@@ -9,7 +9,9 @@ Three hook events, one deterministic evaluator (never the supervisor's LLM, neve
   PreToolUse[Bash]   auto mode only: force the dialog ("ask") for what D6 reserves to the user (push, merge,
                      publish, deletes outside the worktree), so the classifier cannot approve it on its own.
                      Exception: a push that fits the temporary rule the user applied (`lookout regla-push`, H15).
-  PermissionDenied   auto mode refused a call: a `negado` event + notification. Never `retry` (H4: no way around).
+  PermissionDenied   auto mode refused a call: a `negado` event (0.13.46: with the whole Bash command and cwd, so the
+                     supervisor can type «! comando» with the user's yes, teclea.py) + notification. Never `retry`
+                     (H4: the agent itself never gets around a refusal).
 
 Why nothing is approved outside manual mode (Fase 5 spike, tests/spikes/evidencia/v6-auto/): in auto mode the SECOND
 identical try of a call the classifier refused opens a dialog and fires PermissionRequest; a hook answering "allow"
@@ -812,6 +814,29 @@ def quien(marker, sid):
     return marker.get("nombre") or sid[:8]
 
 
+# 0.13.46: what a supervised agent in auto mode is told once, on its first Bash: PermissionDenied can only say `retry`
+# (hooks doc), so this is the one synchronous way to reach its model before a refusal. Without it the agent asks the
+# user to copy the line or to add an allow rule (claude-vzert user, 2026-10-21), while the supervisor offers to type it.
+AVISO_NEGADO = ("lookout: te supervisa otra sesión de Claude, en la pestaña del supervisor. Si el filtro de seguridad "
+                "de auto mode te niega un comando de Bash, no le pidas al usuario que lo copie ni que agregue reglas de "
+                "permiso, y no lo rodees con otro comando: di en una línea qué comando era y para qué, y termina tu "
+                "turno. El supervisor ya lo vio: se lo pregunta al usuario y, si dice que sí, lo teclea en tu pane "
+                "con «!» y ves su salida. Luego sigue con tu trabajo.")
+
+
+def aviso_negado(marker, sid):
+    """AVISO_NEGADO the first time this agent session reaches here; "" after (one stamp per session and project)."""
+    if not sid:
+        return ""
+    path = os.path.join(lookout_state.project_dir(marker.get("project_id", "unknown")), "aviso_negado.json")
+    vistos = lookout_state.read_json(path) or {}
+    if sid in vistos:
+        return ""
+    vistos[sid] = time.time()
+    lookout_state.write_json(path, vistos)
+    return AVISO_NEGADO
+
+
 def handle(data, marker, rules=None):
     """Returns the hook's stdout dict, or None for no output. Never raises past main()."""
     rules = rules if rules is not None else load_rules()
@@ -852,18 +877,24 @@ def handle(data, marker, rules=None):
                     "lookout: trabajas en el checkout principal, que compartes con el usuario y otros agentes; %s lo "
                     "movería. No lo intentes por otra vía: díselo al supervisor por SendMessage. El único commit "
                     "permitido es el de /checkpoint-3t (git commit --only -- memory/…)." % why)}}
+        aviso = aviso_negado(marker, sid) if mode == "auto" and tool == "Bash" else ""
+        extra = {"additionalContext": aviso} if aviso else {}
         if mode != "auto" or tool != "Bash" or not rules.get("dialogo_forzado"):
-            return None  # off by default (0.8.0): the user turns it on with `dialogo_forzado = true`
+            # off by default (0.8.0): the user turns it on with `dialogo_forzado = true`
+            return {"hookSpecificOutput": dict({"hookEventName": "PreToolUse"}, **extra)} if extra else None
         why = reserved(ti.get("command") or "", worktree_of(sid, marker), cwd, rules)
         if not why:
-            return None
-        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
-                                       "permissionDecisionReason": "lookout: %s es del usuario (D6)" % why}}
+            return {"hookSpecificOutput": dict({"hookEventName": "PreToolUse"}, **extra)} if extra else None
+        return {"hookSpecificOutput": dict({"hookEventName": "PreToolUse", "permissionDecision": "ask",
+                                            "permissionDecisionReason": "lookout: %s es del usuario (D6)" % why}, **extra)}
 
     if name == "PermissionDenied":
         n = notify(marker.get("project_id", "unknown"), "negado", "Supervisor: el filtro de seguridad de Claude frenó a %s" % who,
                    "%s %s — %s" % (tool, detalle, data.get("reason")))
-        emit(marker, dict(base, event="negado", motivo=str(data.get("reason") or "")[:200], **n))
+        # 0.13.46: the whole command and the cwd, so the supervisor can offer to type «! comando» with the user's yes
+        # (teclea.abre) instead of the user copying it from the agent's pane
+        entero = {"comando": ti["command"], "cwd": cwd} if tool == "Bash" and isinstance(ti.get("command"), str) else {}
+        emit(marker, dict(base, event="negado", motivo=str(data.get("reason") or "")[:200], **dict(n, **entero)))
         return None
 
     if name != "PermissionRequest":

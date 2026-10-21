@@ -52,6 +52,8 @@ class Base(unittest.TestCase):
         registry.save(PID, {"agents": {SID: {"session_id": SID, "nombre": "tarea", "worktree": self.wt}}})
         self.marker = {"project_id": PID, "supervisor": "sup", "nombre": "tarea", "display": "tarea (lookout)"}
         lookout_state.write_marker(SID, self.marker)
+        # 0.13.46: the one-time notice of the first Bash in auto mode is already given (tested in test_lookout_01346)
+        lookout_state.write_json(os.path.join(lookout_state.project_dir(PID), "aviso_negado.json"), {SID: 1})
         self.calls = os.path.join(t, "herdr-calls.txt")
         fake = os.path.join(t, "fake-herdr")
         with open(fake, "w") as fh:

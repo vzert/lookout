@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.13.46
+
+- A Bash command that auto mode's safety filter refused is typed by the supervisor, with the user's yes, as
+  «! comando» in the agent's pane. Before, the agent asked the user to copy the line into its pane or to add an allow
+  rule (a user of the plugin, 2026-10-21, a production deploy script: «Teclea esta línea completa, con el ! y la ruta
+  absoluta…»), and the user had to change tab. Any refused Bash qualifies (push, deploy, script): the user decides
+  seeing the whole line.
+  - The `negado` event of the PermissionDenied hook keeps the whole command and the cwd (Bash only).
+  - `lookout decision <p> --abre "…" --agentes A --negado --si-es "<sí>" [--siempre-es "<siempre>"]` ties the
+    decision to the agent's last refusal, prints the line to type, and refuses a question that does not show it whole
+    between «», a multi-line command, one with a character outside a Latin keyboard (only printable ASCII, «¡¿» and accented Latin letters pass: a control character is a keystroke in the pane, and a format character, a combining mark, a filler or a non-ASCII space hides or changes part of the line in the modal; a command in another script is run by the user), or spaces at either end (checked as refused, never trimmed first) or one with «» (the user runs those), and a second question for a command the
+    user already said «siempre» to.
+  - `lookout envia … --usuario-confirmo dN --texto '! <comando>'` types only that line; `decision` prints it with the
+    text in single quotes, so the supervisor's own shell runs nothing of it (a `$(…)` inside double quotes would). A plain yes types it once.
+    «Siempre» types it once after each new refusal of the same text, in the same folder, for the same agent, while the
+    same supervisor holds the project; a relief, another folder or one character of difference asks again.
+  - The PreToolUse hook tells a supervised agent in auto mode, once per session on its first Bash
+    (`additionalContext`, no permission decision), not to ask the user to copy a refused command or add rules, and to
+    wait for the supervisor. PermissionDenied cannot do it: its only output is `retry`, which lookout never sets.
+    Seen live (tests/spikes/evidencia/aviso-negado/): a `claude -p` in auto mode with the plugin copied the notice
+    word for word without being told its content, and its Bash ran as usual.
+  - The supervisa skill's «auto mode le negó» rule offers this for a Bash; «No la rodees» stays (no other command,
+    tool or order for the same thing).
+
 ## 0.13.45
 
 - The supervisor talks to the user in plain words. A user of the plugin (2026-10-20) got a message of ~1900 characters

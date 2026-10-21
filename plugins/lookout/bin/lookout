@@ -51,7 +51,7 @@ Subcommands (PROYECTO = a path inside the repo, or its project_id):
   retoma PROYECTO AGENTE        claude --resume of an agent whose session ended without anyone asking (SessionEnd
                                 «other», e.g. a stray kill), in its pane or a new tab on its folder (0.13.20)
   decision PROYECTO (--abre TEXTO [--agentes A,B] [--si-es ETIQUETA] [--cierre] [--shells-parar E --shells-dejar E]
-                    [--permiso | --sin-revisor]
+                    [--permiso | --sin-revisor | --negado [--siempre-es ETIQUETA]]
                     | --cierra ID --respuesta R (--si|--no) | --lista)
                                 the user's pending decisions (T4): shown in `resumen` with their age; with --si-es
                                 the modal's hook closes it from the user's own choice (0.13.9); with --shells-parar
@@ -71,6 +71,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import signal
 import sys
 import time
@@ -96,6 +97,7 @@ import permisos  # noqa: E402
 import publica  # noqa: E402
 import registry  # noqa: E402
 import supervisor_md  # noqa: E402
+import teclea  # noqa: E402
 import relevo  # noqa: E402
 import requisitos  # noqa: E402
 import retiro  # noqa: E402
@@ -598,6 +600,9 @@ def texto_del_usuario(pid, e, did, texto):
         pregunta = " ".join(str(d.get("pregunta") or "").split())
         if pregunta:
             texto += " — lo que aprobó el usuario: «%s»" % pregunta
+    if d.get("tipo") == "negado":  # 0.13.46: a refused Bash, typed as «! comando» (teclea.py)
+        clave, motivo = teclea.clave(pid, e, d, texto)
+        return (None, None, motivo) if motivo else (clave, texto, None)
     return "usuario:" + did, texto, None
 
 
@@ -941,6 +946,27 @@ def cmd_decision(a):
         if destino:
             print(destino)
         return 0
+    if a.abre and getattr(a, "negado", False):
+        agentes = [x for x in (a.agentes or "").split(",") if x]
+        if len(agentes) != 1 or a.cierre or getattr(a, "permiso", False) or any(
+                (getattr(a, "shells_parar", ""), getattr(a, "shells_dejar", ""))):
+            print("NO ABIERTA: una decisión --negado es de un solo agente (--agentes <agente>), con --si-es y sin "
+                  "--cierre, --permiso ni --shells-*.")
+            return 5
+        ok, it = teclea.abre(pid, agent_entry(pid, agentes[0]), a.abre, a.si_es or "", getattr(a, "siempre_es", "") or "")
+        if not ok:
+            print("NO ABIERTA: " + it)
+            return 5
+        supervisor_md.write(pid)
+        tecla = teclea.linea(it["negado"]["comando"])
+        print("Decisión %s abierta (aviso de herdr mostrado). Pon «(%s)» al final de su pregunta, con lo que voy a teclear "
+              "entre «», y la opción «%s» tal cual en el modal%s, sin marcar ninguna como recomendada: tu hook la cierra "
+              "con lo que elija el usuario. Si dice sí, corre tal cual `lookout envia %s %s --usuario-confirmo %s --texto %s`. "
+              "Lo que se teclea, tal cual y entre «» en la pregunta:\n«%s»"
+              % (it["id"], it["id"], it["si_es"],
+                 (" y «%s» para «siempre para este comando»" % it["siempre_es"]) if it.get("siempre_es") else "",
+                 pid, agentes[0], it["id"], shlex.quote(tecla), tecla))  # codex r4: quoted for the supervisor's shell
+        return 0
     if a.abre and getattr(a, "sin_revisor", False):
         agentes = [x for x in (a.agentes or "").split(",") if x]
         if len(agentes) != 1 or a.cierre or getattr(a, "permiso", False) or any(
@@ -1106,6 +1132,9 @@ def main():
     p.add_argument("--cierre", action="store_true", help="la decisión es cerrar la pestaña de --agentes (cierra-pestana)")
     p.add_argument("--shells-parar", default="", help="etiqueta de la opción del modal que para su trabajo de fondo al salir")
     p.add_argument("--shells-dejar", default="", help="etiqueta de la opción del modal que lo deja en segundo plano al salir")
+    p.add_argument("--negado", action="store_true",
+                   help="la decisión es teclear «! comando» en el pane de --agentes: el último Bash que el clasificador le negó")
+    p.add_argument("--siempre-es", default="", help="--negado: etiqueta de la opción «sí, y siempre para este comando»")
     p.add_argument("--permiso", action="store_true",
                    help="la decisión es aprobar el permiso que espera --agentes (su petición pendiente, comando entero)")
     p.add_argument("--sin-revisor", action="store_true",
