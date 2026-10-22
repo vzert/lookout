@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.13.48
+
+- The 0.13.39 held-message notice, measured live (p-449b0a3bc6: supervisor in auto, agent moved to bypass by Shift+Tab
+  after it registered, three real held messages):
+  - Claude Code's release notice says «was approved and released to that session». 0.13.39 read it as a wording it
+    never saw («AVISO DE ENTREGA sin leer … reenvía») though the agent's Claude had the message; it is now
+    `ENTREGADO tras retenerlo`. The expiry notice («was not approved before expiry», 5 min after the hold) was
+    already read as `CADUCADO`, and the supervisor's hook gets each notice as its prompt.
+  - With the hold dialog on the agent's screen there is no footer to read, and its transcript still said auto: a
+    Shift+Tab made while the session is idle writes no `permission-mode` row. 0.13.39 took that for the same class
+    («mismo modo que tú: su sesión retiene todo mensaje»). The dialog itself says «The sending session's permission
+    mode class doesn't match this session's»: in the dialog's header (between its title and «Message body»), from
+    the supervisor's own address, that line now wins over the transcript (`MODO DISTINTO … con el diálogo en pantalla
+    no pulso nada`). A line of an older hold left in the conversation, the message body (its │ lines, codex r2), and
+    a dialog of another sender do not count; lines broken by the terminal do (codex r1). A lowering minutes ago still wins over the
+    dialog: a message held before that Shift+Tab keeps its dialog's words.
+  - tests/test_lookout_01348.py.
+
 ## 0.13.47
 
 - codex's round on the published 0.13.41 (p-25b2921716) found two holes in the publication queue:

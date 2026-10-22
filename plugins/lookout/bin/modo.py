@@ -27,6 +27,10 @@ PIES = (("bypass permissions on", BYPASS), ("auto mode on", "auto"), ("accept ed
         ("plan mode on", "plan"), ("manual mode on", "default"))
 SIMBOLOS = ("⏵⏵", "⏸")
 DIALOGO = ("esc to cancel", "enter to select", "enter to confirm")
+DIALOGO_RETENIDO = "held message from another session"  # the hold dialog's title and words, measured 2026-10-21
+DISTINTA = "permission mode class doesn't match"
+CUERPO = "message body (this is what will be delivered)"
+BORDE_CUERPO = "│"  # every line of the held message's body in the dialog
 ULTIMAS = 8
 MAX_PULSACIONES = 6  # the cycle has at most 5 modes: one more than that and the footer is not doing what we think
 PAUSA = 0.6  # s between a press and the read of the footer
@@ -90,9 +94,31 @@ def aviso_lanzar(project_id):
             "modo normal» (sin --bypass: habrá mensajes retenidos). Nunca elijas tú.")
 
 
-def leer_pie(pane):
+def leer_pantalla(pane):
     code, out, _ = herdr_cli.run(["agent", "read", pane, "--source", "visible"])
-    return pie(out) if code == 0 else ""
+    return out if code == 0 else ""
+
+
+def leer_pie(pane):
+    return pie(leer_pantalla(pane))
+
+
+def clase_distinta(texto, remitente):
+    """0.13.48: the hold dialog on screen says the classes of `remitente` (an address, uds:…) and this session differ
+    (bench 2026-10-21), whatever the transcript says. Only in the dialog's header, between its title and «Message
+    body»: the conversation keeps an «⏺ Held peer message … class doesn't match» line of an older hold after its dialog
+    closed, and the body is the message's own text (codex r1): its lines, which all start with │, are dropped (codex
+    r2: a body may carry a «Message body» line of its own). Lines are joined first: the terminal may break them
+    anywhere."""
+    lineas = [l for l in (texto or "").lower().splitlines() if not l.strip().startswith(BORDE_CUERPO)]
+    t = " ".join(" ".join(lineas).split())
+    ini = t.rfind(DIALOGO_RETENIDO)
+    fin = t.find(CUERPO, ini) if ini >= 0 else -1
+    if fin < 0 or not remitente:
+        return False
+    cab = t[ini:fin]
+    # codex r1: a dialog of another sender says nothing of this one (the path may be broken too: no spaces)
+    return DISTINTA in cab and ("from%s[" % remitente.lower()) in cab.replace(" ", "")
 
 
 def baja(pane):

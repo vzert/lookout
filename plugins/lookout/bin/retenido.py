@@ -6,8 +6,10 @@ it when the dialog stays unanswered. The sender gets a [Cross-session delivery n
 which fires its UserPromptSubmit (measured 2026-10-19 in the 0.13.33 bench):
   «… Your message to another session was held by that session (recipient: uds:/tmp/cc-socks/<pid>.sock; msg_id: <id>)…»
   «… Your message to another session was denied by the recipient user (recipient: …; msg_id: …)…»
-«Another notice follows on release, denial or expiry»: only the first two texts were seen; any other one is read by the
-same shape, and one that says «expir» counts as dropped (not measured).
+«Another notice follows on release, denial or expiry». The other two, measured live 2026-10-21 (0.13.48):
+  «… was not approved before expiry (recipient: …; msg_id: …)…» (5 min after the hold)
+  «… was approved and released to that session (recipient: …; msg_id: …).» (after Deliver)
+Any other wording is read by the same shape and is never taken for a delivery.
 
 The recipient is found by its socket (sesiones.por_socket). With no dialog on its screen and the agent in bypass while
 the supervisor prompts, it is moved with Shift+Tab as at registration (modo.baja); with the hold dialog on screen
@@ -40,7 +42,9 @@ def lee(prompt):
     estado = ("caducado" if "expir" in que else "negado" if "denied" in que else
               "retenido" if que.startswith("held") else
               # codex r3: affirmative only («release failed», «not released» are not)
-              "liberado" if re.match(r"(released|delivered)\b", que) and not re.search(r"\b(not|never|fail|un)", que) else
+              # 0.13.48 (bench): the real one is «approved and released to that session»
+              "liberado" if re.match(r"(?:approved and )?(released|delivered)\b", que)
+              and not re.search(r"\b(not|never|fail|un)", que) else
               "desconocido")
     return {"estado": estado, "socket": m.group(2).strip(), "msg_id": m.group(3), "que": " ".join(que.split())[:80]}
 
@@ -125,6 +129,12 @@ def _pane_suyo(pane, session_id):
     return bool(vivo) and (vivo.get("agent_session") or {}).get("value") == session_id
 
 
+def _direccion_supervisor(project_id):
+    """The supervisor's address (uds:…) in the project lock, or ''."""
+    lk = lookout_state.read_json(os.path.join(lookout_state.project_dir(project_id), "lock.json")) or {}
+    return str((lk.get("supervisor") or {}).get("address") or "")
+
+
 def _modo(project_id, session_id, ag, msg_id):
     """What could be done about the mode now: {estado, agente, supervisor[, ahora]}. estado: bajado, sin-bajar,
     dialogo (bypass, but a dialog is on its screen: nothing pressed), sin-pane (herdr does not show it on its pane:
@@ -132,7 +142,8 @@ def _modo(project_id, session_id, ag, msg_id):
     import modo
     sup = modo.del_supervisor(project_id)
     suyo = _pane_suyo(ag.get("pane"), session_id)
-    pie = modo.leer_pie(ag["pane"]) if suyo else ""
+    pantalla = modo.leer_pantalla(ag["pane"]) if suyo else ""
+    pie = modo.pie(pantalla)
     # codex r3: only while the supervisor still prompts (a switch to bypass since makes them differ again)
     antes = (_bajado_antes(project_id, session_id, enviado=_enviado(project_id, msg_id))
              if modo.clase(sup) == "permisos" else None)
@@ -141,6 +152,12 @@ def _modo(project_id, session_id, ag, msg_id):
     actual = pie or modo.de_sesion(session_id)
     cs, ca = modo.clase(sup), modo.clase(actual)
     r = {"agente": actual, "supervisor": sup}
+    # `antes` above still wins: a dialog of a message held before that Shift+Tab keeps its words (codex r2 on 0.13.39)
+    if not pie and cs and ca in ("", cs) and modo.clase_distinta(pantalla, _direccion_supervisor(project_id)):
+        # 0.13.48 (bench): a Shift+Tab made while it is idle writes no permission-mode row, so its transcript can still
+        # say auto; the dialog on its screen says the classes differ. Nothing is pressed there.
+        return dict(r, agente=modo.BYPASS if cs == "permisos" else "",
+                    estado="dialogo" if cs == "permisos" else "supervisor-bypass")
     if not cs:
         r["estado"] = "desconocido"
     elif not ca:
