@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.13.47
+
+- codex's round on the published 0.13.41 (p-25b2921716) found two holes in the publication queue:
+  - `--hecho --pr N` for a PR opened outside lookout left the agent's live entry (waiting, or a turn a check never
+    ended) in the queue: the agent stood twice and that entry kept the others waiting. The PR now replaces it
+    (`retirada`, reason naming the PR), and if it held the turn the output says who to tell next.
+  - `--hecho` (direct and PR mode) and the summary's conciliation accredited as verified a `lista` whose adversary
+    gate no longer held (a new round after LISTA, with or without the user's yes without the reviewer). The commit is
+    on origin either way, so lookout still records it, marked `puerta_caducada`: the output tells the supervisor to
+    tell the user and `--cola` says «verificación caducada».
+  - In PR mode the merge is the terminal action and has not happened yet (codex r1 on this version): `--fusiona`
+    answers `PUERTA-CADUCADA` (no merge, the yes stays unused) when the PR's gate no longer holds, and the summary
+    flags and warns about it, also when the user merged it on GitHub. Only while the agent's tree is still on the PR's
+    head: an agent that moved on to new work has rounds about that work. A PR opened outside lookout had no gate.
+  - `--hecho --pr N` retires every live entry of the session, not only the first.
+  - The supervise skill explains both lines. tests/test_lookout_01347.py.
+
 ## 0.13.46
 
 - A Bash command that auto mode's safety filter refused is typed by the supervisor, with the user's yes, as

@@ -566,7 +566,9 @@ class RegistroViejoTest(unittest.TestCase):
         out = publica.concilia(PID, remote_tip=lambda wt, b: "abc123")
         cola = {p["nombre"]: p["estado"] for p in publica.load(PID)["cola"]}
         self.assertEqual(cola, {"workspace-365": "caducada", "otro": "publicada"})
-        self.assertEqual(len(out), 2)
+        # 0.13.47: «otro» has no adversary verdict in this registry, so its gate no longer holds: the third line says so
+        self.assertEqual(len(out), 3)
+        self.assertIn("ya no valía", out[1] + out[2])
 
 
     def test_an_agent_the_check_saw_alive_is_not_shown_as_silent(self):

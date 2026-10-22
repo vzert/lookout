@@ -479,7 +479,10 @@ NO, no lo rodees ni lo reformules: pásale al agente el texto del NO.
      **nunca** escribes `settings.local.json`) y termina tu turno. Cuando diga que la aplicó, comprueba otra
      vez con `--estado` y solo entonces avisa al agente.
 5. Cuando el agente diga que hizo el push: `lookout publica <project_id> <agente> --hecho`. Si hay otro en la
-   cola, avísale lo que dice la salida. Con la cola vacía, recuérdale al usuario retirar la regla temporal.
+   cola, avísale lo que dice la salida. Con la cola vacía, recuérdale al usuario retirar la regla temporal. Si la
+   salida dice «su verificación ya no valía», llegó otra ronda del adversario después de `LISTA` y el push salió igual:
+   lookout lo anota como publicado con la verificación caducada (`--cola` dice «verificación caducada»), no como
+   verificado. Díselo al usuario. El resumen dice lo mismo si el push se ve en origin sin `--hecho`.
 
 **Modo PR** (proyectos donde cada agente publica en su rama y el usuario fusiona un pull request; se fija una vez con
 `lookout publica <project_id> --modo pr`, y `--cola` lo muestra en su cabecera). Los pasos 1-4 son los mismos, con
@@ -491,17 +494,22 @@ estas diferencias:
   abre el PR (`gh pr create`, la salida dice cuál) y te da su número.
 - Paso 5: `lookout publica <project_id> <agente> --hecho --pr <N>`. Deja la publicación `pr-abierto`: no frena al
   siguiente agente, no caduca aunque el agente termine o lo releves, y el resumen la pasa a publicada cuando el PR se
-  fusiona (o a caducada si se cierra). Si avisa de una fusión fuera de orden, díselo al usuario.
+  fusiona (o a caducada si se cierra). Si avisa de una fusión fuera de orden, díselo al usuario. Si llega otra ronda
+  del adversario mientras el agente sigue en el commit del PR y su verificación deja de valer, el resumen lo avisa
+  («su verificación ya no valía») y `--cola` dice «verificación caducada»: díselo al usuario.
 - **Un PR que el agente abrió fuera de lookout** (sin `LISTA`: hizo push y `gh pr create` desde su pane): el mismo
   `lookout publica <project_id> <agente> --hecho --pr <N>` lo pone en la cola, al final del orden de fusión, como «fuera
   de lookout, sin verificar». Si el agente trabaja en un worktree propio, añade `--worktree <ruta>`: lookout acepta el PR
   solo si su rama es la de ese árbol. Pásale al usuario los avisos de la salida (versión, rutas privadas) y dile que lookout no
-  lo verificó; para fusionarlo sigue haciendo falta su sí.
+  lo verificó; para fusionarlo sigue haciendo falta su sí. Si el agente ya estaba en la cola esperando su turno (o con
+  un turno que quedó a medias), esa entrada se retira; si tenía el turno, la salida dice a quién avisar.
 - **Fusionar** es una decisión del usuario, aparte del push. Si quiere que la hagas tú, abre la decisión con
   `--si-es`: `lookout decision <project_id> --abre "¿Junto el cambio #<N> de <agente> (versión X) a la versión principal del proyecto?" --agentes
   <agente> --si-es "<etiqueta del sí>"` (el texto **debe** nombrar `#<N>`), pregúntale en tu modal y, solo si elige esa opción:
-  `lookout publica <project_id> --fusiona <N> --decision <id>`. lookout comprueba el sí, el head verificado, que
-  GitHub lo deje fusionar con los checks en verde y el orden de fusión. Solo vale la elección del usuario en tu modal
+  `lookout publica <project_id> --fusiona <N> --decision <id>`. lookout comprueba el sí, el head verificado, que su
+  verificación siga valiendo, que GitHub lo deje fusionar con los checks en verde y el orden de fusión. Si dice
+  `PUERTA-CADUCADA`, no fusiona y el sí sigue sin usar: díselo al usuario; el agente vuelve a pedir la publicación
+  (otra ronda con hold, o el sí del usuario a publicar sin otra revisión) y `--hecho --pr <N>` reemplaza la entrada. Solo vale la elección del usuario en tu modal
   (una decisión que cierres tú a mano no autoriza la fusión). Si dice `FUERA-DE-ORDEN` y el usuario quiere
   este antes, pregúntaselo y repite con `--fuera-de-orden`. Un sí vale para una fusión: si falla, pide otro. Nunca
   corras `gh pr merge` a mano.

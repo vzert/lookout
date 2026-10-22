@@ -600,6 +600,34 @@ def puerta_abierta(st, p):
     return bool(acepta) and not sin_revisor_porque_no(st) and mismo_veredicto(st, acepta)
 
 
+def puerta_vencida(project_id, p):
+    """0.13.47 (codex on 0.13.41): why the adversary gate of a `lista` no longer holds when lookout learns of its push
+    ('' if it holds). The commit is on origin either way, so --hecho and concilia still record it, marked
+    `puerta_caducada`: before they accredited it as verified."""
+    import registry
+    e = registry.load(project_id).get("agents", {}).get(p["session_id"])
+    if not e or puerta_abierta(gobierno.estado(project_id, e, guardar=False), p):
+        return ""
+    return "su último veredicto ya no es un hold válido"
+
+
+def puerta_vencida_pr(project_id, p):
+    """codex r1 on 0.13.47: the gate of an open PR lookout verified, read again before its merge. Only while the agent's
+    tree is still on the PR's head: after pr-abierto the agent may ask again for new work (entry_of), and a round
+    about that work says nothing about the PR. A PR opened outside lookout never had a gate ('')."""
+    if p.get("fuera_de_lookout"):
+        return ""
+    _, head = git(p.get("worktree") or "", "rev-parse", "HEAD")
+    if not p.get("head") or head.strip() != p["head"]:
+        return ""
+    return puerta_vencida(project_id, p)
+
+
+def aviso_puerta(why):
+    return ("Aviso: cuando lookout supo de este push, su verificación ya no valía (%s): queda con la verificación "
+            "caducada, no como verificada; díselo al usuario." % why)
+
+
 def caducada(project_id, p):
     """Why a queued publication no longer holds the turn ('' if it still does): its session was relieved or its
     task closed, its agent committed after the check, or its last verdict is no longer an OK. Without this a
@@ -636,7 +664,7 @@ def concilia(project_id, remote_tip=remote_tip, ahora=None):
     for p in led["cola"]:
         if p["estado"] == ABIERTO:
             if ahora - (p.get("pr_visto") or 0) >= PR_CADA:
-                out += concilia_pr(led, p, ahora)
+                out += concilia_pr(project_id, led, p, ahora)
                 leido = True
             continue
         if p["estado"] not in ("esperando",) + VIVAS:
@@ -645,9 +673,13 @@ def concilia(project_id, remote_tip=remote_tip, ahora=None):
         if p["estado"] == "lista" and p.get("head") and p.get("modo") != "pr":
             tip = remote_tip(p.get("worktree") or "", p.get("rama_remota") or "")
             if tip and tip == p["head"]:
+                vencida = puerta_vencida(project_id, p)
                 p.update(estado="publicada", publicada=time.time(), motivo="conciliada: origin ya tiene su commit")
                 out.append("Publicación de %s conciliada: origin ya tiene %s (nadie corrió --hecho)." % (
                     p.get("nombre"), tip[:9]))
+                if vencida:
+                    p["puerta_caducada"] = vencida
+                    out.append(aviso_puerta(vencida))
                 continue
         why = caducada(project_id, p)
         if why:
@@ -658,7 +690,7 @@ def concilia(project_id, remote_tip=remote_tip, ahora=None):
     return out
 
 
-def concilia_pr(led, p, ahora):
+def concilia_pr(project_id, led, p, ahora):
     """An open PR as gh sees it: MERGED → publicada (with a warning if an earlier one is still open), CLOSED → caducada.
     A gh that fails leaves the PR open (only pr_visto moves, so it is read again a minute later): a network error
     never expires a PR."""
@@ -666,6 +698,12 @@ def concilia_pr(led, p, ahora):
     d = pr_view(p["pr"], p.get("repo") or p.get("worktree"))
     if not d:
         return []
+    avisos = []
+    if d.get("state") != "CLOSED" and not p.get("puerta_caducada"):
+        vencida = puerta_vencida_pr(project_id, p)
+        if vencida:
+            p["puerta_caducada"] = vencida
+            avisos.append("PR #%s de %s: %s" % (p["pr"], p.get("nombre"), aviso_puerta(vencida)))
     if d.get("state") == "MERGED":
         antes = [q for q in abiertos(led) if q is not p and orden_de(q) < orden_de(p)]
         p.update(estado="publicada", publicada=ahora, motivo="PR #%s fusionado" % p["pr"],
@@ -674,11 +712,13 @@ def concilia_pr(led, p, ahora):
         if antes:
             line += " Se fusionó fuera de orden: antes iba %s." % ", ".join(
                 "%s (#%s)" % (q.get("nombre"), q.get("pr")) for q in antes)
-        return [line]
+        if p.get("puerta_caducada") and not avisos:
+            avisos.append(aviso_puerta(p["puerta_caducada"]))
+        return [line] + avisos
     if d.get("state") == "CLOSED":
         p.update(estado="caducada", motivo="PR #%s cerrado sin fusionar" % p["pr"])
         return ["Publicación de %s caducada: el PR #%s se cerró sin fusionar." % (p.get("nombre"), p["pr"])]
-    return []
+    return avisos
 
 
 def retira_sesion(project_id, session_id, motivo):
@@ -716,11 +756,16 @@ def hecho(project_id, entry, pr=None, worktree=None):
         return False, ["NO: origin/%s está en %s, no en el commit verificado %s. ¿Se hizo el push? ¿El agente añadió "
                        "commits después de verificar? Si cambió algo, vuelve a pedir la publicación." % (
                            me.get("rama_remota"), tip[:9] or "?", (me.get("head") or "?")[:9])]
+    vencida = puerta_vencida(project_id, me)
     me["estado"] = "publicada"
     me["publicada"] = time.time()
+    if vencida:
+        me["puerta_caducada"] = vencida
     nxt = next((p for p in led["cola"] if p["estado"] == "esperando"), None)
     save(project_id, led)
     out = ["Publicada: %s versión %s en %s." % (me["nombre"], me.get("version") or "-", tip[:9])]
+    if vencida:
+        out.append(aviso_puerta(vencida))
     if nxt:
         import sesiones  # 0.13.35 (p-561f1a2173): the name SendMessage takes, not lookout's (0.13.24)
         out.append("Siguiente en la cola: %s (%s). Dile por SendMessage: `git fetch origin`, rebase sobre origin/%s, "
@@ -794,6 +839,19 @@ def registra_pr(project_id, led, entry, pr, worktree=None):
         avisos.append("Aviso: el commit %s del PR no está en el árbol de %s: no leo su versión ni sus rutas." % (
             head[:9] or "?", entry.get("nombre")))
     ahora = time.time()
+    # 0.13.47 (codex on 0.13.41): the PR replaces the session's live entry (esperando, or a turno left by a check that
+    # never ended); left alive, the agent stood twice in the queue and that entry kept the others waiting
+    vivas = [q for q in led["cola"]
+             if q["session_id"] == entry["session_id"] and q["estado"] in ("esperando",) + VIVAS]
+    tenia_turno = any(q["estado"] in VIVAS for q in vivas)
+    for q in vivas:
+        q.update(estado="retirada", motivo="reemplazada por el PR #%d, abierto fuera de lookout" % pr)
+    if tenia_turno:
+        nxt = next((q for q in led["cola"] if q["estado"] == "esperando"), None)
+        if nxt:
+            import sesiones
+            avisos.append("Siguiente en la cola: %s (%s). Dile por SendMessage que vuelva a pedir la publicación." % (
+                nxt["nombre"], sesiones.to_texto(nxt)))
     p = {"session_id": entry["session_id"], "nombre": entry.get("nombre"), "tarea": entry.get("tarea"),
          "rama": entry.get("branch"), "worktree": wt, "repo": repo, "pedida": ahora, "orden": ahora, "pr": pr,
          "head": head, "rama_remota": rama, "rama_base": base, "version": vhead, "archivo_version": vfile, "modo": "pr",
@@ -833,10 +891,15 @@ def hecho_pr(project_id, led, me, entry, pr):
             pr, d.get("headRefName"), (d.get("headRefOid") or "?")[:9], d.get("baseRefName"), rama, me["head"][:9],
             me.get("rama_base"))]
     ahora = time.time()
+    vencida = puerta_vencida(project_id, me)
+    avisos = [aviso_puerta(vencida)] if vencida else []
+    if vencida:
+        me["puerta_caducada"] = vencida
     if d.get("state") == "MERGED":
         me.update(estado="publicada", publicada=ahora, pr=pr, motivo="PR #%d ya fusionado" % pr)
         save(project_id, led)
-        return True, ["Publicada: %s versión %s, PR #%d ya fusionado." % (me["nombre"], me.get("version") or "-", pr)]
+        return True, ["Publicada: %s versión %s, PR #%d ya fusionado." % (me["nombre"], me.get("version") or "-",
+                                                                         pr)] + avisos
     if d.get("state") != "OPEN":
         return False, ["NO: el PR #%d está %s, sin fusionar. Si se abre otro, repite con su número." % (pr, d.get("state"))]
     # the same PR checked again after new commits: the new check replaces the old one and keeps its place in the order
@@ -851,7 +914,7 @@ def hecho_pr(project_id, led, me, entry, pr):
     save(project_id, led)
     out = ["PR #%d abierto: %s versión %s, %dº en el orden de fusión. Lo fusiona el usuario, o tú con su sí en tu modal: "
            "`lookout publica <proyecto> --fusiona %d --decision <id>`." % (pr, me["nombre"], me.get("version") or "-",
-                                                                       orden, pr)]
+                                                                       orden, pr)] + avisos
     if nxt:
         import sesiones
         out.append("Siguiente en la cola: %s (%s). Dile por SendMessage que vuelva a pedir la publicación; su versión "
@@ -921,6 +984,18 @@ def fusiona(project_id, pr, decision_id, fuera_de_orden=False):
             "NO: el PR #%d no se puede fusionar ahora: estado %s, mergeable %s, %s%s." % (
                 pr, v.get("state"), v.get("mergeable"), v.get("mergeStateStatus"),
                 "; checks sin terminar en verde: " + ", ".join(malos) if malos else "")]
+    vencida = p.get("puerta_caducada") or puerta_vencida_pr(project_id, p)
+    if vencida:
+        # codex r1 on 0.13.47: the merge is the terminal action and has not happened yet: a gate that no longer holds
+        # is a NO, as a push with a break is; the yes stays unused
+        if not p.get("puerta_caducada"):
+            p["puerta_caducada"] = vencida
+            save(project_id, led)
+        return False, "PUERTA-CADUCADA", [
+            "NO: la verificación del PR #%d ya no vale (%s): no lo fusiono. Que %s vuelva a pedir la publicación (otra "
+            "ronda del adversario con hold, o el sí del usuario a publicarla sin otra revisión) y repite `--hecho --pr "
+            "%d`: reemplaza esta entrada. Díselo al usuario; si él lo fusiona en GitHub, el resumen lo anota con la "
+            "verificación caducada." % (pr, vencida, p.get("nombre"), pr)]
     decisiones.marca_usada(project_id, d["id"])  # before the merge: a failed merge needs a new yes (the safe side)
     rc, out = gh(["pr", "merge", str(pr), "--merge", "--match-head-commit", p["head"]], cwd)
     if rc != 0:
@@ -973,7 +1048,8 @@ def render_cola(project_id):
                                             (" | PR " + pr_texto(led, p) if p["estado"] == ABIERTO else "") +
                                             (" | sin revisor (%s)" % p["sin_revisor"]["decision"]
                                              if p.get("sin_revisor") else "") +
-                                            (" | fuera de lookout, sin verificar" if p.get("fuera_de_lookout") else ""))
+                                            (" | fuera de lookout, sin verificar" if p.get("fuera_de_lookout") else "") +
+                                            (" | verificación caducada" if p.get("puerta_caducada") else ""))
         for p in rows)
 
 
