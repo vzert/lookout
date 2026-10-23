@@ -213,7 +213,7 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
   retomar»` al registrarlo o en el barrido de cada 2 min a los agentes quietos): lookout ya miró su último turno, y
   avisa una vez por bloque mientras no cambie lo que hace con él (un ambiguo que pasa a vigente se avisa otra vez).
   Mientras nadie lo atienda, la tabla lo deja en «Te necesita» con `bloque vigente|ambiguo … → <qué hacer>` en cada
-  despertar; sale de ahí cuando abres su modal con `--agentes <agente>` (o ya había uno abierto cuando llegó el bloque),
+  despertar; sale de ahí cuando abres su modal con `--agentes <agente>` (un modal de cierre no saca a un vigente: 0.13.49) (o ya había uno abierto cuando llegó el bloque),
   lo relevas, se cierra o vuelve a trabajar.
   - `vigente` → `lookout relevo <project_id> <agente>` **sin preguntar** (con `--goalspec` según «Relevo con
     goalspec», abajo), y, como mucho, una línea al usuario en palabras simples («Reinicié «<pestaña>» para que siga con su trabajo»; «Cómo hablarle al usuario»). Si
@@ -222,7 +222,16 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
     sin escribir encima; lo que va al usuario es lo que dice esa línea. Una lectura vieja no es motivo para preguntar en vez de
     relevar (3-tier-memory, 2026-10-16, d42: un borrador visto 18 h antes). Si juzgas que no toca relevarlo todavía (espera un merge, un
     arreglo de otro agente…), eso es una decisión del usuario: ábrela al modal con `--agentes <agente>` («¿Lo reinicio ya
-    o espera a …?»). Nunca lo dejes quieto con un «quédate quieto» y una pregunta en prosa: el usuario no ve el
+    o espera a …?»), sin opción de cerrar su pestaña. **Un pendiente que anotó esa misma sesión es parte de su hilo**
+    y se releva igual: que sea nuevo, de baja prioridad o ajeno a su tarea inicial no es motivo para preguntar ni para
+    recomendar cerrarla. Que su siguiente paso toque algo compartido (el checkout principal, un `git pull`, otra sesión)
+    tampoco: va con `--goalspec` y el usuario ratifica su plan en tu modal (3-tier-memory, 2026-10-22, d399: el
+    supervisor recomendó «Cerrar su pestaña» a un agente cuyo siguiente paso era poner al día main, y el usuario esperaba
+    el relevo). Desde 0.13.49 lookout lo impide: `lookout decision --abre … --cierre --si-es …` no se abre sobre un agente con
+    bloque vigente ni a mitad de su turno (espera su `terminó su turno`), y `cierra-pestana` no lo cierra ni con
+    `--usuario-confirmo`; los dos responden que lo releves. Una pregunta sin `--cierre` con `--si-es` sobre él tampoco
+    se abre, salvo con `--no-es-cierre` cuando su sí autoriza otra cosa (teclear «aprobado»), nunca cerrarla. Si el usuario quiere dejar ese trabajo, se cierra o se
+    descarta antes su pendiente. Nunca lo dejes quieto con un «quédate quieto» y una pregunta en prosa: el usuario no ve el
     resumen (3-tier-memory, 2026-10-19: pendientes-en-sessionstart, ~15 h). Un bloque vigente o ambiguo que pasa
     30 min sin relevo, sin modal que lo nombre y sin trabajo nuevo le manda al usuario una notificación de herdr
     (una por bloque).
@@ -593,7 +602,7 @@ respuesta», contéstale primero (un acuse basta) y repite. `--revisa` solo dice
 Si el usuario decide cerrarla en tu modal, repite con `--usuario-confirmo dN`. dN debe ser `lookout decision … --abre
 "¿cierro su pestaña?" --agentes <agente> --cierre --si-es "<etiqueta>"`, abierta después de su último turno, y el
 usuario debe haber elegido esa etiqueta (un `--cierra --si` tuyo no sirve). Salta solo «no dice que terminó /
-bloque con trabajo» y «una pregunta en su último turno», que el usuario ya sopesó; las demás comprobaciones siguen
+bloque con trabajo» (salvo un bloque vigente, que se releva: 0.13.49) y «una pregunta en su último turno», que el usuario ya sopesó; las demás comprobaciones siguen
 (3-tier-memory, 2026-10-16: con d111 «Cerrarla», la «¿» de su «¿Cerrado? Sí.» frenaba el cierre). Un «Como retomar:
 Ninguno …» que cita un pendiente abierto llega como bloque `ambiguo` («dice «Ninguno» pero cita pendientes»): al modal.
 Si dice `NO cierro … con una copia rebasada en el remoto … local → remoto`: esos commits ya llegaron, con otro parche,

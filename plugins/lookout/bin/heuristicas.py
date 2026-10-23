@@ -529,12 +529,16 @@ def bloque_sin_atender(ev, entry=None, decs=None):
     a close or new work leave a later event.
     0.13.3: the event is announced once; this keeps the agent in «Te necesita» until then (live 3-tier 2026-10-16).
     0.13.35: d183 opened 20 s before cambio-worktrees' block and waited 13 min for the user; only one opened after the
-    block counted, and the digest said «→ lookout relevo» of an agent that waited for that answer (3-tier 2026-10-19)."""
+    block counted, and the digest said «→ lookout relevo» of an agent that waited for that answer (3-tier 2026-10-19).
+    0.13.49: a close decision never attends a vigente block, which is relieved, not closed (3-tier 2026-10-22: d399,
+    «¿Lo reinicio, lo dejo o cierro su pestaña?», opened before the block and kept it out of «Te necesita»)."""
     r = ev.get("retomar")
     if not isinstance(r, dict) or r.get("estado") not in ("vigente", "ambiguo"):
         return None
     nombre = (entry or {}).get("nombre") or ev.get("nombre")
     for it in decs or ():
+        if r.get("estado") == "vigente" and it.get("tipo") == "cierre":
+            continue
         hasta = float("inf") if it.get("estado") == "abierta" else float(it.get("hasta") or it.get("desde") or 0)
         if nombre and nombre in (it.get("agentes") or ()) and hasta >= float(ev.get("ts") or 0):
             return None

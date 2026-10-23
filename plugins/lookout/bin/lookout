@@ -1001,6 +1001,34 @@ def cmd_decision(a):
         if a.cierre and (not agentes or not a.si_es):
             print("NO ABIERTA: una decisión --cierre necesita --agentes <agente> y --si-es \"<etiqueta de la opción sí>\".")
             return 5
+        for n in agentes if a.cierre else ():
+            # 0.13.49 (3-tier-memory 2026-10-22, d399): a vigente block is relieved, never asked about closing; a failed
+            # relief keeps this question as its way out
+            e = registry.find(registry.load(pid), n)
+            if not e or e.get("tarea_estado") == "relevo-fallido":
+                continue
+            if retiro.a_mitad_de_turno(pid, e):
+                print("NO ABIERTA: %s está a mitad de turno. Espera su «terminó su turno»: su último turno puede dejar un "
+                      "bloque para retomar, y uno vigente se releva sin preguntar." % n)
+                return 5
+            r = retiro.bloque_vigente(pid, e)
+            if r:
+                print("NO ABIERTA: %s: %s." % (n, retiro.no_cierre_vigente(r, n)))
+                return 5
+        vigentes = []
+        for n in agentes if not a.cierre else ():
+            # codex r1: a question without --cierre can still offer to close a vigente one; it cannot authorize the
+            # close (cierra-pestana wants a --cierre decision), and the supervisor reads why here
+            e = registry.find(registry.load(pid), n)
+            r = retiro.bloque_vigente(pid, e) if e and e.get("tarea_estado") != "relevo-fallido" else None
+            if r and a.si_es and not getattr(a, "no_es_cierre", False):
+                # codex r2: with --si-es the generic question can offer «Cerrar su pestaña» as its yes (d399's shape)
+                print("NO ABIERTA: %s: %s. Una pregunta con --si-es sobre él no se abre: si es para cerrarla, no la "
+                      "hagas y relévalo; si su sí autoriza otra cosa (p. ej. teclear «aprobado»), repite con --no-es-cierre." % (
+                          n, retiro.no_cierre_vigente(r, n)))
+                return 5
+            if r:
+                vigentes.append("OJO, %s: %s; esta pregunta no le ofrece cerrar su pestaña." % (n, retiro.no_cierre_vigente(r, n)))
         shells = {"parar": getattr(a, "shells_parar", "") or "", "dejar": getattr(a, "shells_dejar", "") or ""}
         if any(shells.values()):
             if not (agentes and all(v.strip() for v in shells.values())) or a.cierre or a.si_es \
@@ -1024,6 +1052,8 @@ def cmd_decision(a):
                   "`lookout decision %s --cierra %s --respuesta … --no` cuando el usuario conteste. Si su sí debe "
                   "autorizar algo, ábrela con --si-es \"<etiqueta del sí>\": un sí solo vale si lo anota tu hook."
                   % (it["id"], it["id"], pid, it["id"]))
+        for v in vigentes:
+            print(v)
         return 0
     if a.cierra:
         if a.si == a.no:
@@ -1130,6 +1160,8 @@ def main():
     p.add_argument("--si-es", default="", help="etiqueta de la opción del modal que significa sí: tu hook cierra la "
                                               "decisión con lo que elija el usuario")
     p.add_argument("--cierre", action="store_true", help="la decisión es cerrar la pestaña de --agentes (cierra-pestana)")
+    p.add_argument("--no-es-cierre", action="store_true",
+                   help="con --si-es sobre un agente con bloque vigente: su sí autoriza otra cosa, nunca cerrarla")
     p.add_argument("--shells-parar", default="", help="etiqueta de la opción del modal que para su trabajo de fondo al salir")
     p.add_argument("--shells-dejar", default="", help="etiqueta de la opción del modal que lo deja en segundo plano al salir")
     p.add_argument("--negado", action="store_true",

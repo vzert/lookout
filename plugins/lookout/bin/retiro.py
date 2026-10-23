@@ -42,7 +42,43 @@ def _turno(session_id):
 # 0.13.3: the brake says what to do (live 3-tier 2026-10-16: the supervisor read it and did nothing with the block)
 RELEVO_NO_CIERRE = ("su último turno deja un bloque para retomar con trabajo: es un relevo, no un cierre (vigente → "
                     "`lookout relevo`, con --goalspec salvo que sea solo medir, y si no lo relevas, modal con --agentes; ambiguo → modal «¿Lo reinicio para que siga, cierro su pestaña o lo dejo?» con --agentes; si el usuario "
-                    "contesta que la cierres, repite con --usuario-confirmo dN de una decisión --cierre --si-es)")
+                    "contesta que la cierres, repite con --usuario-confirmo dN de una decisión --cierre --si-es; un vigente no se cierra ni "
+                    "con su sí)")
+
+
+# 0.13.49: events of an agent between turns: a Stop, a wait on its background task, a session not prompted yet or
+# ended, and a StopFailure's pausa or unknown (adversary r1: the turn ended and no Stop follows). A permission dialog
+# (blocked, ask, negado) is still inside its turn (adversary r3).
+ENTRE_TURNOS = ("idle", "bg_wait", "start", "end", "pausa", "unknown")
+
+
+def bloque_vigente(project_id, entry):
+    """0.13.49: the `retomar` of its last turn when it is vigente (it cites a pendiente still open that nobody else
+    took), else None. 3-tier-memory 2026-10-22, d399: the user's yes to close it closed a vigente block too, and the
+    supervisor recommended closing one whose pendiente the same session had just written down."""
+    r = retomar.para_agente(project_id, entry["session_id"]) if project_id else None
+    return r if r and r.get("estado") == "vigente" else None
+
+
+def no_cierre_vigente(r, nombre):
+    """What the supervisor reads when it tries to close (or to ask about closing) an agent with a vigente block."""
+    return ("su último turno deja un bloque para retomar vigente (%s, abierto): es un relevo, no un cierre, aunque el "
+            "usuario haya elegido cerrarla o ese pendiente lo anotara la misma sesión (es parte de su hilo) → `lookout "
+            "relevo <proyecto> %s` sin preguntar (con --goalspec salvo que sea solo medir: si toca algo compartido, el "
+            "usuario ratifica su plan). Si el usuario quiere dejar ese trabajo, primero se cierra o se descarta ese "
+            "pendiente (`lookout descarta …`, o `lookout cierra … --estado abandoned` si es la tarea de un agente, con su sí) y deja de estar vigente"
+            % (", ".join(r.get("pendientes") or []) or "sin pendiente", nombre))
+
+
+def a_mitad_de_turno(project_id, entry):
+    """0.13.49: its last own event says it is inside a turn, so the block its turn may leave cannot be read yet: a
+    close is not asked about until its Stop. (A turn opened without a UserPromptSubmit leaves the Stop as its last
+    event and passes; then the block check, the digest and `cierra-pestana` still catch a vigente block.)"""
+    last = None
+    for ev in lookout_state.read_events(project_id, 0)[0]:
+        if ev.get("session_id") == entry.get("session_id") and ev.get("event") not in deliver.NO_DEL_AGENTE:
+            last = ev
+    return bool(last) and last.get("event") not in ENTRE_TURNOS
 
 
 def senal_terminado(entry, motivo="", project_id=""):
@@ -437,6 +473,11 @@ def revisa(project_id, entry, motivo="", confirmo="", shells=""):
         r = check()
         if r:
             out.append(r)
+    if decidido:
+        # 0.13.49: the user's yes skips the agent's own words, never a vigente block: that one is relieved
+        r = bloque_vigente(project_id, entry)
+        if r:
+            out.append(no_cierre_vigente(r, entry.get("nombre", "?")))
     for g in GUARDAS:
         if g is guarda_fondo and vivo:
             continue  # said below, with what /exit would do to it

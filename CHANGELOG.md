@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.13.49
+
+- A vigente «Como retomar» is a relief, never a close (3-tier-memory 2026-10-22, d399: the agent's block cited a
+  pendiente its own session had just written down; the supervisor asked «¿Lo reinicio, lo dejo o cierro su pestaña?»
+  with «Cerrar su pestaña» recommended, and the user expected the relief). The user's rule: a pendiente written in the
+  same session is part of the agent's thread, and a next step that touches something shared goes to the relief's
+  spec (`--goalspec`), which the user ratifies.
+  - `cierra-pestana --usuario-confirmo dN` no longer closes an agent whose last turn leaves a vigente block: the
+    user's yes skips the agent's own words, never that block. It answers `lookout relevo`. Closing or discarding its
+    pendiente first makes the block stop being vigente; a failed relief can still be closed with the user's yes.
+  - `lookout decision --abre … --cierre --si-es …` is not opened over a vigente block, nor while the agent is inside a
+    turn (its block cannot be read yet); a failed relief keeps this question. A question without `--cierre` still
+    opens (a «¿Lo reinicio ya o espera a …?» is legitimate), says under it that the agent is to be relieved, and its
+    yes never authorizes `cierra-pestana` (codex r1); one with `--si-es` is refused unless it carries `--no-es-cierre`
+    (codex r2: its yes could be «Cerrar su pestaña»; not `--nueva`, which «ya hay decisiones» already asks for). A question opened before the block still attends it, as in
+    0.13.35 (d183), unless it is a close. A permission dialog (blocked, ask, negado) is inside the turn;
+    a StopFailure's pausa or unknown is not.
+  - A close decision no longer attends a vigente block: d399, opened just before the block, kept the agent out of
+    «Te necesita»; any other decision still attends it, and a close decision still attends an ambiguo one.
+  - The supervise skill says it, and the brake and digest lines say a vigente is not closed.
+  - tests/test_lookout_01349.py.
+
 ## 0.13.48
 
 - The 0.13.39 held-message notice, measured live (p-449b0a3bc6: supervisor in auto, agent moved to bypass by Shift+Tab
