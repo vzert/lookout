@@ -257,6 +257,34 @@ def _ts(row):
         return None
 
 
+ESPERA_QUIETO = 45  # s: under the Bash tool's 2-minute default, over most of a turn's tail (0.13.50)
+
+
+def espera_quieto(project_id, entry, segundos, intervalo=3.0, agent_get=None):
+    """0.13.50: (live, waited s, herdr status) — live once the agent is quiet, None when it is not. 3-tier 2026-10-20:
+    the supervisor sent the same `relevo` 6 times in a row to a working agent, each one refused at once; now one call
+    waits up to `segundos` for the end of its turn. Only a `working` agent is waited for: blocked (a dialog), a pane
+    herdr does not see, or any other status will not end by itself, and is returned at once (adversary r1)."""
+    agent_get = agent_get or herdr_cli.agent_get
+    t0 = time.time()
+    while True:
+        live = agent_get(entry["pane_id"]) or {}
+        if quieto(project_id, entry, live):
+            return live, round(time.time() - t0), live.get("agent_status")
+        estado = live.get("agent_status")
+        if estado != "working" or time.time() - t0 >= segundos:
+            return None, round(time.time() - t0), estado
+        time.sleep(intervalo)
+
+
+def no_quieto(entry, esperado, estado="working"):
+    """The refusal: after a wait, say not to poll (the waiter brings the agent's next idle); any other status, say it."""
+    if estado != "working":
+        return "%s está %s (no es fin de turno: no espero)" % (entry.get("nombre"), estado or "sin estado en herdr")
+    return ("%s sigue a mitad de turno tras esperar %d s. No lo repitas en bucle: cuando termine su turno el waiter te "
+            "despierta con su evento idle, y entonces lo repites una vez" % (entry.get("nombre"), esperado))
+
+
 def quieto(project_id, entry, live, projects_dir=None):
     """True when the agent can take input: herdr sees it idle/done, or herdr sees it working and its hooks and
     transcript say it is between turns. Never over blocked or unknown (a dialog, a menu). Anything it cannot read

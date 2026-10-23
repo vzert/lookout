@@ -302,6 +302,7 @@ def describe(ev, quien=None):
 
 MAX_LINES = 40   # Fase 4: one digest per wake, at most 40 lines
 MAX_COLS = 160   # and at most 160 characters per line (lines alone do not bound tokens)
+IDLE_AVISO = 15 * 60  # 0.13.50: an agent idle with no task this long gets a row of what to do, on every wake
 KEEP_ALL = ("ask", "blocked", "negado", "crossrepo", "unknown", "repite", "sin_progreso", "largo", "correccion",
             "retenido")  # events that need an answer are never collapsed
 # Budget of the supervisor's own context, counted FROM what the session already held when `lookout inicia` ran
@@ -567,6 +568,12 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
             extra = []
             if ev_e and ev_e.get("event") in ("idle", "bg_wait") and ev_e.get("espera_pane") and not blk:
                 extra.append(espera_pane_txt(ev_e).strip())
+            elif (g == "idle" and ev_e and ev_e.get("event") == "idle" and (e.get("tarea") or "-") == "-"
+                  and now - float(ev_e.get("ts") or now) >= IDLE_AVISO):
+                # 0.13.50: 3-tier 2026-10-22, an agent sat «Idle» with no task for 38 minutes, folded into «sin
+                # cambios», until the user said so; then it was closed with a --motivo the supervisor wrote itself
+                extra.append("parado sin tarea desde %s → lee su último turno: si espera algo, contesta; si terminó, "
+                             "cierra-pestana con --motivo copiado de su turno" % hhmmss(ev_e.get("ts")))
             import deliver
             import versiones
             viejo = versiones.viejos(e, all_events, deliver.transcript_path(sid))
@@ -620,7 +627,10 @@ def render(project_id, mark=True, limit=None, todo=False, por_waiter=False):
                 len(dl) - 6, ", ".join(it["id"] + decisiones.etiquetas(it) for it in ocultas), project_id)]
         tail += dl
     if mark and any(p["estado"] in publica.EN_COLA for p in publica.load(project_id)["cola"]):
-        tail += [clip(x) for x in publica.concilia(project_id)]  # Fase 9 E3; 0.13.27: open PRs too
+        # Fase 9 E3; 0.13.27: open PRs too. 0.13.50: the checkout's warning whole, with its command (adversary r1)
+        tail += [clip(x, 600 if x.startswith("Checkout principal") else MAX_COLS) for x in publica.concilia(project_id)]
+    if mark:  # 0.13.50: a merge made on GitHub, already in the local origin ref, reaches the main checkout
+        tail += [clip(x, 600) for x in publica.al_dia(project_id)]
     if any(p["estado"] in publica.EN_COLA for p in publica.load(project_id)["cola"]):
         cola = publica.render_cola(project_id)
         vistos_ahora["publicaciones"] = clave([cola])

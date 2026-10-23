@@ -88,8 +88,9 @@ Ejemplo, el mismo caso de arriba bien dicho:
    plugin en una sesión que arrancó antes de instalarlo), `/rename` + nombres de herdr (un solo nombre en
    todas partes; si el usuario ya había nombrado la pestaña, el nombre sale de ella; si la pestaña tenía el número
    que pone herdr, toma el nombre del agente; una pestaña nombrada por el usuario no se toca) y la **nota de reporte**. Confirma los hooks con el evento `UserPromptSubmit` de la nota.
-   - `NO ENTREGADO … está working`: está en un turno (un shell de fondo solo ya no lo frena); no insistas: entrégalo
-     cuando llegue su evento `terminó su turno`.
+   - `NO ENTREGADO … sigue a mitad de turno tras esperar N s` (0.13.50: el comando ya esperó el fin de su turno, hasta
+     `--espera`, 45 s): no insistas en bucle; entrégalo cuando llegue su evento `terminó su turno`. `… está blocked`
+     u otro estado: no es fin de turno; mira qué tiene en pantalla.
    - `NO ENTREGADO … caja de entrada tiene borrador`: el usuario está escribiendo ahí. No escribas encima; avísale.
    - `hooks SIN CONFIRMAR`: dilo al usuario; ese agente no te avisará por hooks. Suscríbete a su fin de
      turno como respaldo: `SendMessage` a su `to` con un mensaje corto y `notify_when_idle: true`
@@ -194,7 +195,7 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
   trabajando (su pestaña en working tras contestarte), pregúntale al usuario en un `AskUserQuestion` si lo para él. Cuando un agente se retire, se releve o cierre, el waiter registra al
   primero de la cola. No lo registres tú a mano. `resumen` muestra la cola en su línea `CUPO:`.
   `lookout inicia` escribe la misma nota bajo el agente. Si dice `NO ENTREGADO … borrador`, avisa al usuario una vez
-  (su caja tiene texto suyo) y no reintentes en bucle; `NO ENTREGADO … working` → entrégala en su `terminó su turno`.
+  (su caja tiene texto suyo) y no reintentes en bucle; `NO ENTREGADO … a mitad de turno` → entrégala en su `terminó su turno`.
 - **`RETENIDO tu mensaje a to=X → …`** / **`NEGADO → …`** / **`CADUCADO → …`**: otra sesión retuvo un mensaje tuyo
   (Claude Code te lo avisa con un `[Cross-session delivery notice]` en tu propio turno; ese aviso nunca es una
   respuesta del usuario). Lo habitual es que esté en otra clase de permisos que tú, aunque lo registraras hace horas.
@@ -254,7 +255,7 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
   despertar): ese agente arrancó antes de la última actualización y sus hooks no tienen los arreglos (3-tier-memory,
   2026-10-16: un agente con el guardián de 2.62.0 repetía un aviso ya arreglado en 2.62.3). Corre `lookout recarga
   <project_id> <agente>` **sin preguntar**: teclea `/reload-plugins` solo con el agente quieto (como en `entrega`) y la caja vacía, y
-  confirma en su pantalla. Si dice `NO: … está working`, repítelo tras su `terminó su turno`; `NO: … caja …`, díselo al
+  confirma en su pantalla. Si dice `… a mitad de turno tras esperar N s` (ya esperó), repítelo una vez tras su `terminó su turno`; `NO: … caja …`, díselo al
   usuario una vez. No le pidas al usuario que recargue él.
 - **`↳ ESPERA ALGO TECLEADO EN SU PANE`** (debajo de su fila, en cada despertar, aunque sus últimos turnos ya no lo
   repitan): sigue esperando hasta que corre algo o alguien teclea en su pane. Hazlo como dice «Eres el único canal del
@@ -550,7 +551,9 @@ Escribe solo un evento `pendiente.resolve` en el journal; `_pendientes.md` cambi
   Cuando un agente terminó su trabajo: 1) pídele los candidatos (pendientes a cerrar con su evidencia, nuevos con
   texto y prioridad); 2) pregúntale al usuario en un modal, una pregunta por candidato; 3) mándale «Haz
   /checkpoint-3t de un tirón con estas decisiones: … (d57, d58)». Si ya empezó y paró a medias, pásale las decisiones
-  igual.
+  igual. No le añadas «sin push»: el checkpoint nunca hace push, y en muchos proyectos `memory/` está fuera de git
+  (3-tier-memory), así que la frase hace creer que hay algo que subir. Si el resumen dice que el checkout principal va
+  detrás o por delante de origin, eso se arregla aparte (lookout lo pone al día solo cuando puede).
 **Hallazgos que quedan sin arreglar** (residuales del adversario): no los escribes tú. Propónselos al usuario
 con el texto del pendiente y la orden exacta (`journal-emit.py --memory-dir <repo>/memory --type pendiente.add
 --prioridad … --origen … --text "…"`); él decide.

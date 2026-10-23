@@ -36,8 +36,13 @@ ALLOW = ["Bash(git push origin *)", "Bash(gh workflow run *)"]
 DENY = ["Bash(git push --force*)", "Bash(git push -f*)", "Bash(git push * --force*)", "Bash(git push * -f*)",
         "Bash(git push origin +*)", "Bash(git push * --delete*)", "Bash(git push * -d *)",
         "Bash(git push origin :*)", "Bash(git push * --mirror*)"]
-PRIVATE_RE = re.compile(r"/Users/[^/\s'\"]+|/home/[^/\s'\"]+|/root/|/var/root/|/private/(?:tmp|var)/|/var/folders/|"
-                        r"(?<![\w.])/tmp/|/var/tmp/|(?<![\w])~/")
+# 0.13.50: Claude Code's own `~/.claude/…` and a placeholder (`/tmp/...`, `/Users/…`, `/home/…`) name no one (3-tier
+# 2026-10-22: docs citing `~/.claude/sessions/<pid>.json`, `/c/Users/…/sessions/x.md` and `/tmp/...` were refused);
+# any real `/tmp/<name>`, `/Users/<name>` or `~/<name>` still is
+_EJEMPLO = r"(?!\.\.\.|…)"
+PRIVATE_RE = re.compile(r"/Users/" + _EJEMPLO + r"[^/\s'\"]+|/home/" + _EJEMPLO + r"[^/\s'\"]+|/root/|/var/root/|"
+                        r"/private/(?:tmp|var)/|/var/folders/|(?<![\w.])/tmp/" + _EJEMPLO + r"|/var/tmp/|"
+                        r"(?<![\w])~/(?!\.claude/)")
 SEMVER_RE = re.compile(r"\b(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\b")
 VIVAS = ("turno", "lista")
 ABIERTO = "pr-abierto"
@@ -277,6 +282,11 @@ def pide(project_id, entry, st, log=None, worktree=None, decision=""):
         # the queue; `pide` again re-checks from the start
         me.update(estado="rechazada", motivo=code)
         me.pop("sin_revisor", None)  # the yes was not used: it stays for the next check
+        # 0.13.50: the NO leads. 3-tier 2026-10-22: «Adversario: OK: último veredicto hold» came first and the NO of a
+        # later check under it, read as one answer that said yes and no (8 refusals in three supervisor sessions)
+        i = next((k for k, l in enumerate(lines) if l.startswith("NO:")), 0)
+        if i:
+            lines = lines[i:] + ["Lo que sí pasó antes de ese NO:"] + ["  " + l for l in lines[:i]]
     save(project_id, led)
     return ok, code, lines
 
@@ -661,11 +671,13 @@ def concilia(project_id, remote_tip=remote_tip, ahora=None):
     out = []
     ahora = ahora or time.time()
     leido = False
+    publicadas = 0
     for p in led["cola"]:
         if p["estado"] == ABIERTO:
             if ahora - (p.get("pr_visto") or 0) >= PR_CADA:
                 out += concilia_pr(project_id, led, p, ahora)
                 leido = True
+                publicadas += p["estado"] == "publicada"
             continue
         if p["estado"] not in ("esperando",) + VIVAS:
             continue
@@ -680,6 +692,7 @@ def concilia(project_id, remote_tip=remote_tip, ahora=None):
                 if vencida:
                     p["puerta_caducada"] = vencida
                     out.append(aviso_puerta(vencida))
+                publicadas += 1
                 continue
         why = caducada(project_id, p)
         if why:
@@ -687,6 +700,8 @@ def concilia(project_id, remote_tip=remote_tip, ahora=None):
             out.append("Publicación de %s caducada: %s." % (p.get("nombre"), why))
     if out or leido:
         save(project_id, led)
+    if publicadas:
+        out += al_dia(project_id, fetch=True)  # 0.13.50: what was published reaches the main checkout
     return out
 
 
@@ -719,6 +734,114 @@ def concilia_pr(project_id, led, p, ahora):
         p.update(estado="caducada", motivo="PR #%s cerrado sin fusionar" % p["pr"])
         return ["Publicación de %s caducada: el PR #%s se cerró sin fusionar." % (p.get("nombre"), p["pr"])]
     return avisos
+
+
+# 0.13.50: retiro.ENTRE_TURNOS (retiro imports this module): events of an agent between turns
+ENTRE_TURNOS = ("idle", "bg_wait", "start", "end", "pausa", "unknown")
+
+
+def checkout_principal(project_id):
+    """The project's main checkout, from its lock's common dir ("" without a lock)."""
+    import lock
+    com = ((lock.read(project_id) or {}).get("common_dir") or "").rstrip("/")
+    if not com:
+        return ""
+    return os.path.dirname(com) if os.path.basename(com) == ".git" else com
+
+
+def en_turno_en(project_id, repo, vivas=None):
+    """Names of the registered agents working in `repo` itself (not in a worktree of it) whose last own event is
+    inside a turn: a fast-forward under them would change files they are reading or editing. One with no event at all
+    counts too while its session is alive in herdr (`vivas`, read once): its hooks may not be loaded (codex r1)."""
+    import registry
+    agentes = registry.load(project_id).get("agents", {})
+    real = os.path.realpath(repo)
+    aqui = {s for s, e in agentes.items() if not e.get("retirado") and e.get("tarea_estado") != "relevada"
+            and os.path.realpath(e.get("worktree") or e.get("cwd") or "/nonexistent") == real}
+    if not aqui:
+        return []
+    import deliver  # its own events only, as retiro.a_mitad_de_turno reads them (a «largo» arrives between turns)
+    last = {}
+    for ev in lookout_state.read_events(project_id, 0)[0]:
+        if ev.get("session_id") in aqui and ev.get("event") not in deliver.NO_DEL_AGENTE:
+            last[ev["session_id"]] = ev.get("event")
+    if any(s not in last for s in aqui) and vivas is None:
+        import herdr_cli
+        vivas = {(a.get("agent_session") or {}).get("value") for a in herdr_cli.agent_list() or ()} - {None, ""}
+    return sorted(agentes[s].get("nombre") or s[:8] for s in aqui
+                  if (last.get(s) and last[s] not in ENTRE_TURNOS) or (s not in last and s in (vivas or ())))
+
+
+def al_dia_path(project_id):
+    return os.path.join(lookout_state.project_dir(project_id), "al_dia.json")
+
+
+def al_dia(project_id, fetch=False, mira=False):
+    """0.13.50: bring the main checkout up to origin after a publication (3-tier-memory 2026-10-22: main «behind 5»
+    after five merges on GitHub, and an agent ran the memory scripts from the plugin cache because the checkout's were
+    old). Only a fast-forward (`git merge --ff-only`), only on the base branch, with no uncommitted tracked change and
+    no agent inside a turn in that checkout; otherwise one warning with the command to type, said once per origin tip.
+    `fetch`: read origin first (after a merge on GitHub the local ref does not know it yet). `mira`: say what it would
+    do and change nothing (no merge, no warning recorded). Returns the lines."""
+    repo = checkout_principal(project_id)
+    if not repo or not os.path.isdir(repo):
+        return []
+    if fetch:
+        git(repo, "fetch", "--quiet", "origin", timeout=30)
+    rc, cabeza = git(repo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+    base = cabeza.strip()[len("origin/"):] if rc == 0 and cabeza.strip().startswith("origin/") else "main"
+    rc, tip = git(repo, "rev-parse", "--verify", "--quiet", "origin/%s^{commit}" % base)
+    tip = tip.strip()
+    if rc != 0 or not tip:
+        return []
+    rc, n = git(repo, "rev-list", "--count", "HEAD..origin/" + base)
+    detras = int(n.strip()) if rc == 0 and n.strip().isdigit() else 0
+    if not detras:
+        return []
+    rc, rama = git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    rama = rama.strip()
+    orden = "`git -C %s pull --ff-only`" % repo
+    por_que = ""
+    if rama != base:
+        por_que = "está en la rama %s, no en %s (%s no se pone al día en otra rama)" % (rama or "?", base, base)
+        orden = "`git -C %s fetch origin %s:%s`, si no hay nada local en %s" % (repo, base, base, base)
+    else:
+        _rc, delante = git(repo, "rev-list", "--count", "origin/%s..HEAD" % base)
+        if delante.strip() not in ("", "0"):
+            por_que = "va %s commit(s) por delante de origin/%s: no es fast-forward y no los mezclo" % (delante.strip(),
+                                                                                                    base)
+            orden = "que el usuario decida si sube o integra esos commits"
+        else:
+            _rc, sucio = git(repo, "status", "--porcelain")  # an untracked file too: an agent's new file (codex r1)
+            ocupados = en_turno_en(project_id, repo)
+            # codex r2: git takes an ignored file for expendable and a merge overwrites it (3-tier's memory/ is
+            # ignored and the checkpoint writes there): any path origin brings that exists here ignored stops it
+            _rc, ignorados = git(repo, "ls-files", "--others", "--ignored", "--exclude-standard")
+            _rc, trae = git(repo, "diff", "--name-only", "HEAD", "origin/" + base)
+            pisaria = sorted(set(ignorados.splitlines()) & set(trae.splitlines()))
+            if sucio.strip():
+                por_que = "tiene cambios sin commit (%s)" % ", ".join(l[3:] for l in sucio.splitlines()[:3])
+            elif pisaria:
+                por_que = "origin trae %s, que aquí existe como archivo ignorado por git y el merge pisaría" % (
+                    ", ".join(pisaria[:3]))
+            elif ocupados:
+                por_que = "%s trabaja ahí ahora (a mitad de turno)" % ", ".join(ocupados)
+                orden += " cuando termine su turno (lookout lo vuelve a intentar en cada resumen)"
+    if mira:
+        return ["Checkout principal %s: va %d commit(s) detrás de origin/%s; %s." % (
+            repo, detras, base, "lo pondría al día (fast-forward)" if not por_que else "no lo pondría al día: " + por_que)]
+    if not por_que:
+        rc, out = git(repo, "merge", "--ff-only", "--quiet", "origin/" + base, timeout=60)
+        if rc == 0:
+            return ["Checkout principal al día: %s avanzó %d commit(s) a origin/%s (%s)." % (repo, detras, base,
+                                                                                            tip[:9])]
+        por_que = "`git merge --ff-only` falló (¿un archivo sin seguimiento que el merge pisaría?)"
+    estado = lookout_state.read_json(al_dia_path(project_id)) or {}
+    if estado.get("aviso") == tip + por_que:
+        return []
+    lookout_state.write_json(al_dia_path(project_id), {"aviso": tip + por_que})
+    return ["Checkout principal %s: va %d commit(s) detrás de origin/%s y no lo pongo al día: %s. Díselo al usuario "
+            "con el comando: %s." % (repo, detras, base, por_que, orden)]
 
 
 def retira_sesion(project_id, session_id, motivo):
@@ -1012,6 +1135,7 @@ def fusiona(project_id, pr, decision_id, fuera_de_orden=False):
                  pr, p.get("nombre"), p.get("version") or "-", p.get("rama_base") or "main", p["head"][:9])]
     if p.get("fuera_de_lookout"):
         lines.append("Ese PR se abrió fuera de lookout: lookout no lo verificó antes de fusionarlo.")
+    lines += al_dia(project_id, fetch=True)  # 0.13.50
     resto = abiertos(led)
     if resto:
         lines.append("Siguiente en el orden de fusión: %s (#%s). GitHub dirá si necesita rebase." % (

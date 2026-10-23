@@ -308,6 +308,11 @@ def cmd_entrega(a):
     if (live.get("agent_session") or {}).get("value") != entry["session_id"] or live.get("cwd") != entry["cwd"]:
         print("NO ENTREGADO: el pane %s ya no es de %s (registro viejo). Corre `lookout inicia` otra vez." % (pane, entry["nombre"]))
         return 4
+    no = quieto_o_espera(pid, entry, a)  # 0.13.50
+    if no:
+        print("NO ENTREGADO: " + no + ".")
+        return 4
+    live = herdr_cli.agent_get(pane) or {}
     if not deliver.quieto(pid, entry, live):
         print("NO ENTREGADO: %s está %s. Se le entrega en su siguiente idle." % (entry["nombre"], live.get("agent_status")))
         return 4
@@ -626,6 +631,13 @@ def cmd_envia(a):
     else:
         sys.exit("usa --tarea, --usuario-confirmo dN y --texto, o --clave y --texto")
     code, msg = deliver.deliver(pid, e, clave, texto, a.confirmar)
+    live = (herdr_cli.agent_get(e["pane_id"]) or {}) if code == 4 else {}
+    if (code == 4 and msg.endswith("Se le entrega en su siguiente idle.") and live.get("agent_status") == "working"
+            and not deliver.quieto(pid, e, live)):
+        # 0.13.50: refused mid-turn: wait for its turn to end and try once more. Any other refusal (a draft in its box,
+        # a dialog, a pane gone) is printed as it came (adversary r1)
+        no = quieto_o_espera(pid, e, a)
+        code, msg = deliver.deliver(pid, e, clave, texto, a.confirmar) if not no else (4, "NO ENTREGADO: " + no + ".")
     if code == 0 and not a.tarea:
         # an answer typed into the agent's box is a decision too: log it like a SendMessage (Fase 4, relief)
         supervisor_md.log(pid, dict({"tipo": "respuesta", "to": e["nombre"], "via": "envia",
@@ -636,6 +648,18 @@ def cmd_envia(a):
         lote.set_estado(pid, e["session_id"], "trabajando", hooks="ok")
     print(msg)
     return code
+
+
+def quieto_o_espera(pid, e, a):
+    """0.13.50: an agent herdr sees `working` inside a turn is waited for, up to --espera s, until its turn ends: ''
+    then, or the refusal if it is still mid-turn. The supervisor polled a working agent up to 6 times in a row (3-tier
+    2026-10-20); one call now waits for it. Any other state ('' too) is left to the command, which says what it is (a
+    dialog, a pane gone, a failed relief to retry; adversary r1)."""
+    live = herdr_cli.agent_get(e["pane_id"]) or {}
+    if live.get("agent_status") != "working" or deliver.quieto(pid, e, live):
+        return ""
+    live, esperado, estado = deliver.espera_quieto(pid, e, max(0.0, getattr(a, "espera", deliver.ESPERA_QUIETO)))
+    return deliver.no_quieto(e, esperado) if live is None and estado == "working" else ""
 
 
 def agent_entry(pid, name):
@@ -864,6 +888,10 @@ def cmd_relevo(a):
         print("No releva nada: el candado de %s no es de esta sesión." % pid)
         return 3
     e = agent_entry(pid, a.agente)
+    no = quieto_o_espera(pid, e, a)  # 0.13.50
+    if no:
+        print("NO: " + no + ".")
+        return 4
     ok, msg = relevo.relevo(pid, e, nota_for(pid), retomar, a.modelo, a.confirmar, log=lambda m: print("  " + m),
                             shells=a.shells or "", goalspec=a.goalspec)
     print(msg)
@@ -891,7 +919,12 @@ def cmd_recarga(a):
         print("No recargo nada: el candado de %s no es de esta sesión." % pid)
         return 3
     import recarga
-    ok, msg = recarga.recarga(pid, agent_entry(pid, a.agente))
+    e = agent_entry(pid, a.agente)
+    no = quieto_o_espera(pid, e, a)  # 0.13.50
+    if no:
+        print("No recargo nada: " + no + ".")
+        return 4
+    ok, msg = recarga.recarga(pid, e)
     print(msg)
     return 0 if ok else 4
 
@@ -1087,6 +1120,8 @@ def main():
     sub.add_parser("quien")
     p = sub.add_parser("inicia"); p.add_argument("proyecto"); p.add_argument("--nombre", default="")
     p = sub.add_parser("entrega"); p.add_argument("proyecto"); p.add_argument("agente")
+    p.add_argument("--espera", type=float, default=deliver.ESPERA_QUIETO, metavar="S",
+                   help="segundos que espera a que el agente termine su turno (0.13.50; 0 = no espera)")
     p.add_argument("--pasos", default="reload,rename,nota"); p.add_argument("--timeout", type=float, default=30)
     p = sub.add_parser("nota"); p.add_argument("proyecto"); p.add_argument("agente")
     p = sub.add_parser("resumen"); p.add_argument("proyecto"); p.add_argument("--no-marcar", action="store_true")
@@ -1110,6 +1145,8 @@ def main():
     p.add_argument("--fuera", default="", metavar="ninguno|TEXTO")
     p.add_argument("--usuario-confirmo", metavar="DECISION_ID", default="")
     p = sub.add_parser("envia"); p.add_argument("proyecto"); p.add_argument("agente")
+    p.add_argument("--espera", type=float, default=deliver.ESPERA_QUIETO, metavar="S",
+                   help="segundos que espera a que el agente termine su turno (0.13.50; 0 = no espera)")
     p.add_argument("--clave"); p.add_argument("--texto"); p.add_argument("--tarea", action="store_true")
     p.add_argument("--usuario-confirmo", metavar="DECISION_ID", default="",
                    help="dN con el sí del usuario: teclea en su pane lo que el usuario decidió (obligatorio para «! comando»)")
@@ -1135,6 +1172,8 @@ def main():
     p.add_argument("--estado", choices=["abandoned", "superseded"], default="abandoned"); p.add_argument("--nota", required=True)
     p.add_argument("--usuario-confirmo", metavar="DECISION_ID", default="")
     p = sub.add_parser("relevo"); p.add_argument("proyecto"); p.add_argument("agente")
+    p.add_argument("--espera", type=float, default=deliver.ESPERA_QUIETO, metavar="S",
+                   help="segundos que espera a que el agente termine su turno (0.13.50; 0 = no espera)")
     p.add_argument("--retomar", metavar="ARCHIVO",
                    help="ruta de un archivo con el «Como retomar» que recibe la sesión nueva (no el texto)")
     p.add_argument("--modelo", default=os.environ.get("LOOKOUT_MODELO"))
@@ -1147,6 +1186,8 @@ def main():
     p = sub.add_parser("retoma"); p.add_argument("proyecto"); p.add_argument("agente")
     p.add_argument("--confirmar", type=float, default=30)
     p = sub.add_parser("recarga"); p.add_argument("proyecto"); p.add_argument("agente")
+    p.add_argument("--espera", type=float, default=deliver.ESPERA_QUIETO, metavar="S",
+                   help="segundos que espera a que el agente termine su turno (0.13.50; 0 = no espera)")
     p = sub.add_parser("cierra-pestana"); p.add_argument("proyecto"); p.add_argument("agente")
     p.add_argument("--motivo", help="cita tal cual de su último turno que dice que terminó (si no dejó «Como retomar»)")
     p.add_argument("--revisa", action="store_true", help="solo dice si se puede cerrar; no toca nada")

@@ -12,7 +12,8 @@ Signal 2, screen: the agent is quiet (deliver.quieto: herdr idle/done, or «work
 after its Stop), its input box is empty or a suggestion. Live background work goes to the user first (salida).
 Guards: no uncommitted change of its own; no local commit of its own not on the remote; no publication of its own
 waiting/holding the turn; no open decision naming it; no message of its to the supervisor newer than the last answer to
-it; a last turn with no «?», «¿» or «？» (the 0.12.2 rule: a question waits for someone); no background task of its own.
+it; a last turn with no «?», «¿» or «？» (the 0.12.2 rule: a question waits for someone; 0.13.50: the «¿Cerrado?»
+label of goalspec's plain close is no question); no background task of its own.
 Threat model: an accidental omission (work left behind, a pending answer); not an agent that lies on purpose.
 """
 import json
@@ -388,11 +389,31 @@ def _direcciones(project_id, entry):
     return out
 
 
+# 0.13.50: the label of goalspec's plain close («**¿Cerrado?** Sí.», «Closed? Yes») asks nobody. 3-tier 2026-10-22: 21
+# of 26 denials of cierra-pestana in three supervisor sessions said «pregunta algo»; in 6 of the 10 last turns of
+# those agents still on disk the label was the only «?» (4 asked for real), and each denial cost the user a modal.
+# Only the label at the start of a line: a «?» inside code still counts (the 0.12.2 rule, decided by the user).
+ETIQUETA_CIERRE = re.compile(r"^[\s>*_-]*(?:¿\s*)?(?:cerrado|closed)\s*\?", re.I | re.M)
+
+
+def pregunta(text):
+    """True when the text has a «?», «¿» or «？» once the plain close's label is taken out. Never inside a fenced
+    block: a code line that starts with «cerrado?» is code, and still counts (codex r2)."""
+    partes = re.split(r"(^[ \t]*(?:```|~~~).*$)", text, flags=re.M)  # indented and ~~~ fences too (codex r3)
+    dentro = False
+    for i, p in enumerate(partes):
+        if i % 2:  # a fence line
+            dentro = not dentro
+        elif not dentro:
+            partes[i] = ETIQUETA_CIERRE.sub(" ", p)
+    return any(c in "".join(partes) for c in "?¿？")
+
+
 def guarda_mensaje(project_id, entry, decidido=False):
     marker = lookout_state.read_marker(entry["session_id"]) or {}
     enviado = _ultimo_mensaje_al_supervisor(entry["session_id"], marker.get("address", ""))
     text, _ts = _turno(entry["session_id"])
-    if not decidido and any(c in text for c in "?¿？"):
+    if not decidido and pregunta(text):
         return "su último turno pregunta algo («?», «¿» o «？»): espera respuesta"
     if not enviado:
         return ""

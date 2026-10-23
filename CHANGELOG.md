@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.13.50
+
+- Audit of the supervisor on 3-tier-memory (three sessions of 2026-10-20 to 2026-10-22;
+  `docs/auditoria-supervisor-3tier-2026-10-22.md`, with the token measurement and proposals, none applied).
+  - The main checkout no longer stays behind origin. `publica.al_dia` fast-forwards it (`git merge --ff-only`) after
+    `--fusiona`, when the queue reconciles a publication (both with a fetch), and on every `resumen` from the local
+    origin ref. It moves only on the base branch, with no uncommitted tracked change, not ahead of origin, and with no
+    agent of that checkout inside a turn (its own events, as `retiro.a_mitad_de_turno` reads them; one with no event
+    while its session is alive in herdr; an untracked file counts as a change too, codex r1; and a path origin brings
+    that exists there as an ignored file, which the merge would overwrite, codex r2). `mira=True` only says
+    what it would do. Otherwise it gives
+    one warning with the command, kept whole in the digest, once per origin tip. In 3-tier,
+    main was 5 commits behind after five merges on GitHub, and an agent ran the memory scripts from the plugin cache.
+  - `cierra-pestana` no longer reads the label of goalspec's plain close («**¿Cerrado?** Sí.», «Closed? Yes») as a
+    question. 21 of 26 denials said «pregunta algo»; in 6 of the 10 last turns of those agents still on disk, that label
+    was the only «?». A «?» anywhere else, code included (a fenced line that starts with «cerrado?» too), still counts
+    (the 0.12.2 rule).
+  - `entrega`, `envia`, `relevo` and `recarga` wait up to `--espera` seconds (45 by default) for an agent herdr sees
+    `working` inside a turn to end it, instead of refusing at once. Their refusal after the wait says not to repeat it
+    in a loop. Any other state (a dialog, a pane with no agent, a failed relief) and any other refusal (a draft in the
+    box) are not waited for and come out as before (adversary r1). The supervisor had sent the same `relevo` 6 times in
+    a row.
+  - The digest gives an agent idle for 15 minutes or more with no task a row of what to do, on every wake, also when
+    the table is «sin cambios». It asks for a `--motivo` copied from the agent's turn. One agent sat 38 minutes
+    unseen, and was then closed with a motive the supervisor wrote.
+  - A refused `publica` prints its NO first and what passed before it under it. «Adversario: OK» used to lead 8
+    refusals.
+  - RUTAS-PRIVADAS no longer refuses Claude Code's own `~/.claude/…` or a placeholder written with `...` or `…`
+    (`/tmp/...`, `/c/Users/…/x`, `/home/…`). A real `/tmp/<name>`, `/Users/<name>` or `~/<name>` is still refused.
+  - The supervise skill no longer adds «sin push» to a `/checkpoint-3t` request: the checkpoint never pushes, and
+    3-tier's `memory/` is outside git.
+  - tests/test_lookout_01350.py.
+
 ## 0.13.49
 
 - A vigente «Como retomar» is a relief, never a close (3-tier-memory 2026-10-22, d399: the agent's block cited a
