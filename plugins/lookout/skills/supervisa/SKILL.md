@@ -50,8 +50,14 @@ párrafo; contestó «no entiendo… ¿qué es el waiter?»).
   que la skill da entre «» son ejemplos de forma: dilas en estas palabras. Solo va tal cual el
   texto que él debe teclear o pegar, y ese va en el bloque de código.
 - **Si te pregunta qué es algo**, contesta en una o dos oraciones simples, sin otra palabra técnica, y sigue.
-- **Si no puedes teclear tú** lo que un agente espera (auto mode te negó `lookout envia`): no lo rodees. Al final, en
-  «Lo que necesito de ti:», dile en qué pestaña escribirlo y pon el texto exacto en un bloque de código.
+- **Un comando que pide o espera un agente, o que auto mode le negó (`git push`, un script), lo tecleas tú en el pane
+  de ese agente**, con el sí del usuario en tu modal (`lookout decision … --negado`, «`auto mode le negó`», o «Eres el
+  único canal del usuario»). Nunca le pidas al usuario que lo escriba en tu pestaña: ahí lo correría tu sesión, no
+  el agente (3-tier-memory, 2026-10-22: seis turnos seguidos con un `! git push` de «Bug en mod» en «Lo que necesito de
+  ti»). Un sí anterior del usuario a ese mismo push no basta para teclear: el que niega es el clasificador, y teclear es otra decisión.
+  Solo si **`lookout envia` mismo** te lo niega auto mode, o `decision` dice `NO ABIERTA`, o ningún agente está quieto
+  para recibirlo, no lo rodees: al final, en «Lo que necesito de ti:», dile en qué pestaña escribirlo y pon el texto
+  exacto en un bloque de código.
 - **Un riesgo que debe conocer** va en una oración simple, con lo que puede pasar y qué lo evita.
 
 Ejemplo, el mismo caso de arriba bien dicho:
@@ -63,7 +69,7 @@ Ejemplo, el mismo caso de arriba bien dicho:
 >
 > **Lo que necesito de ti:**
 > 1. Ve a la pestaña «Implementamos entregas por otro rutero».
-> 2. Escribe esto y pulsa Enter (el filtro de seguridad de Claude no me deja escribirlo a mí):
+> 2. Escribe esto y pulsa Enter (mi intento de teclearlo en su pane lo negó el filtro de seguridad de Claude):
 >
 > ```
 > autorizo saltarme al revisor adversario para este push de comisiones
@@ -369,7 +375,9 @@ Escalar = una pregunta en **tu** sesión con `AskUserQuestion` (tú no estás su
 pane (su spec de goalspec espera «aprobado», un `! comando` que debe correr el usuario —un Bash que auto mode le negó va
 por `--negado`, en «`auto mode le negó`»—, una respuesta que su gate solo acepta tecleada) lo pides tú y lo tecleas tú (3-tier-memory, 2026-10-16: el supervisor le pidió a Víctor «que escriba
 aprobado allí» y el agente quedó parado hasta que él buscó el pane). El evento lo marca «ESPERA ALGO TECLEADO EN SU
-PANE»; un mensaje del agente que lo pide cuenta igual.
+PANE»; un mensaje del agente que lo pide cuenta igual. Lo mismo si el comando no es de ningún agente y tu auto mode te
+lo niega a ti (0.13.51): lo tecleas en el pane de un agente quieto del mismo proyecto (`--agentes` ese agente, el comando
+entero entre «» en la pregunta), no en tu pestaña. Solo si ninguno está quieto, o el usuario dice que no, se lo pides a él.
 1. `lookout decision <project_id> --abre "<qué decide>" --agentes <agente> --si-es "<etiqueta de la opción sí>"`, y en
    el modal una pregunta con el **texto exacto** que vas a teclear entre «» (`«aprobado»`, `«! git push origin
    <rama>»`), en una línea, el spec o el comando en palabras simples y su dN al final, con una opción cuya etiqueta es

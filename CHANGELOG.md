@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.13.51
+
+- The supervisor no longer asks the user to type, in the supervisor's own tab, a `! comando` that belongs to an agent
+  (3-tier-memory, 2026-10-22: «Bug en mod» had its `git push` refused by auto mode; the supervisor wrote «Lo que
+  necesito de ti: 1. Escribe esto en esta pestaña, «Supervisor»: ! git … push …» six turns in a row, with the
+  `negado` event and the 0.13.46 rule in front of it).
+  - `on_supervisor.tecleo_al_usuario`: the supervisor's Stop check reads its last message; a `! comando` line equal to
+    a whole Bash an agent of the project was refused (`negado`) or asked to have typed (`espera_pane`) sends it back, once
+    per command and event, to `lookout decision … --negado` (or the plain flow) and `lookout envia` in the agent's pane.
+  - Skill supervisa: the typing in the agent's pane is the rule for any command an agent asks for or auto mode refused
+    it, also after an earlier yes to the same push; asking the user to type it is only for a `lookout envia` the harness
+    itself refused, `NO ABIERTA`, or no idle agent. A command no agent owns, refused to the supervisor, goes to an idle
+    agent's pane with the user's yes in the modal. The example no longer says the supervisor «cannot» type it.
+  - Adversary r1 (Opus): the check reads the Stop payload's `last_assistant_message` first (the transcript may lack the
+    turn's last row at Stop, 0.13.40); the line shown to the user no longer says that the user types; a refusal beats an
+    idle event that quotes the same command; refusals recorded before 0.13.46 (only `detalle`) are recognized and get the
+    plain recipe (r2: `decision --negado` cannot open on an event with no `comando`).
+  - Codex r1: an old event's `detalle` clipped at 200 characters is not taken for the refused command. The case
+    of a command no agent owns (refused to the supervisor itself) has no event to read. Checked, not assumed: `hooks/hooks.json` wires PermissionDenied to `guard.sh permisos.py`, whose `handle(data, marker)` writes the
+    `negado` event with the agent's marker; the supervisor's session holds the supervisor marker, not an agent one, so
+    its own refusals leave no event. So the Stop check cannot know whose a command is by an event; codex r4 (the user
+    chose to close it): a `! comando` that no agent asked for or was refused, written in the supervisor's reply while
+    agents are registered, sends it once per command to `decision` + `envia` in a quiet agent's pane (`<agente quieto>`
+    from `lookout resumen`); if `envia` refuses or none is quiet, it goes on as before and asks the user.
+  - Codex r2: the printed recipe puts the command only through `shlex.quote` (a `$(…)` or a backtick between double
+    quotes would have run in the supervisor's shell); an agent request clipped at 200 characters by `on_state` still
+    matches (`en_cita`: the tail of the quote is the start of the command, 12 characters at least); a command that ends
+    in a backtick keeps it (the inline-code strip is only for a line wrapped in two backticks).
+  - Adversary r4 (Opus): the inline-code fence comes off in equal runs at both ends (`` `! cmd` `` and the double-backtick
+    span for a command that has a backtick in it), so neither form regresses (`sin_codigo_en_linea`). Adversary r5 (Opus)
+    held on this change.
+  - Adversary r6 (Opus): a command an agent's event matched never falls into the no-owner case afterwards, even after
+    that event's warning was spent; and the no-owner text no longer says «ningún agente lo pidió» (it cannot know: it
+    says it has no event with that exact command, and that if the command is an agent's, that agent and `--negado` apply).
+  - Test: `tests/test_lookout_01351.py` (20; red on 0.13.50).
+
 ## 0.13.50
 
 - Audit of the supervisor on 3-tier-memory (three sessions of 2026-10-20 to 2026-10-22;

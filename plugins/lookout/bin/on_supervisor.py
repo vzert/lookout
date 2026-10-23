@@ -17,6 +17,7 @@ Exit 0 always. Its only turn-extending output is the Stop check above, from the 
 import json
 import os
 import re
+import shlex
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -154,7 +155,8 @@ def stop_check(data, pid, sid, grace=1.5):
         sin_waiter = False  # B1 (0.12.2): its waiter just woke; the queued notification opens the next turn
     pendientes = [it for it in decisiones.sin_preguntar(pid) if not it.get("recordada")]
     vieja = skill_vieja(pid, sid, data.get("transcript_path"))
-    if not sin_waiter and not pendientes and not vieja:
+    tecleo = tecleo_al_usuario(pid, data.get("transcript_path"), data.get("last_assistant_message"))
+    if not sin_waiter and not pendientes and not vieja and not tecleo:
         return ""
     pasos, aviso = [], []
     if sin_waiter:
@@ -179,6 +181,35 @@ def stop_check(data, pid, sid, grace=1.5):
                      "(`lookout:supervisa` con la ruta del proyecto) y sigue sus reglas desde ahí; si vuelve a salir "
                      "la %s, pide al usuario /reload-plugins." % (cargada, instalada, cargada))
         aviso.append("skill supervisa %s cargada, %s instalada: la recargo" % (cargada, instalada))
+    if tecleo:
+        agente, texto, negado = tecleo
+        # codex r2: the agent's command goes into the printed recipe only through shlex.quote; between double quotes a
+        # `$(…)` or a backtick of it would run in the supervisor's shell (the same rule as teclea's recipe, 0.13.46)
+        q = shlex.quote
+        abre = q("<qué hace el comando, con «! %s» entero>" % texto)
+        if negado is None:
+            receta = ("No tengo un evento de un agente con este comando exacto. Si es de un agente (por ejemplo uno cuya "
+                      "orden reescribiste), usa a ese agente y `--negado` si auto mode se la negó. Si no es de ninguno, "
+                      "elige un agente quieto de `lookout resumen %s` (el grupo «listo»): corre `lookout decision %s --abre %s --agentes <agente quieto> --si-es \"<etiqueta del "
+                      "sí>\"`, pregunta en el modal y, con su sí, `lookout envia %s <agente quieto> --usuario-confirmo dN "
+                      "--texto %s`. Solo si `envia` se niega o ningún agente está quieto, sigue como estabas y pídeselo al "
+                      "usuario." % (q(pid), q(pid), abre, q(pid), q("! " + texto)))
+            pasos.append("pediste al usuario que escriba en TU pestaña «! %s». %s Reescribe tu respuesta sin ese paso de "
+                         "«Lo que necesito de ti», salvo en esos dos casos." % (texto, receta))
+        else:
+            if negado:
+                receta = ("Corre `lookout decision %s --abre %s --agentes %s --negado --si-es \"<etiqueta del sí>\" "
+                          "--siempre-es \"<etiqueta del siempre>\"`, pregunta en el modal y, con su sí, el `lookout envia` "
+                          "que imprime." % (q(pid), abre, q(agente)))
+            else:
+                receta = ("Corre `lookout decision %s --abre %s --agentes %s --si-es \"<etiqueta del sí>\"`, pregunta en el "
+                          "modal y, con su sí, `lookout envia %s %s --usuario-confirmo dN --texto %s`."
+                          % (q(pid), abre, q(agente), q(pid), q(agente), q("! " + texto)))
+            pasos.append("pediste al usuario que escriba en TU pestaña «! %s», pero ese comando es de «%s» (%s). No se lo "
+                         "pidas: lo tecleas tú en el pane del agente, con el sí del usuario en tu modal. %s Si dice `NO "
+                         "ABIERTA`, haz lo que dice. Reescribe tu respuesta sin ese paso de «Lo que necesito de ti»."
+                         % (texto, agente, "auto mode se lo negó" if negado else "el agente lo pidió", receta))
+        aviso.append("el supervisor te preguntará en un modal antes de teclear un comando en el pane de un agente")
     if sin_waiter and pendientes:
         pasos[0] += (" Hazlo ANTES del modal: el modal te deja parado hasta que el usuario conteste (las altas y el barrido "
                      "los sigue el vigía del modal; lo que te despierta, solo el waiter).")
@@ -186,6 +217,110 @@ def stop_check(data, pid, sid, grace=1.5):
     return json.dumps({"systemMessage": "lookout: " + "; ".join(aviso) + ".",
                        "hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": "lookout: " + detalle}},
                       ensure_ascii=False)
+
+
+def ultimo_texto(transcript_path, max_bytes=200000):
+    """Text of the last assistant message of the transcript that has any, or ''."""
+    try:
+        with open(transcript_path, "rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - max_bytes))
+            filas = fh.read().decode("utf-8", "replace").splitlines()
+    except (OSError, TypeError):
+        return ""
+    for fila in reversed(filas):
+        try:
+            d = json.loads(fila)
+        except ValueError:
+            continue
+        msg = d.get("message") if d.get("type") == "assistant" else None
+        c = (msg or {}).get("content")
+        if isinstance(c, list):
+            t = "\n".join(b.get("text") or "" for b in c if isinstance(b, dict) and b.get("type") == "text").strip()
+            if t:
+                return t
+    return ""
+
+
+def sin_codigo_en_linea(linea):
+    """A line that is one inline-code span loses its fence: equal runs of backticks at both ends (`! cmd`, or
+    ``! echo `date` `` for a command with a backtick in it, the markdown way) and the space inside them. A line that
+    does not start with a backtick, like «! echo `date`», keeps every one of them (adversary r4)."""
+    l = linea.strip()
+    n = len(l) - len(l.lstrip("`"))
+    if n and l.endswith("`" * n) and len(l) > 2 * n and not l[len(l) - n - 1:len(l) - n] == "`":
+        interior = l[n:len(l) - n]
+        return (interior[1:-1] if interior[:1] == interior[-1:] == " " and len(interior) > 2 else interior).strip()
+    return l
+
+
+def en_cita(comando, cita, corte=200):
+    """The command is in the agent's quoted line. on_state clips the quote to `corte` characters (codex r2), so a
+    command the clip cut matches when what is left of it at the end of the quote is its start (12 characters at least)."""
+    if comando in cita:
+        return True
+    return len(cita) >= corte and any(len(cita) - i >= 12 and comando.startswith(cita[i:]) for i in range(len(cita)))
+
+
+def tecleo_al_usuario(pid, transcript_path, ultimo=None):
+    """0.13.51 (3-tier-memory, 2026-10-22): an agent had its Bash refused by auto mode and the supervisor, six turns in a
+    row, wrote «Lo que necesito de ti: 1. Escribe esto en esta pestaña, «Supervisor»: ! …» instead of opening
+    `lookout decision --negado` and typing it in the agent's pane. The skill said so since 0.13.46 and the digest line
+    showed the refusal; nothing checked. If the last message has a «! comando» line equal to a Bash an agent of this
+    project was refused (negado, whole command) or that an agent asked to have typed (espera_pane), → (agent, command,
+    refused?), once per command and event. A command no event matches is the «no owner» case: (None, command, None),
+    once per command, only with agents registered (the supervisor's own refusal leaves no event). A command an event
+    matched never falls into it, even after that event's warning was spent. Else None. `ultimo` is the Stop payload's last_assistant_message: the
+    transcript can lack the turn's last row when Stop reads it (0.13.40, learning 154), so the payload wins."""
+    import lookout_state
+    import registry
+    import teclea
+    texto = ultimo if isinstance(ultimo, str) and ultimo.strip() else ultimo_texto(transcript_path) if transcript_path else ""
+    pedidos = [sin_codigo_en_linea(l) for l in texto.splitlines()]
+    pedidos = [l[2:].strip() for l in pedidos if l.startswith("! ") and len(l) > 2]
+    if not pedidos:
+        return None
+    agentes = registry.load(pid).get("agents") or {}
+    path = os.path.join(lookout_state.project_dir(pid), "tecleo_avisado.json")
+    avisados = lookout_state.read_json(path) or {}
+    con_dueno = set()
+    eventos = list(reversed(lookout_state.read_events(pid, 0)[0]))
+    # a refusal wins over an idle event that quotes the same command: it has the `--negado` recipe
+    eventos.sort(key=lambda e: e.get("event") != "negado")
+    for ev in eventos:
+        nombre = (agentes.get(ev.get("session_id")) or {}).get("nombre") or ev.get("nombre")
+        if not nombre:
+            continue
+        if ev.get("event") == "negado" and ev.get("hook") == "PermissionDenied" and ev.get("tool_name") == "Bash":
+            # events of lookout before 0.13.46 carry the command only as `detalle` (maybe clipped): enough to recognize it
+            # and `decision --negado` cannot open on them (teclea.negados needs `comando`): they get the plain recipe
+            # (codex r1: permisos clips `detalle` to 200 characters; a clipped one is not the command that was refused)
+            cmd = ev.get("comando") or (ev.get("detalle") or "" if len(ev.get("detalle") or "") < 200 else "")
+            propios = [cmd] if teclea.linea(cmd) else []
+            negado = bool(ev.get("comando"))
+        elif ev.get("event") in ("idle", "bg_wait") and (ev.get("espera_pane") or {}).get("cita"):
+            propios = [c for c in pedidos if en_cita(c, ev["espera_pane"]["cita"])]
+            negado = False
+        else:
+            continue
+        for c in propios:
+            if c in pedidos:
+                con_dueno.add(c)   # an agent owns it, warned or not: never the «no owner» case (adversary r6)
+            clave = "%s|%s|%s" % (ev.get("ts"), nombre, c)
+            if c in pedidos and clave not in avisados:
+                avisados[clave] = True
+                lookout_state.write_json(path, avisados)
+                return nombre, c, negado
+    # no agent owns it (the supervisor's own refusal leaves no event): the user's choice of 2026-10-23 is a quiet agent's
+    # pane with his yes in the modal, once per command; the supervisor goes on by hand if that fails (envia refuses)
+    if agentes:
+        for c in pedidos:
+            clave = "sin_dueno|%s" % c
+            if c not in con_dueno and clave not in avisados:
+                avisados[clave] = True
+                lookout_state.write_json(path, avisados)
+                return None, c, None
+    return None
 
 
 SKILL_CARGADA = re.compile(rb"Base directory for this skill: ([^\"\\\n]*?)/lookout/([0-9][^/\"\\\n]*)/skills/supervisa")
