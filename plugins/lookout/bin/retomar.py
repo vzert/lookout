@@ -14,6 +14,11 @@
   user): no p-id, no memory/_pendientes.md, no timestamp, another session worked on it, every cited p-id closed
   (`CERRADO`, which `cierra-pestana` accepts as finished), or none open and some found nowhere in the memory (e.g. a
   pendiente.add not compacted yet). Closed = «- [x]» or listed in memory/pendientes/_resueltos.md or _caducados.md.
+- 0.13.52: `para_agente` also reads the «## Como retomar» of the session file the agent wrote (`de_ficha`) when its
+  last turn has no block or says «Ninguno»: an open pendiente there is its thread (vigente, or ambiguo when another
+  agent worked it), so «Ninguno» in the last turn is not «nothing to resume» then. «Ninguno» + an «Opcional — otra
+  sesión» section citing an open pendiente is ambiguo (OPCIONAL). A block whose open pendientes are all `_bloqueado`
+  is ambiguo, not vigente.
 - `config(path)` reads the model (with its window, «claude-opus-5-5[1m]»), effort and permission mode the agent ran
   with, so its relief runs the same way. None for one that cannot be read: then no automatic relief.
 """
@@ -33,7 +38,15 @@ NADA_RE = re.compile(r"(?i)^[^\w]*(?:ninguno|ninguna|nada(?: que retomar)?|none|
 NINGUNO_RE = re.compile(r"(?i)^[\W_]*(?:ninguno|ninguna|nada|none|nothing)(?![^\W_])")  # «_Ninguno_» too (r5)
 CERRADO = "todo lo que cita ya está cerrado"  # an ambiguo block the close treats as finished (retiro.senal_terminado)
 NINGUNO_CITA = "dice «Ninguno» pero cita pendientes: pregúntale al usuario si lo cierras o lo relevas"
-PID_RE = re.compile(r"\bp-[0-9a-f]{10}\b")
+# 0.13.52: no \b at the end. 3-tier's snippet writes «_id: p-c3ac998a95_» (markdown italics), and the «_» after the id
+# is a word character, so \b found no p-id in «Como retomar: Ninguno — …» + «➕ Opcional — otra sesión … _id: p-…_» and
+# read it as finished (3-tier-memory, 2026-11-07: «claude» was closed with that block in its last turn)
+PID_RE = re.compile(r"(?<![0-9A-Za-z-])p-[0-9a-f]{10}(?![0-9A-Za-z])")
+# 0.13.52: 3-tier's «➕ Opcional — otra sesión, si tienes tiempo:» after a «Como retomar: Ninguno»: work the session
+# suggests, not work it left. The user's rule (2026-11-07): it is not relieved on its own and not closed silently either;
+# when it cites a pendiente still open it goes to the user's modal, «Reiniciarlo para que siga» recommended.
+OPC_RE = re.compile(r"(?im)^[^\w\n]*opcional\b[^\n]*$")
+OPCIONAL = "solo deja un bloque «Opcional — otra sesión»: modal, con «Reiniciarlo para que siga» recomendado"
 
 
 def bloque(text):
@@ -127,6 +140,21 @@ def abiertos(raiz):
     return out
 
 
+def bloqueados(raiz):
+    """0.13.52: the open p-ids of <raiz>/memory/_pendientes.md that carry a «_bloqueado: …_» field (they wait for
+    something outside the session: an install, a real close elsewhere). A relief cannot move them, so a block citing
+    only those is not vigente (codex r1: relieving p-7a1fce0e68 would loop)."""
+    out = set()
+    try:
+        with open(os.path.join(raiz, "memory", "_pendientes.md"), encoding="utf-8") as fh:
+            for l in fh:
+                if l.lstrip().startswith("- [ ]") and "_bloqueado:" in l:
+                    out |= set(re.findall(r"_id: (p-[0-9a-f]{10})", l))
+    except OSError:
+        pass
+    return out
+
+
 def cerrados(raiz):
     """The p-ids closed in <raiz>'s memory: «- [x]» lines of memory/_pendientes.md, and every id in
     memory/pendientes/_resueltos.md and _caducados.md (where 3-tier moves a resolved or expired pendiente). 0.13.2,
@@ -191,6 +219,13 @@ def trabajado_despues(pids, desde, otros):
     return out
 
 
+def solo_opcional(blk, pids):
+    """0.13.52: True when every p-id of a «Ninguno» block is cited from its «Opcional» line on (that line included,
+    adversary r1: «➕ Opcional — otra sesión: seguir con p-…» on one line)."""
+    m = OPC_RE.search(blk)
+    return bool(m and pids) and not PID_RE.search(blk[:m.start()])
+
+
 def info(text, ts, raices, otros, ahora=None):
     """The `retomar` field for a turn's text, or None when it has no block."""
     estado, blk = bloque(text)
@@ -202,17 +237,19 @@ def info(text, ts, raices, otros, ahora=None):
     import hashlib
     out = {"hay": True, "estado": "ambiguo", "pendientes": pids, "motivo": "",
            "bloque_id": hashlib.sha1(blk.encode("utf-8")).hexdigest()[:12]}
-    abiertos_, cerrados_ = None, set()
+    abiertos_, cerrados_, bloqueados_ = None, set(), set()
     for r in raices:
         abiertos_ = abiertos(r) if r else None
         if abiertos_ is not None:
-            cerrados_ = cerrados(r)
+            cerrados_, bloqueados_ = cerrados(r), bloqueados(r)
             break
     if not pids:
         out["motivo"] = "el bloque no cita ningún pendiente"
         return out
+    opcional = bool(NINGUNO_RE.match(blk)) and solo_opcional(blk, pids)
     if abiertos_ is None:
-        out["motivo"] = "no encuentro memory/_pendientes.md"
+        # 0.13.52, the user's decision: an «Opcional» section that cannot be checked goes to the modal too
+        out["motivo"] = "no encuentro memory/_pendientes.md" + ("; " + OPCIONAL if opcional else "")
         return out
     if ts is None:
         out["motivo"] = "no sé de cuándo es el bloque"
@@ -220,6 +257,10 @@ def info(text, ts, raices, otros, ahora=None):
     vivos = [p for p in pids if p in abiertos_]
     cerrados_l = [p for p in pids if p not in abiertos_ and p in cerrados_]
     perdidos = [p for p in pids if p not in abiertos_ and p not in cerrados_]
+    if opcional and not vivos and not perdidos:
+        # 0.13.52: «Ninguno» and an «Opcional» section whose every pendiente is closed: finished. One found in no
+        # memory file goes to the modal (the user's decision, 2026-11-07: what cannot be checked is asked)
+        return {"hay": False, "estado": "nada", "pendientes": [], "motivo": blk[:160]}
     if not vivos and not perdidos:  # every p-id closed: the user decides (usually closing it); none left to list
         out["pendientes"] = []
         out["motivo"] = "%s: %s" % (CERRADO, ", ".join(cerrados_l))
@@ -229,7 +270,9 @@ def info(text, ts, raices, otros, ahora=None):
         # own, whatever its words; it goes to the user's modal (3-tier 2026-10-16: «Ninguno — … (p-f8df9ea916) espera a
         # que se acumulen cierres, con recordatorio el 2026-10-22» was relieved as vigente; reading «it only waits for a
         # date» from the text let through ten wordings with work left, adversary round 3)
-        out["motivo"] = NINGUNO_CITA
+        out["motivo"] = OPCIONAL if opcional else NINGUNO_CITA
+        if opcional:
+            out["pendientes"] = vivos + perdidos
         return out
     if not vivos:  # e.g. a pendiente.add not compacted yet: neither open nor closed
         out["motivo"] = "no encuentro en la memoria: %s" % ", ".join(perdidos)
@@ -238,7 +281,11 @@ def info(text, ts, raices, otros, ahora=None):
     nota = "; ".join(x for x in ("ya cerrados: %s" % ", ".join(cerrados_l) if cerrados_l else "",
                                  "no encuentro: %s" % ", ".join(perdidos) if perdidos else "") if x)
     trabajados = trabajado_despues(vivos, ts, otros)
-    if trabajados:
+    libres = [p for p in vivos if p not in bloqueados_]
+    if not libres:
+        out["motivo"] = "solo cita pendientes bloqueados (esperan algo de fuera): %s" % ", ".join(vivos) + (
+            "; " + nota if nota else "")
+    elif trabajados:
         out["motivo"] = "otro agente trabajó %s después del bloque" % ", ".join(sorted(trabajados)) + (
             "; " + nota if nota else "")
     else:
@@ -303,8 +350,93 @@ def para_agente(project_id, session_id, transcript_path=None, cwd="", ultimo=Non
         if r and r not in raices:
             raices.append(r)
     # every other registered session, retired and relieved ones too: their work after the block counts (codex, 0.13.2)
-    otros = [deliver.transcript_path(s) for s in reg.get("agents", {}) if s != session_id]
-    return info(text, ts, raices, [o for o in otros if o])
+    otros = [o for o in (deliver.transcript_path(s) for s in reg.get("agents", {}) if s != session_id) if o]
+    r = info(text, ts, raices, otros)
+    if r is None or r.get("estado") == "nada":
+        f = de_ficha(path, raices, otros)
+        if f:
+            return f
+    return r
+
+
+SESION_RE = re.compile(r"(?:^|/)memory/sessions/[^/]+\.md$")
+COMO_RETOMAR_RE = re.compile(r"(?ms)^##[ \t]*Como retomar[^\n]*\n(.*?)(?=^##[ \t]|\Z)")
+
+
+SID_RE = re.compile(r"(?m)^session_id:[ \t]*([0-9a-f-]{8,})")
+
+
+def ficha_de(path):
+    """0.13.52: (path, timestamp, its «Como retomar» text) of the last session file (memory/sessions/<slug>.md) this
+    transcript wrote or edited with Write, Edit or MultiEdit, or ("", None, ""). Its «## Como retomar» is the durable
+    resume block 3-tier's checkpoint leaves; the agent's later turns need not repeat it. A file whose frontmatter names
+    another session_id is skipped (an agent that edited an older session's file, e.g. a backfill)."""
+    cands = []
+    try:
+        fh = open(path, "rb")
+    except (OSError, TypeError):
+        return "", None, ""
+    with fh:
+        for raw in fh:
+            if b'"tool_use"' not in raw or b"memory/sessions/" not in raw:
+                continue
+            try:
+                row = json.loads(raw)
+            except ValueError:
+                continue
+            if row.get("type") != "assistant" or row.get("isSidechain"):
+                continue
+            for b in (row.get("message") or {}).get("content") or []:
+                if not (isinstance(b, dict) and b.get("type") == "tool_use"
+                        and b.get("name") in ("Write", "Edit", "MultiEdit")):
+                    continue
+                fp = str((b.get("input") or {}).get("file_path") or "")
+                if SESION_RE.search(fp):
+                    cands.append((fp, _ts(row)))
+    sid = os.path.basename(path or "")[:-len(".jsonl")] if str(path or "").endswith(".jsonl") else ""
+    vistos = set()
+    for fp, ts in reversed(cands):
+        if fp in vistos:
+            continue
+        vistos.add(fp)
+        try:
+            with open(fp, encoding="utf-8") as fh:
+                body = fh.read()
+        except OSError:
+            continue
+        m = SID_RE.search(body[:2000])
+        if m and sid and m.group(1) != sid:
+            continue
+        ts = max(t for f, t in cands if f == fp and t is not None) if any(f == fp and t for f, t in cands) else ts
+        c = COMO_RETOMAR_RE.search(body)
+        if not c:
+            return fp, ts, ""
+        f = FENCE_RE.search(c.group(1))
+        return fp, ts, (f.group(1) if f else c.group(1)).strip()
+    return "", None, ""
+
+
+def de_ficha(path, raices, otros):
+    """0.13.52: the `retomar` of the agent's session file when its last turn has no block or says «Ninguno», and that
+    file's «## Como retomar» still cites a pendiente open in the project that nobody else took (vigente), or one another
+    agent worked on after it (ambiguo, to the user). None otherwise: a file whose block is «Ninguno», cites nothing open,
+    or cannot be read changes nothing. 3-tier-memory, 2026-11-07: «Proximo paso» left p-1453f5b773 in the «Como
+    retomar» of memory/sessions/2026-10-28-medir-userpromptsubmit-comando.md, its last turn only said «termino aquí», and
+    the supervisor closed its tab with --motivo («no dejó nada pendiente»). The user's rule: a session that leaves a
+    pendiente of its own open is relieved, without asking, until its thread is empty."""
+    fp, ts, texto = ficha_de(path)
+    if not fp or not texto or NINGUNO_RE.match(texto):
+        return None
+    r = info("## Como retomar\n" + texto, ts, raices, otros)
+    if not r or not r.get("pendientes"):
+        return None
+    if r.get("estado") != "vigente" and not (r.get("motivo") or "").startswith(("otro agente trabajó",
+                                                                                 "solo cita pendientes bloqueados")):
+        return None
+    r["ficha"] = fp
+    r["texto"] = texto
+    r["motivo"] = "; ".join(x for x in ("su ficha %s lo deja abierto" % os.path.basename(fp), r.get("motivo")) if x)
+    return r
 
 
 def describe(r):

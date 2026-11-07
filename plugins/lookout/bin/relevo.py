@@ -72,6 +72,14 @@ def retomar_de(session_id, projects_dir=None):
     return extract_retomar(text)
 
 
+def retomar_de_ficha(project_id, entry):
+    """0.13.52: the «Como retomar» of its session file, only when retomar.para_agente read it as the agent's block
+    (its last turn has none or says «Ninguno», and the file still cites an open pendiente nobody else took: vigente).
+    3-tier-memory, 2026-11-07: «Proximo paso» left p-1453f5b773 only there."""
+    r = retomar_mod.para_agente(project_id, entry["session_id"])
+    return (r or {}).get("texto", "") if (r or {}).get("ficha") and r.get("estado") == "vigente" else ""
+
+
 def clave_de(entry):
     """The task id, or the agent's name for one launched by hand (0.13.0: discovered agents have no task)."""
     return entry.get("tarea") or entry.get("nombre", "").split("~")[0]
@@ -145,7 +153,7 @@ def _relevo(project_id, entry, nota_for, retomar, modelo, confirmar, fin_timeout
             return False, "NO: %s %s." % (entry.get("nombre"), salida.pide_modal(entry, vivo)) + (
                 " (%s no es una elección del usuario, en tu modal, abierta después de su último Stop, que nombre a %s.)"
                 % (shells, entry.get("nombre")) if shells else "")
-        retomar = retomar or retomar_de(entry["session_id"])
+        retomar = retomar or retomar_de(entry["session_id"]) or retomar_de_ficha(project_id, entry)
     if not retomar:
         return False, ("NO: no encuentro su «Como retomar» (ni en su texto ni pasado con --retomar). Pídeselo por "
                        "SendMessage: su bloque «Como retomar» tal cual, si algo posterior lo vuelve falso, y qué le queda.")

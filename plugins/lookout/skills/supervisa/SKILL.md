@@ -247,7 +247,19 @@ Nunca esperas activamente: **esperar = terminar tu turno**.
     opción recomendada es **reiniciarlo para que siga** (en el modal, en palabras simples: «Reiniciarlo para que siga con su trabajo»; decisión del usuario, 2026-10-15: un bloque con trabajo se releva por
     defecto), salvo que el motivo diga `otro agente trabajó …` (recomienda lo que muestre ese trabajo) o `todo lo que cita ya está
     cerrado` (recomienda cerrar su pestaña: `lookout cierra-pestana` lo acepta como terminado). Que
-    sus pendientes sean de baja prioridad o nuevos no es motivo para no relevar.
+    sus pendientes sean de baja prioridad o nuevos no es motivo para no relevar. Un motivo `solo deja un bloque
+    «Opcional — otra sesión»` (0.13.52) es este caso: su «Como retomar» dice «Ninguno» y su bloque opcional cita un
+    pendiente abierto o que lookout no encuentra en la memoria; al modal, con reiniciarlo recomendado, nunca cerrada sin
+    preguntar. `solo cita pendientes bloqueados` (0.13.52): sus pendientes esperan algo de fuera (`_bloqueado:`); al
+    modal, recomendando lo que diga su bloqueo (reiniciarlo no los mueve).
+  - `su ficha <archivo> lo deja abierto` (0.13.52, dentro de un `vigente` o un `ambiguo`): su último turno no trae
+    bloque (o dice «Ninguno»), pero el «## Como retomar» de la ficha que escribió su sesión en `memory/sessions/`
+    cita un pendiente suyo aún abierto. Es su hilo: un `vigente` se releva como cualquier otro (lookout le pasa ese
+    bloque a la sesión nueva), y la cadena sigue hasta que su ficha no deje nada abierto; un `ambiguo` (`otro agente
+    trabajó …`) va al modal como los demás. Que el agente diga «termino aquí»,
+    o que tú le hayas dicho «no te queda nada», no lo vuelve terminado: `cierra-pestana` no lo cierra (3-tier-memory,
+    2026-11-07: «Proximo paso» se cerró con p-1453f5b773 abierto en su ficha y el supervisor dijo «no dejó nada
+    pendiente»). Antes de decirle a un agente «no te queda nada», mira su fila: si dice `dejó un bloque para retomar`, no lo digas.
   - `terminó: su «Como retomar» dice que no queda nada` → no hay relevo (ver «Agente terminado»).
 - **`espera tarea de fondo`**: el agente espera un proceso suyo (p. ej. su adversario o un CI).
   **No está terminado ni atascado.** No te despierta, salvo que su turno haya preguntado algo: lo ves en el siguiente
@@ -616,6 +628,9 @@ usuario debe haber elegido esa etiqueta (un `--cierra --si` tuyo no sirve). Salt
 bloque con trabajo» (salvo un bloque vigente, que se releva: 0.13.49) y «una pregunta en su último turno», que el usuario ya sopesó; las demás comprobaciones siguen
 (3-tier-memory, 2026-10-16: con d111 «Cerrarla», la «¿» de su «¿Cerrado? Sí.» frenaba el cierre). Un «Como retomar:
 Ninguno …» que cita un pendiente abierto llega como bloque `ambiguo` («dice «Ninguno» pero cita pendientes»): al modal.
+Tampoco está terminado (0.13.52) el que dice «termino aquí» o «Ninguno» mientras la ficha de su sesión deja un
+pendiente suyo abierto (`su ficha … lo deja abierto`: se releva) o su bloque «Opcional — otra sesión» cita uno abierto
+(al modal, reiniciarlo recomendado): `cierra-pestana` responde `NO cierro … es un relevo`.
 Si dice `NO cierro … con una copia rebasada en el remoto … local → remoto`: esos commits ya llegaron, con otro parche,
 por otro camino (un PR rebasado) y no son trabajo del agente, pero el cierre los sigue contando hasta que alguien
 decida qué hacer con la rama local. Compara tú los pares con `git range-diff` (lectura) y pregúntaselo al usuario:

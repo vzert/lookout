@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.13.52
+
+- An agent whose session leaves a pendiente of its own open is relieved, not closed (3-tier-memory, 2026-11-07:
+  «Proximo paso» left p-1453f5b773 in the «Como retomar» of its session file, its last turn only said «termino aquí»,
+  and the supervisor closed its tab with `--motivo`, telling the user «no dejó nada pendiente»; the user expected
+  /exit, a new claude, the block pasted, until the thread is empty).
+  - `retomar.ficha_de` / `de_ficha`: when the last turn has no block or says «Ninguno», the «## Como retomar» of the
+    last `memory/sessions/*.md` that session wrote or edited (a file whose frontmatter names another `session_id` is
+    skipped) is read; an open pendiente nobody else took makes it `vigente` (motive `su ficha … lo deja abierto`),
+    one another agent worked on makes it `ambiguo`. A «Ninguno» file, or one citing nothing open, changes nothing.
+  - `retiro.senal_terminado`: a «Ninguno» or a `--motivo` quote no longer closes such an agent; `relevo` takes that
+    file's block when the last turn has none (`relevo.retomar_de_ficha`, only for a `vigente`).
+- «Ninguno» plus a «➕ Opcional — otra sesión» section that cites an open pendiente is `ambiguo` (motive `solo deja un
+  bloque «Opcional — otra sesión»`), so it goes to the modal with «Reiniciarlo para que siga» recommended instead of a
+  silent close (3-tier-memory, 2026-11-07, «claude»). The p-id pattern no longer misses `_id: p-…_` (the «_» of
+  markdown italics after the id defeated `\b`). Only «Opcional» ids that are all closed make it finished; an id found in
+  no memory file, or no `memory/_pendientes.md` to check it against, goes to the modal too (the user's decision,
+  2026-11-07: what cannot be checked is asked). An id cited before the «Opcional» line still goes to the modal as
+  «dice «Ninguno» pero cita pendientes». Adversary r1 (Sonnet): an id on the «Opcional» line itself was missed; the
+  section now starts at that line.
+- A block whose open pendientes all carry `_bloqueado:` (they wait for something outside the session) is `ambiguo`
+  (motive `solo cita pendientes bloqueados`), not `vigente`: relieving it could not move it and would loop (codex r1,
+  p-7a1fce0e68). Docstrings of retomar and retiro now carry both 0.13.52 rules.
+- Skill supervisa: both motives, and «before telling an agent «no te queda nada», look at its row».
+
 ## 0.13.51
 
 - The supervisor no longer asks the user to type, in the supervisor's own tab, a `! comando` that belongs to an agent

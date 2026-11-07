@@ -6,6 +6,8 @@ and says which one, so the supervisor can pass it to the user.
 
 Signal 1, finished: its last turn says so — a «Como retomar: Ninguno» header (retomar.bloque → "nada"), or a quote the
 supervisor gives with --motivo that appears verbatim in that last turn (plan-ciclo: «No emito nada y termino aquí»).
+0.13.52: neither counts while retomar.para_agente reads a block from its session file (an open pendiente of its own:
+`ficha`) or an «Opcional» section citing an open one (retomar.OPCIONAL).
 A goalspec [COMPLETION-REVIEW or a task marked terminada alone never count (askuserquestion-pendientes declared
 «¿Cerrado? Sí» and still waited for an answer). A live block («hay») is a relief, never a close.
 Signal 2, screen: the agent is quiet (deliver.quieto: herdr idle/done, or «working» only because of a background shell
@@ -89,9 +91,15 @@ def senal_terminado(entry, motivo="", project_id=""):
     estado, blk = retomar.bloque(text)
     if estado == "hay":
         r = retomar.para_agente(project_id, entry["session_id"]) if project_id else None
-        if r and (r.get("motivo") or "").startswith(retomar.CERRADO):
-            return ""
+        if r and ((r.get("motivo") or "").startswith(retomar.CERRADO) or r.get("estado") == "nada"):
+            return ""  # 0.13.52: «Ninguno» + an «Opcional» section whose pendientes are all closed
         return RELEVO_NO_CIERRE
+    # 0.13.52: a «Ninguno» or a --motivo quote is not finished while its session file's «Como retomar» still leaves a
+    # pendiente open (retomar.de_ficha; 3-tier-memory 2026-11-07, «Proximo paso» closed with p-1453f5b773 open), or
+    # while an «Opcional — otra sesión» section of its last turn cites one (the modal, retomar.OPCIONAL)
+    f = retomar.para_agente(project_id, entry["session_id"]) if project_id else None
+    if f and (f.get("ficha") or retomar.OPCIONAL in (f.get("motivo") or "")):
+        return no_cierre_vigente(f, entry.get("nombre", "?")) if f.get("estado") == "vigente" else RELEVO_NO_CIERRE
     if estado == "nada":
         return ""
     if motivo and motivo.strip() and motivo.strip() in text:  # verbatim (adversary round 1: no whitespace folding)

@@ -150,8 +150,11 @@ class BloqueTest(unittest.TestCase):
             self.assertTrue(blk.startswith("Retomamos:"), blk[:40])
             self.assertNotIn("Recordatorio", blk)
             self.assertEqual(relevo.extract_retomar(text), blk)
-        self.assertEqual(retomar.bloque(SIDEBAR)[0], "nada")
-        self.assertEqual(relevo.extract_retomar(SIDEBAR), "")
+        # 0.13.52: the text alone is a block now (PID_RE sees «_id: p-…_»); info() reads it as finished unless its
+        # «Opcional» pendiente is open (tests/test_lookout_01352.py)
+        self.assertEqual(retomar.bloque(SIDEBAR)[0], "hay")
+        # with no memory to check its «Opcional» id it goes to the modal (the user's decision, 2026-11-07)
+        self.assertIn(retomar.OPCIONAL, retomar.info(SIDEBAR, time.time(), [], [])["motivo"])
         # «ninguno» inside the body of a live block is not «nothing to resume»
         self.assertEqual(retomar.bloque(NINGUNO_EN_EL_CUERPO)[0], "hay")
         self.assertEqual(retomar.bloque("Hecho. Siguiente sesión: mañana miro el CI.")[0], "")
@@ -176,6 +179,7 @@ class VigenciaTest(f3.Base):
                      "- [ ] mutation-check huerfano — _creado: 2026-10-15_ — _id: p-01dfac8763_\n"
                      "- [ ] decidir aviso POR-DISENO — _id: p-3d1c7ab131_\n"
                      "- [ ] hilo — _id: p-3f22a1cba1_\n"
+                     "- [x] negativas de learning.update — _id: p-ce00d61406_\n"  # SIDEBAR's «Opcional» id, closed for real (0.13.52)
                      "- [ ] Windows acentos — _id: p-34c1ec3f19_\n"
                      "- [x] cerrado — _id: p-92aa5de144_\n")
         self.now = time.time()
@@ -284,7 +288,7 @@ class AvisoTest(f4.Base):
         super().setUp()
         os.makedirs(os.path.join(self.repo, "memory"))
         with open(os.path.join(self.repo, "memory", "_pendientes.md"), "w") as fh:
-            fh.write("- [ ] x — _id: p-01dfac8763_\n- [ ] w — _id: p-34c1ec3f19_\n")
+            fh.write("- [ ] x — _id: p-01dfac8763_\n- [ ] w — _id: p-34c1ec3f19_\n" + "- [x] negativas de learning.update — _id: p-ce00d61406_\n")
 
     def stop(self, sid, text, reporto=False):
         now = time.time()
@@ -599,7 +603,13 @@ class CierraPestanaTest(f3.Base):
             f3.git(self.repo, "config", k, v)
         with open(os.path.join(self.repo, "a.txt"), "w") as fh:
             fh.write("a\n")
-        f3.git(self.repo, "add", "a.txt")
+        # 0.13.52: SIDEBAR's «Opcional» id is closed for real (3-tier _resueltos.md); an unknown one goes to the modal
+        os.makedirs(os.path.join(self.repo, "memory", "pendientes"))
+        with open(os.path.join(self.repo, "memory", "_pendientes.md"), "w") as fh:
+            fh.write("# Pendientes\n")
+        with open(os.path.join(self.repo, "memory", "pendientes", "_resueltos.md"), "w") as fh:
+            fh.write("- [x] negativas de learning.update — _id: p-ce00d61406_\n")
+        f3.git(self.repo, "add", "a.txt", "memory")
         f3.git(self.repo, "commit", "-q", "-m", "a")
         f3.git(self.repo, "push", "-q", "-u", "origin", "HEAD")
         self.agent("s1", nombre="sidebar", tarea="", pane_id="w1A:pE", tab_id="w1A:tE", cwd=self.repo,
@@ -733,7 +743,7 @@ class CierraPestanaTest(f3.Base):
 
     def test_a_block_that_cites_only_closed_pendientes_can_be_closed(self):
         # adversary round 2 of 0.13.2: the skill recommends closing it, and the close refused it as a relief
-        os.makedirs(os.path.join(self.repo, "memory", "pendientes"))
+        os.makedirs(os.path.join(self.repo, "memory", "pendientes"), exist_ok=True)
         with open(os.path.join(self.repo, "memory", "_pendientes.md"), "w") as fh:
             fh.write("- [ ] otro — _id: p-3f22a1cba1_\n")
         with open(os.path.join(self.repo, "memory", "pendientes", "_resueltos.md"), "w") as fh:
